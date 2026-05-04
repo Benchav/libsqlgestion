@@ -176,7 +176,15 @@ export default function DatabaseDetailPage() {
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Auth Token</label>
                   {revealedToken ? (
-                    <TokenReveal token={revealedToken} />
+                    <TokenReveal
+                      token={revealedToken}
+                      onDismiss={() => {
+                        if (typeof window !== 'undefined') {
+                          window.sessionStorage.removeItem(`libsqlite.databaseToken.${id}`);
+                        }
+                        setRevealedToken('');
+                      }}
+                    />
                   ) : (
                     <div className="flex items-center justify-between border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300">
                       <span className="blur-[4px] select-none">Token is only shown once after create/import/rotate</span>

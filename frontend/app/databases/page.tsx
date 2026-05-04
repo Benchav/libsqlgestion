@@ -18,6 +18,7 @@ export default function DatabasesPage() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [generatedToken, setGeneratedToken] = useState('');
   const [generatedDatabaseName, setGeneratedDatabaseName] = useState('');
+  const [generatedDatabaseId, setGeneratedDatabaseId] = useState('');
 
   // Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -152,6 +153,7 @@ export default function DatabasesPage() {
             if (token) {
               setGeneratedToken(token);
               setGeneratedDatabaseName(databaseName || 'database');
+              setGeneratedDatabaseId(databaseId || '');
               if (typeof window !== 'undefined' && databaseId) {
                 window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
               }
@@ -170,6 +172,7 @@ export default function DatabasesPage() {
             if (token) {
               setGeneratedToken(token);
               setGeneratedDatabaseName(databaseName || 'database');
+              setGeneratedDatabaseId(databaseId || '');
               if (typeof window !== 'undefined' && databaseId) {
                 window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
               }
@@ -182,7 +185,18 @@ export default function DatabasesPage() {
       {generatedToken && (
         <div className="px-6 pb-0 max-w-7xl mx-auto w-full">
           <div className="mb-6">
-            <TokenReveal token={generatedToken} label={`Token for ${generatedDatabaseName}`} />
+            <TokenReveal
+              token={generatedToken}
+              label={`Token for ${generatedDatabaseName}`}
+              onDismiss={() => {
+                if (typeof window !== 'undefined' && generatedDatabaseId) {
+                  window.sessionStorage.removeItem(`libsqlite.databaseToken.${generatedDatabaseId}`);
+                }
+                setGeneratedToken('');
+                setGeneratedDatabaseId('');
+                setGeneratedDatabaseName('');
+              }}
+            />
           </div>
         </div>
       )}

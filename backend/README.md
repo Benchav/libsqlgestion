@@ -10,7 +10,7 @@ Quick start (local):
 
 Notes:
 - The backend currently uses opaque access tokens + refresh tokens stored in the `sessions` table.
-- The project uses TypeORM with `synchronize: true` for rapid iteration. For production, switch to migrations and a proper Postgres DB.
+- The project uses TypeORM migrations for the control plane. For production, keep migrations enabled and back up the control database.
 - `MASTER_KEY` must be 32 bytes in hex (64 hex chars). It's used to encrypt database tokens.
 
 Main endpoints:

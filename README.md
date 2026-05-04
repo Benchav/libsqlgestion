@@ -29,6 +29,8 @@ The backend is implemented and validated. It includes:
 
 The frontend admin panel is planned next.
 
+The frontend admin panel is now scaffolded in `frontend/` and follows the same design goals: clear structure, simple operations, and production deployment through Docker/Coolify.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
@@ -43,6 +45,7 @@ The frontend admin panel is planned next.
 
 ```text
 backend/      API and control plane
+frontend/     Admin panel scaffold
 docs/         Detailed documentation
 docker-compose.yml
 COOLIFY.md

@@ -8,3 +8,4 @@ This folder contains the project documentation for users, operators and contribu
 - [Security Guide](SECURITY.md)
 - [Development Guide](DEVELOPMENT.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
+- [Frontend Guide](FRONTEND.md)

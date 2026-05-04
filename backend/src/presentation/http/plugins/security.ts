@@ -1,6 +1,10 @@
 import { FastifyInstance } from 'fastify';
-import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+
+function isOriginAllowed(origin: string | undefined, allowedOrigins: string[]) {
+  if (!origin) return false;
+  return allowedOrigins.includes(origin);
+}
 
 export async function securityPlugin(app: FastifyInstance) {
   app.addHook('onSend', async (_request, reply, payload) => {
@@ -16,9 +20,19 @@ export async function securityPlugin(app: FastifyInstance) {
     ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
     : [];
 
-  await app.register(cors, {
-    origin: allowedOrigins.length > 0 ? allowedOrigins : false,
-    credentials: true,
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin;
+    if (origin && isOriginAllowed(origin, allowedOrigins)) {
+      reply.header('Access-Control-Allow-Origin', origin);
+      reply.header('Vary', 'Origin');
+      reply.header('Access-Control-Allow-Credentials', 'true');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token');
+      reply.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+    }
+
+    if (request.method === 'OPTIONS') {
+      reply.code(204).send();
+    }
   });
 
   await app.register(rateLimit, {

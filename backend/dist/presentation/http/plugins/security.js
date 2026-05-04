@@ -5,18 +5,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.securityPlugin = securityPlugin;
 const cors_1 = __importDefault(require("@fastify/cors"));
-const helmet_1 = __importDefault(require("@fastify/helmet"));
 const rate_limit_1 = __importDefault(require("@fastify/rate-limit"));
 async function securityPlugin(app) {
-    await app.register(helmet_1.default, {
-        contentSecurityPolicy: {
-            directives: {
-                defaultSrc: ["'none'"],
-                baseUri: ["'none'"],
-                frameAncestors: ["'none'"],
-                formAction: ["'none'"],
-            },
-        },
+    app.addHook('onSend', async (_request, reply, payload) => {
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('X-Frame-Options', 'DENY');
+        reply.header('Referrer-Policy', 'no-referrer');
+        reply.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+        reply.header('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+        return payload;
     });
     const allowedOrigins = process.env.CORS_ORIGIN
         ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)

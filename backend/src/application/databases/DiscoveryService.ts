@@ -24,7 +24,7 @@ export class DiscoveryService {
     const discovered: Database[] = [];
 
     for (const filePath of files) {
-      const existing = await this.databaseRepo.findOne({ where: { metadata: { sourcePath: filePath } as any }, relations: ['project'] });
+      const existing = await this.databaseRepo.findOne({ where: { url: filePath }, relations: ['project'] });
       if (existing) {
         discovered.push(existing);
         continue;

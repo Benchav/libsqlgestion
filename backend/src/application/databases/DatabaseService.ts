@@ -8,6 +8,7 @@ import { encrypt, decrypt } from '../../infrastructure/crypto';
 import { randomToken } from '../../infrastructure/security/tokens';
 import { AuditService } from '../audit/AuditService';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
+import { ensureSubdomain } from '../../infrastructure/security/slug';
 
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -18,13 +19,14 @@ export class DatabaseService {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     const token = input.token ?? randomToken();
     const encryptedToken = encrypt(token);
+    const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
       type: input.type,
       url: input.url,
       encryptedToken,
-      subdomain: input.subdomain,
+      subdomain,
       status: 'inactive',
       metadata: input.metadata,
       project,
@@ -57,12 +59,13 @@ export class DatabaseService {
     if (!fs.existsSync(input.sourcePath)) {
       throw new Error('sourcePath does not exist');
     }
+    const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
       type: 'sqlite',
       status: 'inactive',
-      subdomain: input.subdomain,
+      subdomain,
       metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
       project,
     }));

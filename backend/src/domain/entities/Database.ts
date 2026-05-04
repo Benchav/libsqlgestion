@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, Index } from 'typeorm';
 import { Project } from './Project';
 
 @Entity('databases')
@@ -9,6 +9,7 @@ export class Database {
   @Column()
   name!: string;
 
+  @Index()
   @Column()
   type!: string; // sqlite | libsql | remote
 
@@ -17,6 +18,15 @@ export class Database {
 
   @Column({ nullable: true })
   encryptedToken?: string;
+
+  @Column({ nullable: true })
+  subdomain?: string;
+
+  @Column({ default: 'inactive' })
+  status!: 'inactive' | 'active' | 'error';
+
+  @Column({ type: 'simple-json', nullable: true })
+  metadata?: Record<string, unknown>;
 
   @ManyToOne(() => Project)
   project!: Project;

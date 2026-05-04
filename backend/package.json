@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "fastify": "^4.21.0",
-    "@fastify/jwt": "^7.0.0",
     "reflect-metadata": "^0.1.13",
     "typeorm": "^0.3.17",
     "sqlite3": "^5.1.6",

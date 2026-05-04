@@ -26,8 +26,6 @@ async function authRoutes(app) {
             ]);
             return reply.send({
                 user: { id: user.id, email: user.email },
-                accessToken: session.accessToken,
-                refreshToken: session.refreshToken,
             });
         }
         catch (err) {
@@ -68,8 +66,6 @@ async function authRoutes(app) {
         ]);
         return reply.send({
             user: { id: session.user.id, email: session.user.email },
-            accessToken: session.accessToken,
-            refreshToken: session.refreshToken,
         });
     });
     app.post('/auth/logout', async (request, reply) => {

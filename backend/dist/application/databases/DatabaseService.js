@@ -71,13 +71,6 @@ class DatabaseService {
             metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
             project,
         }));
-        function deriveDatabaseName(name, sourceName, sourcePath) {
-            const explicitName = name?.trim();
-            if (explicitName)
-                return explicitName;
-            const candidate = sourceName || (sourcePath ? path_1.default.basename(sourcePath) : '');
-            return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
-        }
         const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
         database.url = managedPath;
         database.status = 'active';

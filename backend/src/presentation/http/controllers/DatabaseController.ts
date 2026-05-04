@@ -7,7 +7,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
 
   app.get('/databases', { preHandler: [app.authenticate as any] }, async (_request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(_request, reply, 'databases.read'))) return;
-    const databases = await databaseService.listDatabases();
+    const query = (_request.query as any) || {};
+    const databases = await databaseService.listDatabases(query.projectId);
     return reply.send({ databases });
   });
 
@@ -33,6 +34,29 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const database = await databaseService.getDatabase(id);
     if (!database) return reply.status(404).send({ error: 'database not found' });
     return reply.send({ database });
+  });
+
+  app.patch('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const body = request.body as any;
+    try {
+      const database = await databaseService.updateDatabase(id, body);
+      return reply.send({ database });
+    } catch (err: any) {
+      return reply.status(404).send({ error: err.message });
+    }
+  });
+
+  app.delete('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    try {
+      const result = await databaseService.deleteDatabase(id);
+      return reply.send(result);
+    } catch (err: any) {
+      return reply.status(404).send({ error: err.message });
+    }
   });
 
   app.patch('/databases/:id/rotate-token', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {

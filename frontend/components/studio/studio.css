@@ -309,7 +309,7 @@
 }
 
 .studio-result-count {
-  color: #10b981;
+  color: var(--studio-muted);
   font-size: 12px;
 }
 

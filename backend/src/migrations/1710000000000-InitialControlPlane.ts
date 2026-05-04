@@ -130,12 +130,32 @@ export class InitialControlPlane1710000000000 implements MigrationInterface {
       )
     `);
 
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "database_migrations" (
+        "id" varchar PRIMARY KEY NOT NULL,
+        "name" varchar NOT NULL,
+        "checksum" varchar NOT NULL UNIQUE,
+        "statements" text,
+        "source" varchar,
+        "status" varchar NOT NULL DEFAULT ('pending'),
+        "errorMessage" varchar,
+        "databaseId" varchar NOT NULL,
+        "actorId" varchar,
+        "appliedAt" datetime NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        "updatedAt" datetime NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        CONSTRAINT "FK_database_migrations_database" FOREIGN KEY ("databaseId") REFERENCES "databases" ("id") ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "FK_database_migrations_actor" FOREIGN KEY ("actorId") REFERENCES "users" ("id") ON DELETE SET NULL ON UPDATE NO ACTION
+      )
+    `);
+    await queryRunner.query('CREATE INDEX IF NOT EXISTS "IDX_database_migrations_name" ON "database_migrations" ("name")');
+
     await queryRunner.query('CREATE INDEX IF NOT EXISTS "IDX_audit_logs_action" ON "audit_logs" ("action")');
     await queryRunner.query('CREATE INDEX IF NOT EXISTS "IDX_databases_type" ON "databases" ("type")');
     await queryRunner.query('CREATE INDEX IF NOT EXISTS "IDX_databases_status" ON "databases" ("status")');
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query('DROP TABLE IF EXISTS "database_migrations"');
     await queryRunner.query('DROP TABLE IF EXISTS "audit_logs"');
     await queryRunner.query('DROP TABLE IF EXISTS "sessions"');
     await queryRunner.query('DROP TABLE IF EXISTS "project_members"');

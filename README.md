@@ -2,6 +2,10 @@
 
 This repository will host a self-hosted platform to manage SQLite/libsql databases.
 
+Deployment guide:
+
+- See [COOLIFY.md](COOLIFY.md) for the recommended Coolify setup, volumes, subdomains and discovery/adoption flow.
+
 What I added in this step:
 
 - Initial TODO plan updated.

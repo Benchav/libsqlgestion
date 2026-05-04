@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { parseCookies } from '../../infrastructure/security/cookies';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const CSRF_COOKIE_NAME = 'libsqlite.csrfToken.v2';
 const CSRF_EXEMPT_PATHS = [
   '/api/v1/auth/login',
   '/api/v1/auth/register',
@@ -20,8 +21,8 @@ export function requireCsrf(request: FastifyRequest, reply: FastifyReply) {
   if (CSRF_EXEMPT_PATHS.some((path) => request.url.startsWith(path))) return true;
 
   const cookies = parseCookies(request.headers.cookie);
-  const cookieToken = cookies['libsqlite.csrfToken'];
-  const headerToken = request.headers['x-csrf-token'];
+  const cookieToken = cookies[CSRF_COOKIE_NAME] || cookies['libsqlite.csrfToken'];
+  const headerToken = request.headers['x-csrf-token-v2'] || request.headers['x-csrf-token'];
   const provided = Array.isArray(headerToken) ? headerToken[0] : headerToken;
 
   if (!cookieToken || !provided || cookieToken !== provided) {

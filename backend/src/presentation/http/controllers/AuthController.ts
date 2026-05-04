@@ -18,7 +18,7 @@ function issueSessionCookies(accessToken: string, refreshToken: string) {
     cookies: [
       sessionCookie('libsqlite.accessToken', accessToken, ACCESS_TOKEN_MAX_AGE),
       sessionCookie('libsqlite.refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE),
-      csrfCookie('libsqlite.csrfToken', csrfToken, CSRF_TOKEN_MAX_AGE),
+      csrfCookie('libsqlite.csrfToken.v2', csrfToken, CSRF_TOKEN_MAX_AGE),
     ],
   };
 }
@@ -87,6 +87,7 @@ export default async function authRoutes(app: FastifyInstance) {
       clearSessionCookie('libsqlite.accessToken'),
       clearSessionCookie('libsqlite.refreshToken'),
       clearCsrfCookie('libsqlite.csrfToken'),
+      clearCsrfCookie('libsqlite.csrfToken.v2'),
     ]);
     return reply.send({ ok: true });
   });

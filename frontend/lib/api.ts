@@ -54,8 +54,9 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 
   const method = String(init.method || 'GET').toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-    const csrfToken = getCookie('libsqlite.csrfToken');
+    const csrfToken = getCookie('libsqlite.csrfToken.v2') || getCookie('libsqlite.csrfToken');
     if (csrfToken) {
+      headers.set('x-csrf-token-v2', csrfToken);
       headers.set('x-csrf-token', csrfToken);
     }
   }

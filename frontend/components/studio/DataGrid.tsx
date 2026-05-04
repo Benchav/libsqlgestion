@@ -19,6 +19,7 @@ type Props = {
   onCellEdit: (rowIndex: number, column: string, value: unknown) => void;
   onDeleteRow: (rowIndex: number) => void;
   onAddRow: () => void;
+  onInsertRow: () => void;
   loading: boolean;
 };
 
@@ -36,6 +37,7 @@ export function DataGrid({
   onCellEdit,
   onDeleteRow,
   onAddRow,
+  onInsertRow,
   loading,
 }: Props) {
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
@@ -142,7 +144,14 @@ export function DataGrid({
             onClick={onAddRow}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors text-xs font-medium"
           >
-            <Plus size={14} /> Add row
+            <Plus size={14} /> Quick add
+          </button>
+
+          <button
+            onClick={onInsertRow}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/20 transition-colors text-xs font-medium"
+          >
+            <Plus size={14} /> Insert row
           </button>
         </div>
       </div>

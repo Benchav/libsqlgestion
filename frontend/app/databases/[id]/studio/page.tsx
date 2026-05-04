@@ -7,7 +7,7 @@ import { AppShell } from '../../../../components/AppShell';
 import { TableSidebar } from '../../../../components/studio/TableSidebar';
 import { DataGrid } from '../../../../components/studio/DataGrid';
 import { SqlRunner } from '../../../../components/studio/SqlRunner';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, X } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
 type TableSchema = { table: string; columns: ColumnMeta[]; foreignKeys: unknown[] };
@@ -32,6 +32,12 @@ export default function StudioPage() {
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('ASC');
   const [gridLoading, setGridLoading] = useState(false);
+
+  // Manual insert state
+  const [isInsertOpen, setIsInsertOpen] = useState(false);
+  const [insertValues, setInsertValues] = useState<Record<string, string>>({});
+  const [insertSaving, setInsertSaving] = useState(false);
+  const [insertError, setInsertError] = useState('');
 
   // SQL runner state
   const [sqlResult, setSqlResult] = useState<{ ok: boolean; rows?: unknown[]; error?: string; changes?: number } | null>(null);
@@ -102,6 +108,7 @@ export default function StudioPage() {
     setPage(0);
     setSortColumn(null);
     setSortDir('ASC');
+    setIsInsertOpen(false);
   }
 
   function handleSort(column: string, dir: 'ASC' | 'DESC') {
@@ -204,6 +211,58 @@ export default function StudioPage() {
     }
   }
 
+  function handleOpenInsertRow() {
+    if (!currentTableSchema) return;
+    const initialValues: Record<string, string> = {};
+    currentTableSchema.columns.forEach((column) => {
+      initialValues[column.name] = '';
+    });
+    setInsertValues(initialValues);
+    setInsertError('');
+    setIsInsertOpen(true);
+  }
+
+  async function handleInsertRow() {
+    if (!activeTable || !currentTableSchema) return;
+
+    const insertColumns = currentTableSchema.columns;
+    const missingRequired = insertColumns
+      .filter((column) => column.notnull === 1 && column.pk !== 1)
+      .find((column) => insertValues[column.name] === undefined || insertValues[column.name].trim() === '');
+
+    if (missingRequired) {
+      setInsertError(`Column "${missingRequired.name}" is required.`);
+      return;
+    }
+
+    const columnsSql = insertColumns.map((column) => `"${column.name}"`).join(', ');
+    const placeholders = insertColumns.map(() => '?').join(', ');
+    const params = insertColumns.map((column) => {
+      const rawValue = insertValues[column.name];
+      if (rawValue === undefined || rawValue.trim() === '') return null;
+      return rawValue;
+    });
+
+    setInsertSaving(true);
+    setInsertError('');
+    try {
+      await apiRequest(`/databases/${dbId}/query`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sql: `INSERT INTO "${activeTable}" (${columnsSql}) VALUES (${placeholders})`,
+          params,
+        }),
+      });
+      setIsInsertOpen(false);
+      await loadTableData();
+      loadSchema();
+    } catch (err: any) {
+      setInsertError(err.message);
+    } finally {
+      setInsertSaving(false);
+    }
+  }
+
   async function handleSqlExecute(sql: string) {
     setSqlLoading(true);
     setSqlResult(null);
@@ -280,6 +339,7 @@ export default function StudioPage() {
                 onCellEdit={handleCellEdit}
                 onDeleteRow={handleDeleteRow}
                 onAddRow={handleAddRow}
+                onInsertRow={handleOpenInsertRow}
                 loading={gridLoading}
               />
             ) : activeTab === 'data' && !activeTable ? (
@@ -296,6 +356,98 @@ export default function StudioPage() {
           </div>
         </div>
       </div>
+
+      {isInsertOpen && activeTable && currentTableSchema && (
+        <InsertRowModal
+          tableName={activeTable}
+          columns={currentTableSchema.columns}
+          values={insertValues}
+          saving={insertSaving}
+          error={insertError}
+          onClose={() => setIsInsertOpen(false)}
+          onChange={(column, value) => setInsertValues((current) => ({ ...current, [column]: value }))}
+          onSave={handleInsertRow}
+        />
+      )}
     </AppShell>
+  );
+}
+
+function InsertRowModal({
+  tableName,
+  columns,
+  values,
+  saving,
+  error,
+  onClose,
+  onChange,
+  onSave,
+}: {
+  tableName: string;
+  columns: ColumnMeta[];
+  values: Record<string, string>;
+  saving: boolean;
+  error: string;
+  onClose: () => void;
+  onChange: (column: string, value: string) => void;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
+      <div className="w-full max-w-3xl rounded-xl border border-zinc-800/80 bg-[#0f0f0f] shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-800/80 px-6 py-4">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-100">Insert Row</h2>
+            <p className="mt-1 text-sm text-zinc-400">Fill the fields for {tableName} and save a new record.</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="max-h-[60vh] overflow-auto px-6 py-5 custom-scrollbar">
+          {error && (
+            <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {columns.map((column) => (
+              <div key={column.name} className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-medium text-zinc-300">
+                    {column.name}
+                    {column.pk ? <span className="ml-2 text-[10px] uppercase tracking-wider text-amber-500">pk</span> : null}
+                  </label>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">{column.type || 'ANY'}</span>
+                </div>
+                <input
+                  type="text"
+                  value={values[column.name] || ''}
+                  onChange={(event) => onChange(column.name, event.target.value)}
+                  placeholder={column.notnull ? 'Required' : 'Optional / NULL'}
+                  className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 border-t border-zinc-800/80 px-6 py-4">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Insert row'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

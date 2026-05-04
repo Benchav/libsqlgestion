@@ -4,6 +4,42 @@ import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { decrypt } from '../../infrastructure/crypto';
 
+type SchemaEntry = {
+  table: string;
+  kind: 'table' | 'view';
+  rowCount: number;
+  columns: unknown[];
+  foreignKeys: unknown[];
+};
+
+function quoteIdentifier(identifier: string) {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+async function loadSchemaEntries(client: { execute: (sql: string) => Promise<{ rows: unknown[] }>; all?: (sql: string) => Promise<unknown[]> }, kind: 'table' | 'view') {
+  const objects = await client.execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+  const entries: SchemaEntry[] = [];
+  const rows = objects.rows as Array<{ name: string }>;
+
+  for (const row of rows) {
+    const tableName = row.name;
+    const columnsResult = await client.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
+    const foreignKeysResult = await client.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
+    const countResult = await client.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`);
+    const rowCount = Number((countResult.rows as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+
+    entries.push({
+      table: tableName,
+      kind,
+      rowCount,
+      columns: columnsResult.rows,
+      foreignKeys: foreignKeysResult.rows,
+    });
+  }
+
+  return entries;
+}
+
 export class SchemaService {
   private databaseRepo = AppDataSource.getRepository(Database);
 
@@ -16,17 +52,9 @@ export class SchemaService {
 
       const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
       try {
-        const tables = await client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-        const detailed = [] as Array<Record<string, unknown>>;
-
-        const tableRows = tables.rows as unknown as Array<{ name: string }>;
-        for (const row of tableRows) {
-          const columns = await client.execute(`PRAGMA table_info(${row.name})`);
-          const foreignKeys = await client.execute(`PRAGMA foreign_key_list(${row.name})`);
-          detailed.push({ table: row.name, columns: columns.rows, foreignKeys: foreignKeys.rows });
-        }
-
-        return { tables: detailed };
+        const tables = await loadSchemaEntries(client, 'table');
+        const views = await loadSchemaEntries(client, 'view');
+        return { tables, views };
       } finally {
         client.close();
       }
@@ -34,16 +62,20 @@ export class SchemaService {
 
     const client = new SqliteClient(database.url || '');
     try {
-      const tables = (await client.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")) as Array<{ name: string }>;
-      const detailed = [] as Array<Record<string, unknown>>;
+      const tables = await loadSchemaEntries(
+        {
+          execute: async (sql: string) => ({ rows: (await client.all(sql)) as unknown[] }),
+        },
+        'table',
+      );
+      const views = await loadSchemaEntries(
+        {
+          execute: async (sql: string) => ({ rows: (await client.all(sql)) as unknown[] }),
+        },
+        'view',
+      );
 
-      for (const table of tables) {
-        const columns = (await client.all(`PRAGMA table_info(${table.name})`)) as Array<Record<string, unknown>>;
-        const foreignKeys = (await client.all(`PRAGMA foreign_key_list(${table.name})`)) as Array<Record<string, unknown>>;
-        detailed.push({ table: table.name, columns, foreignKeys });
-      }
-
-      return { tables: detailed };
+      return { tables, views };
     } finally {
       client.close();
     }

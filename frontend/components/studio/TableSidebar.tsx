@@ -5,24 +5,28 @@ import { Search, RotateCw, LayoutGrid } from 'lucide-react';
 
 type TableInfo = {
   table: string;
+  kind: 'table' | 'view';
+  rowCount: number;
   columns: Array<{ name: string; type: string; pk: number }>;
 };
 
 type Props = {
   tables: TableInfo[];
   activeTable: string | null;
+  activeKind: 'table' | 'view';
   activeTab: 'data' | 'sql';
   onSelectTable: (table: string) => void;
+  onSelectKind: (kind: 'table' | 'view') => void;
   onSelectTab: (tab: 'data' | 'sql') => void;
   onRefresh: () => void;
 };
 
-export function TableSidebar({ tables, activeTable, activeTab, onSelectTable, onSelectTab, onRefresh }: Props) {
+export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh }: Props) {
   const [query, setQuery] = useState('');
 
   const visibleTables = useMemo(
-    () => tables.filter((table) => table.table.toLowerCase().includes(query.toLowerCase())),
-    [tables, query],
+    () => tables.filter((table) => table.kind === activeKind && table.table.toLowerCase().includes(query.toLowerCase())),
+    [tables, query, activeKind],
   );
 
   return (
@@ -69,14 +73,26 @@ export function TableSidebar({ tables, activeTable, activeTab, onSelectTable, on
         </div>
 
         <div className="flex items-center gap-1">
-          <button className="px-3 py-1 rounded-full bg-zinc-800 text-zinc-200 text-xs font-medium">Tables</button>
-          <button className="px-3 py-1 rounded-full text-zinc-500 hover:text-zinc-300 text-xs font-medium transition-colors">Views</button>
+          <button
+            type="button"
+            onClick={() => onSelectKind('table')}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${activeKind === 'table' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Tables
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectKind('view')}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${activeKind === 'view' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Views
+          </button>
         </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 pb-4 custom-scrollbar">
         {visibleTables.length === 0 && (
-          <div className="px-3 py-2 text-zinc-500 text-xs text-center">No tables found</div>
+          <div className="px-3 py-2 text-zinc-500 text-xs text-center">No {activeKind === 'table' ? 'tables' : 'views'} found</div>
         )}
         <div className="flex flex-col gap-0.5">
           {visibleTables.map((t) => (
@@ -98,7 +114,7 @@ export function TableSidebar({ tables, activeTable, activeTab, onSelectTable, on
                 <span className="font-medium truncate">{t.table}</span>
               </div>
               <span className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                {t.columns.length}
+                {t.rowCount}
               </span>
             </button>
           ))}

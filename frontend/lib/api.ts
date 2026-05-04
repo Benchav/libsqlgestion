@@ -36,9 +36,6 @@ async function tryRefreshToken(): Promise<boolean> {
     });
 
     if (!response.ok) return false;
-
-    const data = await response.json();
-    setSession(data.accessToken, data.refreshToken);
     return true;
   } catch {
     return false;
@@ -62,12 +59,15 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   });
 
   // If we get a 401, attempt a silent refresh and retry once
-  if (response.status === 401 && token) {
+  if (response.status === 401) {
     const refreshed = await tryRefreshToken();
     if (refreshed) {
       const retryHeaders = new Headers(init.headers);
       retryHeaders.set('Content-Type', 'application/json');
-      retryHeaders.set('Authorization', `Bearer ${getToken()}`);
+      const retryToken = getToken();
+      if (retryToken) {
+        retryHeaders.set('Authorization', `Bearer ${retryToken}`);
+      }
       response = await fetch(`${API_URL}${path}`, {
         ...init,
         headers: retryHeaders,

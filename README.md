@@ -29,7 +29,7 @@ The backend is implemented and validated. It includes:
 
  The frontend admin panel is scaffolded in `frontend/` and now includes a working dashboard, projects, databases, database detail, studio, login, and settings views.
 
- Session cookies are `HttpOnly` and the backend accepts them alongside bearer tokens for API requests.
+ Session cookies are `HttpOnly` and the backend uses them for the default browser flow.
 
 ## Documentation
 

@@ -9,7 +9,7 @@ Quick start (local):
 3. Run in dev: `npm run dev` (requires `ts-node-dev`)
 
 Notes:
-- The backend uses opaque access tokens + refresh tokens. In the default frontend flow, they are also written to `HttpOnly` cookies.
+- The backend uses opaque access tokens + refresh tokens and writes them to `HttpOnly` cookies for the browser flow.
 - The project uses TypeORM migrations for the control plane. For production, keep migrations enabled and back up the control database.
 - `MASTER_KEY` must be 32 bytes in hex (64 hex chars). It's used to encrypt database tokens.
 

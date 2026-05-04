@@ -26,8 +26,6 @@ export default async function authRoutes(app: FastifyInstance) {
       ]);
       return reply.send({
         user: { id: user.id, email: user.email },
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
       });
     } catch (err: any) {
       return reply.status(400).send({ error: err.message });
@@ -65,8 +63,6 @@ export default async function authRoutes(app: FastifyInstance) {
     ]);
     return reply.send({
       user: { id: session.user.id, email: session.user.email },
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
     });
   });
 

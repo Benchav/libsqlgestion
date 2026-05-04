@@ -20,11 +20,10 @@ export default function LoginPage() {
     const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
 
     try {
-      const response = await apiRequest<{ accessToken: string; refreshToken: string }>(endpoint, {
+      await apiRequest(endpoint, {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
-      void response;
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Authentication failed');

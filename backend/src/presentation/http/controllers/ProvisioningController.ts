@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ProvisioningService } from '../../../application/provisioning/ProvisioningService';
-import { ensurePermission } from '../guards';
+import { ensurePermission, ensureProjectAccess } from '../guards';
 
 export default async function provisioningRoutes(app: FastifyInstance) {
   const provisioningService = new ProvisioningService();
@@ -9,6 +9,8 @@ export default async function provisioningRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const body = request.body as any;
     if (!body.projectId || !body.name) return reply.status(400).send({ error: 'projectId and name required' });
+    const access = await ensureProjectAccess(request, reply, body.projectId);
+    if (!access) return;
     const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
     return reply.status(201).send(result);
   });
@@ -17,6 +19,8 @@ export default async function provisioningRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const body = request.body as any;
     if (!body.projectId || !body.name || !body.url || !body.token) return reply.status(400).send({ error: 'projectId, name, url and token required' });
+    const access = await ensureProjectAccess(request, reply, body.projectId);
+    if (!access) return;
     const result = await provisioningService.provisionLibsql(body.projectId, body);
     return reply.status(201).send(result);
   });

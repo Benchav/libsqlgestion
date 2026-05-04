@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ProjectService } from '../../../application/projects/ProjectService';
 import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { User } from '../../../domain/entities/User';
-import { ensurePermission } from '../guards';
+import { ensurePermission, ensureProjectAccess } from '../guards';
 import { AuditService } from '../../../application/audit/AuditService';
 
 export default async function projectRoutes(app: FastifyInstance) {
@@ -34,6 +34,8 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get('/projects/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'projects.read'))) return;
     const { id } = request.params as any;
+    const access = await ensureProjectAccess(request, reply, id);
+    if (!access) return;
     const project = await projectService.getProject(id);
     if (!project) return reply.status(404).send({ error: 'project not found' });
     return reply.send({ project });
@@ -42,6 +44,8 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.delete('/projects/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'projects.write'))) return;
     const { id } = request.params as any;
+    const access = await ensureProjectAccess(request, reply, id);
+    if (!access) return;
     try {
       const result = await projectService.deleteProject(id);
       const userId = (request as any).user?.sub;

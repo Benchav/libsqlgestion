@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
-import { ensurePermission } from '../guards';
+import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
 
 export default async function databaseRoutes(app: FastifyInstance) {
   const databaseService = new DatabaseService();
@@ -31,6 +31,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.get('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.read'))) return;
     const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
     const database = await databaseService.getDatabase(id);
     if (!database) return reply.status(404).send({ error: 'database not found' });
     return reply.send({ database });
@@ -40,6 +42,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;
     const body = request.body as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
     try {
       const database = await databaseService.updateDatabase(id, body);
       return reply.send({ database });
@@ -51,6 +55,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.delete('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
     try {
       const result = await databaseService.deleteDatabase(id);
       return reply.send(result);
@@ -62,6 +68,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.patch('/databases/:id/rotate-token', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
     const result = await databaseService.rotateToken(id);
     return reply.send({ database: result.database, token: result.token });
   });
@@ -69,6 +77,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.post('/databases/:id/test-connection', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.read'))) return;
     const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
     const result = await databaseService.testConnection(id);
     return reply.send(result);
   });

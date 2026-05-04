@@ -188,10 +188,10 @@ export default function DatabaseDetailPage() {
               Created {database?.createdAt ? new Date(database.createdAt).toLocaleDateString() : '—'}
             </p>
             <div className="hero-actions" style={{ marginTop: 12 }}>
-              <button className="button" onClick={() => router.push(`/databases/${id}/studio`)}>⊞ Open Studio</button>
-              <button className="button-secondary" onClick={() => router.push('/databases')}>← All databases</button>
-              <button className="button-secondary" onClick={handleTestConnection}>Test connection</button>
-              <button className="button-secondary" onClick={handleRotateToken}>Rotate token</button>
+              <button type="button" className="button" onClick={() => router.push(`/databases/${id}/studio`)}>⊞ Open Studio</button>
+              <button type="button" className="button-secondary" onClick={() => router.push('/databases')}>← All databases</button>
+              <button type="button" className="button-secondary" onClick={handleTestConnection}>Test connection</button>
+              <button type="button" className="button-secondary" onClick={handleRotateToken}>Rotate token</button>
             </div>
           </div>
           <div className="stack" style={{ gap: 8, minWidth: 160 }}>
@@ -216,6 +216,7 @@ export default function DatabaseDetailPage() {
       <div className="toolbar" style={{ gap: 0, borderRadius: 16, overflow: 'hidden' }}>
         {(['schema', 'query', 'migrations'] as const).map((tab) => (
           <button
+            type="button"
             key={tab}
             className={activeTab === tab ? 'button' : 'button-secondary'}
             style={{ borderRadius: 0, flex: 1, textTransform: 'capitalize' }}
@@ -297,7 +298,7 @@ export default function DatabaseDetailPage() {
               }}
             />
             <div className="toolbar">
-              <button className="button" onClick={handleQuery} disabled={queryLoading || !sql.trim()}>
+              <button type="button" className="button" onClick={handleQuery} disabled={queryLoading || !sql.trim()}>
                 {queryLoading ? 'Running…' : '▶ Execute'}
               </button>
               <span className="small muted">Ctrl+Enter to run</span>
@@ -366,9 +367,9 @@ export default function DatabaseDetailPage() {
               onChange={(e) => setMigrationSql(e.target.value)}
               style={{ fontFamily: 'var(--font-mono)', minHeight: 120 }}
             />
-            <button className="button" onClick={handleApplyMigration} disabled={migrationLoading || !migrationName.trim() || !migrationSql.trim()}>
-              {migrationLoading ? 'Applying…' : '↑ Apply migration'}
-            </button>
+              <button type="button" className="button" onClick={handleApplyMigration} disabled={migrationLoading || !migrationName.trim() || !migrationSql.trim()}>
+                {migrationLoading ? 'Applying…' : '↑ Apply migration'}
+              </button>
           </div>
 
           <div className="card" style={{ marginTop: 12 }}>

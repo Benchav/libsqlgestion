@@ -1,5 +1,7 @@
 <div align="center">
   <img src="./docs/assets/banner.png" alt="LibSQLite Banner" width="100%" />
+  <br />
+  <img src="./docs/assets/logo.png" alt="LibSQLite Logo" width="120" height="120" />
 
   # LibSQLite
 
@@ -123,5 +125,6 @@ Deep-dive into our extensive guides to master your self-hosted infrastructure:
 
 <div align="center">
   Built for developers who demand control over their data.<br>
+  Created by <b><a href="https://joshuachavez.vercel.app" target="_blank">Joshua Chávez Lau</a></b><br><br>
   <b><a href="#">Report Bug</a></b> • <b><a href="#">Request Feature</a></b>
 </div>

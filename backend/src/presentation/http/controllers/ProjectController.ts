@@ -3,9 +3,11 @@ import { ProjectService } from '../../../application/projects/ProjectService';
 import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { User } from '../../../domain/entities/User';
 import { ensurePermission } from '../guards';
+import { AuditService } from '../../../application/audit/AuditService';
 
 export default async function projectRoutes(app: FastifyInstance) {
   const projectService = new ProjectService();
+  const auditService = new AuditService();
 
   app.get('/projects', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'projects.read'))) return;
@@ -25,6 +27,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     if (!owner) return reply.status(404).send({ error: 'owner not found' });
 
     const project = await projectService.createProject(owner, body.name);
+    await auditService.record({ action: 'project.create', resourceType: 'project', resourceId: project.id, actorId: userId });
     return reply.status(201).send({ project });
   });
 
@@ -34,5 +37,18 @@ export default async function projectRoutes(app: FastifyInstance) {
     const project = await projectService.getProject(id);
     if (!project) return reply.status(404).send({ error: 'project not found' });
     return reply.send({ project });
+  });
+
+  app.delete('/projects/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'projects.write'))) return;
+    const { id } = request.params as any;
+    try {
+      const result = await projectService.deleteProject(id);
+      const userId = (request as any).user?.sub;
+      await auditService.record({ action: 'project.delete', resourceType: 'project', resourceId: id, actorId: userId });
+      return reply.send(result);
+    } catch (err: any) {
+      return reply.status(404).send({ error: err.message });
+    }
   });
 }

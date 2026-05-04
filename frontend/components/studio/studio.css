@@ -605,7 +605,7 @@
 
 .studio-sort-indicator {
   font-size: 11px;
-  color: var(--accent);
+  color: var(--studio-accent);
   margin-left: 2px;
 }
 

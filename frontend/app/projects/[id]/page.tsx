@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { AppShell } from '../../../components/AppShell';
-import { ShellFrame } from '../../../components/ShellFrame';
 import { apiRequest } from '../../../lib/api';
+import { Database, Plus, ChevronRight, Activity, Users, HardDrive, X } from 'lucide-react';
 
 type ProjectDetail = {
   id: string;
@@ -23,13 +22,7 @@ export default function ProjectDetailPage() {
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState('');
-
-  // Create database form
-  const [dbName, setDbName] = useState('');
-  const [dbType, setDbType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
-  const [dbUrl, setDbUrl] = useState('');
-  const [dbToken, setDbToken] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   async function loadProject() {
     try {
@@ -42,28 +35,198 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     if (id) loadProject();
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id]);
 
-  async function handleCreateDatabase(e: React.FormEvent) {
+  if (!project && !error) {
+    return (
+      <AppShell>
+        <div className="flex items-center justify-center h-full text-zinc-500">Loading project details...</div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell>
+      <div className="p-6 max-w-7xl mx-auto w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center text-sm text-zinc-400 mb-4">
+            <span className="cursor-pointer hover:text-zinc-200" onClick={() => router.push('/projects')}>Projects</span>
+            <ChevronRight size={14} className="mx-2" />
+            <span className="text-zinc-100">{project?.name}</span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center">
+                <Activity className="text-emerald-500" size={24} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-zinc-100">{project?.name}</h1>
+                <div className="text-sm text-zinc-400 mt-1 flex items-center gap-2">
+                  <span>Created {new Date(project?.createdAt || '').toLocaleDateString()}</span>
+                  <span>·</span>
+                  <span>Owner: <strong className="text-zinc-300">{project?.owner?.email || '—'}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsCreateModalOpen(true)}
+                className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+              >
+                <Plus size={16} /> New Database
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Databases List */}
+            <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <Database size={16} className="text-zinc-400" />
+                  <h2 className="font-medium text-zinc-200">Databases</h2>
+                </div>
+                <span className="bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded-full text-xs font-medium">
+                  {project?.databases?.length || 0}
+                </span>
+              </div>
+
+              {!project?.databases?.length ? (
+                <div className="p-12 text-center flex flex-col items-center justify-center">
+                  <div className="w-12 h-12 bg-zinc-800/50 rounded-full flex items-center justify-center mb-4">
+                    <HardDrive className="text-zinc-500" size={24} />
+                  </div>
+                  <h3 className="text-zinc-200 font-medium mb-1">No databases</h3>
+                  <p className="text-zinc-500 text-sm mb-6 max-w-md">This project doesn't have any databases yet. Create one to get started.</p>
+                  <button 
+                    onClick={() => setIsCreateModalOpen(true)}
+                    className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                  >
+                    <Plus size={16} /> Create Database
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-zinc-800/80 text-zinc-400 text-xs font-medium">
+                        <th className="py-3 px-6">Name</th>
+                        <th className="py-3 px-6">Type</th>
+                        <th className="py-3 px-6">Status</th>
+                        <th className="py-3 px-6">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {project.databases.map((db) => (
+                        <tr 
+                          key={db.id} 
+                          className="border-b border-zinc-800/40 hover:bg-zinc-800/20 transition-colors cursor-pointer group"
+                          onClick={() => router.push(`/databases/${db.id}`)}
+                        >
+                          <td className="py-3 px-6">
+                            <span className="font-medium text-zinc-200 group-hover:text-blue-400 transition-colors">{db.name}</span>
+                          </td>
+                          <td className="py-3 px-6">
+                            <span className="bg-zinc-800 text-zinc-300 border border-zinc-700/50 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider">
+                              {db.type}
+                            </span>
+                          </td>
+                          <td className="py-3 px-6">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                              db.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                              db.status === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' : 
+                              'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            }`}>
+                              {db.status}
+                            </span>
+                          </td>
+                          <td className="py-3 px-6 text-zinc-500 text-xs">
+                            {new Date(db.createdAt).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Members */}
+            <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center gap-2">
+                <Users size={16} className="text-zinc-400" />
+                <h2 className="font-medium text-zinc-200">Project Members</h2>
+              </div>
+              <div className="p-4">
+                {!project?.members?.length ? (
+                  <p className="text-sm text-zinc-500 text-center py-4">No additional members.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {project.members.map((m) => (
+                      <div key={m.id} className="flex items-center gap-3 p-2 hover:bg-zinc-800/30 rounded-lg transition-colors">
+                        <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0 border border-zinc-700">
+                          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${m.user?.email || 'User'}&backgroundColor=27272a`} alt="User" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-zinc-200 truncate">{m.user?.email || '—'}</p>
+                          <p className="text-xs text-zinc-500 font-mono truncate">{m.user?.id || '—'}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {isCreateModalOpen && (
+        <CreateDatabaseModal 
+          projectId={id}
+          onClose={() => setIsCreateModalOpen(false)} 
+          onSuccess={() => {
+            setIsCreateModalOpen(false);
+            loadProject();
+          }}
+        />
+      )}
+    </AppShell>
+  );
+}
+
+function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: string, onClose: () => void, onSuccess: () => void }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleCreate(e: FormEvent) {
     e.preventDefault();
-    if (!dbName.trim()) return;
-    setCreating(true);
+    if (!name.trim()) return;
     setError('');
+    setCreating(true);
     try {
       await apiRequest('/databases', {
         method: 'POST',
-        body: JSON.stringify({
-          projectId: id,
-          name: dbName,
-          type: dbType,
-          url: dbUrl || undefined,
-          token: dbToken || undefined,
-        }),
+        body: JSON.stringify({ projectId, name, type, url: url || undefined, token: token || undefined }),
       });
-      setDbName('');
-      setDbUrl('');
-      setDbToken('');
-      await loadProject();
+      onSuccess();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -71,113 +234,82 @@ export default function ProjectDetailPage() {
     }
   }
 
-  if (!project && !error) {
-    return (
-      <AppShell>
-        <ShellFrame title="Loading…" subtitle="Fetching project details.">
-          <div className="card" style={{ padding: 32, textAlign: 'center' }}>
-            <p className="muted">Loading project…</p>
-          </div>
-        </ShellFrame>
-      </AppShell>
-    );
-  }
-
   return (
-    <AppShell>
-      {/* Header */}
-      <section className="hero">
-        <div className="hero-top">
-          <div className="hero-copy">
-            <span className="brand-badge">Project</span>
-            <h1>{project?.name || 'Project'}</h1>
-            <p>
-              Owner: <strong>{project?.owner?.email || '—'}</strong> ·
-              Created {project?.createdAt ? new Date(project.createdAt).toLocaleDateString() : '—'} ·
-              {project?.members?.length || 0} member{(project?.members?.length || 0) !== 1 ? 's' : ''}
-            </p>
-            <div className="hero-actions" style={{ marginTop: 12 }}>
-              <button type="button" className="button-secondary" onClick={() => router.push('/projects')}>← All projects</button>
-            </div>
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
+      <div className="bg-[#0f0f0f] border border-zinc-800/80 rounded-xl w-full max-w-[480px] p-6 shadow-2xl">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-100">Create Database</h2>
+            <p className="text-sm text-zinc-400 mt-1">Add a new database to this project.</p>
           </div>
-          <div className="card" style={{ minWidth: 140, textAlign: 'center' }}>
-            <div className="card-label">Databases</div>
-            <div className="card-value">{project?.databases?.length || 0}</div>
-          </div>
+          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors">
+            <X size={20} />
+          </button>
         </div>
-      </section>
 
-      {error ? <div className="badge danger" style={{ padding: '10px 16px' }}>{error}</div> : null}
-
-      {/* Create database */}
-      <ShellFrame title="Add database" subtitle="Provision a new SQLite file or register a remote libsql endpoint.">
-        <form className="stack" onSubmit={handleCreateDatabase}>
-          <div className="toolbar">
-            <input className="input" placeholder="Database name" value={dbName} onChange={(e) => setDbName(e.target.value)} style={{ flex: 1 }} />
-            <select className="input" value={dbType} onChange={(e) => setDbType(e.target.value as any)} style={{ width: 140 }}>
-              <option value="sqlite">SQLite</option>
-              <option value="libsql">libsql</option>
-              <option value="remote">Remote</option>
-            </select>
-          </div>
-          {dbType !== 'sqlite' && (
-            <div className="toolbar">
-              <input className="input" placeholder="URL" value={dbUrl} onChange={(e) => setDbUrl(e.target.value)} style={{ flex: 1 }} />
-              <input className="input" placeholder="Auth token" type="password" value={dbToken} onChange={(e) => setDbToken(e.target.value)} style={{ flex: 1 }} />
-            </div>
-          )}
-            <button className="button" type="submit" disabled={creating || !dbName.trim()} style={{ width: 'fit-content' }}>
-              {creating ? 'Creating…' : `+ Create ${dbType} database`}
-            </button>
-        </form>
-      </ShellFrame>
-
-      {/* Databases list */}
-      <ShellFrame title="Databases" subtitle={`${project?.databases?.length || 0} databases in this project.`}>
-        {!project?.databases?.length ? (
-          <div className="card" style={{ padding: 24, textAlign: 'center' }}>
-            <p className="muted">No databases in this project yet. Create one above.</p>
-          </div>
-        ) : (
-          <div className="card">
-            <table className="table">
-              <thead>
-                <tr><th>Name</th><th>Type</th><th>Status</th><th>Subdomain</th><th>Created</th></tr>
-              </thead>
-              <tbody>
-                {project.databases.map((db) => (
-                  <tr key={db.id} style={{ cursor: 'pointer' }} onClick={() => router.push(`/databases/${db.id}`)}>
-                    <td><strong>{db.name}</strong></td>
-                    <td><span className="badge">{db.type}</span></td>
-                    <td><span className={`badge ${db.status === 'active' ? 'success' : 'warning'}`}>{db.status}</span></td>
-                    <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{db.subdomain || '—'}</td>
-                    <td className="muted">{new Date(db.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {error && (
+          <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm">
+            {error}
           </div>
         )}
-      </ShellFrame>
 
-      {/* Members */}
-      {project?.members && project.members.length > 0 && (
-        <ShellFrame title="Members" subtitle="Users who have access to this project.">
-          <div className="card">
-            <table className="table">
-              <thead><tr><th>Email</th><th>ID</th></tr></thead>
-              <tbody>
-                {project.members.map((m) => (
-                  <tr key={m.id}>
-                    <td>{m.user?.email || '—'}</td>
-                    <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{m.user?.id || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Name</label>
+            <input 
+              type="text" 
+              placeholder="e.g. production-db" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+            />
           </div>
-        </ShellFrame>
-      )}
-    </AppShell>
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Engine</label>
+            <select 
+              value={type} 
+              onChange={(e) => setType(e.target.value as any)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+            >
+              <option value="sqlite">Local SQLite</option>
+              <option value="libsql">Local libsql</option>
+              <option value="remote">Remote Connection</option>
+            </select>
+          </div>
+
+          {type === 'remote' && (
+            <>
+              <div className="flex items-center gap-4">
+                <label className="w-20 text-sm font-medium text-zinc-300">URL</label>
+                <input 
+                  type="text" 
+                  placeholder="libsql://..." 
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+                />
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="w-20 text-sm font-medium text-zinc-300">Auth Token</label>
+                <input 
+                  type="password" 
+                  placeholder="eyJh..." 
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+                />
+              </div>
+            </>
+          )}
+
+          <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
+            <button type="submit" disabled={creating || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+              {creating ? 'Creating...' : 'Create Database'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }

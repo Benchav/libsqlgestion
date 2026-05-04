@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
-import { ShellFrame } from '../../../components/ShellFrame';
 import { apiRequest } from '../../../lib/api';
-import '../../../components/studio/studio.css';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -19,57 +18,15 @@ type DatabaseDetail = {
   project?: { id: string; name: string };
 };
 
-type TableSchema = {
-  table: string;
-  columns: Array<{ cid: number; name: string; type: string; notnull: number; pk: number }>;
-  foreignKeys: Array<Record<string, unknown>>;
-};
-
-type MigrationRecord = {
-  id: string;
-  name: string;
-  status: string;
-  appliedAt: string;
-  errorMessage?: string;
-};
-
-type QueryResult = {
-  ok: boolean;
-  rows?: unknown[];
-  result?: { changes: number; lastID: number };
-  rowsAffected?: number;
-  error?: string;
-};
-
-type ConnectionTestResult = {
-  ok: boolean;
-  details: string;
-};
-
 export default function DatabaseDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params?.id as string;
 
   const [database, setDatabase] = useState<DatabaseDetail | null>(null);
-  const [schema, setSchema] = useState<TableSchema[]>([]);
-  const [migrations, setMigrations] = useState<MigrationRecord[]>([]);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<'schema' | 'query' | 'migrations'>('schema');
-  const [expandedTable, setExpandedTable] = useState<string | null>(null);
-
-  // Query editor state
-  const [sql, setSql] = useState('');
-  const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
-  const [queryLoading, setQueryLoading] = useState(false);
-
-  // Migration state
-  const [migrationName, setMigrationName] = useState('');
-  const [migrationSql, setMigrationSql] = useState('');
-  const [migrationLoading, setMigrationLoading] = useState(false);
-
-  // Connection test state
-  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testMessage, setTestMessage] = useState('');
 
   async function loadDatabase() {
     try {
@@ -80,80 +37,24 @@ export default function DatabaseDetailPage() {
     }
   }
 
-  async function loadSchema() {
-    try {
-      const result = await apiRequest<{ tables: TableSchema[] }>(`/databases/${id}/schema`);
-      setSchema(result.tables || []);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  }
-
-  async function loadMigrations() {
-    try {
-      const result = await apiRequest<{ migrations: MigrationRecord[] }>(`/databases/${id}/migrations`);
-      setMigrations(result.migrations || []);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  }
-
   useEffect(() => {
-    if (id) {
-      loadDatabase();
-      loadSchema();
-      loadMigrations();
-    }
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleQuery() {
-    if (!sql.trim()) return;
-    setQueryLoading(true);
-    setQueryResult(null);
-    try {
-      const result = await apiRequest<QueryResult>(`/databases/${id}/query`, {
-        method: 'POST',
-        body: JSON.stringify({ sql }),
-      });
-      setQueryResult(result);
-      // Reload schema in case the query modified it
-      loadSchema();
-    } catch (err: any) {
-      setQueryResult({ ok: false, error: err.message });
-    } finally {
-      setQueryLoading(false);
-    }
-  }
-
-  async function handleApplyMigration() {
-    if (!migrationName.trim() || !migrationSql.trim()) return;
-    setMigrationLoading(true);
-    try {
-      await apiRequest(`/databases/${id}/migrations`, {
-        method: 'POST',
-        body: JSON.stringify({ name: migrationName, sql: migrationSql }),
-      });
-      setMigrationName('');
-      setMigrationSql('');
-      await Promise.all([loadMigrations(), loadSchema()]);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setMigrationLoading(false);
-    }
-  }
+    if (id) loadDatabase();
+  }, [id]);
 
   async function handleTestConnection() {
-    setTestResult(null);
+    setTestStatus('testing');
     try {
-      const result = await apiRequest<ConnectionTestResult>(`/databases/${id}/test-connection`, { method: 'POST' });
-      setTestResult(result);
+      const result = await apiRequest<{ ok: boolean; details: string }>(`/databases/${id}/test-connection`, { method: 'POST' });
+      setTestStatus(result.ok ? 'success' : 'error');
+      setTestMessage(result.details);
     } catch (err: any) {
-      setTestResult({ ok: false, details: err.message });
+      setTestStatus('error');
+      setTestMessage(err.message);
     }
   }
 
   async function handleRotateToken() {
+    if (!confirm('Rotate token? Active connections using the old token will be dropped.')) return;
     try {
       await apiRequest(`/databases/${id}/rotate-token`, { method: 'PATCH' });
       await loadDatabase();
@@ -165,229 +66,160 @@ export default function DatabaseDetailPage() {
   if (!database && !error) {
     return (
       <AppShell>
-        <ShellFrame title="Loading…" subtitle="Fetching database details.">
-          <div className="card" style={{ padding: 32, textAlign: 'center' }}>
-            <p className="muted">Loading database information…</p>
-          </div>
-        </ShellFrame>
+        <div className="flex items-center justify-center h-full text-zinc-500">Loading database details...</div>
       </AppShell>
     );
   }
 
   return (
     <AppShell>
-      <div className="studio-shell">
-        <div className="studio-topbar">
-          <div className="studio-breadcrumbs">
-            <button type="button" className="studio-chip" onClick={() => router.push('/databases')}>Databases</button>
-            <span className="studio-divider">/</span>
-            <span className="studio-current">{database?.name || 'Database'}</span>
+      <div className="p-6 max-w-7xl mx-auto w-full">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center text-sm text-zinc-400 mb-4">
+            <span className="cursor-pointer hover:text-zinc-200" onClick={() => router.push('/databases')}>Databases</span>
+            <ChevronRight size={14} className="mx-2" />
+            <span className="text-zinc-100">{database?.name}</span>
           </div>
 
-          <div className="studio-meta-row">
-            <span className={`badge ${database?.status === 'active' ? 'success' : database?.status === 'error' ? 'danger' : 'warning'}`}>{database?.status || '—'}</span>
-            {database?.subdomain ? <span className="badge">{database.subdomain}</span> : null}
-            <button type="button" className="studio-btn" onClick={() => router.push(`/databases/${id}/studio`)}>Open Studio</button>
-            <button type="button" className="studio-btn" onClick={handleTestConnection}>Test connection</button>
-            <button type="button" className="studio-btn" onClick={handleRotateToken}>Rotate token</button>
-          </div>
-        </div>
-
-        <div className="studio-workspace-intro compact">
-          <div>
-            <div className="studio-kicker">{database?.type || 'database'}</div>
-            <h1 className="studio-title">{database?.name || 'Database'}</h1>
-            <p className="studio-subtitle">
-              {database?.project ? <>Project: <strong>{database.project.name}</strong> · </> : null}
-              Created {database?.createdAt ? new Date(database.createdAt).toLocaleDateString() : '—'}
-            </p>
-          </div>
-        </div>
-
-        {testResult ? <div className={`studio-callout ${testResult.ok ? 'success' : 'danger'}`}>Connection: {testResult.details}</div> : null}
-
-        {error ? <div className="studio-callout danger">{error}</div> : null}
-
-        <div className="studio-tab-strip">
-          {(['schema', 'query', 'migrations'] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              className={`studio-tab ${activeTab === tab ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab === 'schema' ? 'Schema' : tab === 'query' ? 'Query' : 'Migrations'}
-            </button>
-          ))}
-        </div>
-
-        <div className="studio-panel">
-          {activeTab === 'schema' && (
-            <>
-              <div className="studio-panel-header compact">
-                <div>
-                  <h2>Schema browser</h2>
-                  <p>{schema.length} table{schema.length !== 1 ? 's' : ''} in this database.</p>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center">
+                <Database className="text-blue-500" size={24} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-3">
+                  {database?.name}
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                    database?.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                    database?.status === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' : 
+                    'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  }`}>
+                    {database?.status}
+                  </span>
+                </h1>
+                <div className="text-sm text-zinc-400 mt-1 flex items-center gap-2">
+                  <span className="uppercase tracking-wider font-semibold text-[11px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded">
+                    {database?.type}
+                  </span>
+                  <span>Created {new Date(database?.createdAt || '').toLocaleDateString()}</span>
+                  {database?.project && (
+                    <>
+                      <span>·</span>
+                      <span>Project: <strong className="text-zinc-300">{database.project.name}</strong></span>
+                    </>
+                  )}
                 </div>
               </div>
-              {schema.length === 0 ? (
-                <div className="studio-empty-state">No tables found. Use Query or Migrations to create one.</div>
-              ) : (
-                <div className="studio-schema-list dense">
-                  {schema.map((tableInfo) => (
-                    <button
-                      key={tableInfo.table}
-                      type="button"
-                      className={`studio-schema-item ${expandedTable === tableInfo.table ? 'active' : ''}`}
-                      onClick={() => setExpandedTable(expandedTable === tableInfo.table ? null : tableInfo.table)}
-                    >
-                      <span className="studio-schema-name">{tableInfo.table}</span>
-                      <span className="studio-schema-count">{tableInfo.columns.length}</span>
-                    </button>
-                  ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => router.push(`/databases/${id}/studio`)}
+                className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+              >
+                <Table2 size={16} /> Open Studio
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Connection Info */}
+            <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <Terminal size={16} className="text-zinc-400" />
+                  <h2 className="font-medium text-zinc-200">Connection Details</h2>
+                </div>
+                <button 
+                  onClick={handleTestConnection}
+                  disabled={testStatus === 'testing'}
+                  className="text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-md transition-colors"
+                >
+                  {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                </button>
+              </div>
+
+              {testStatus !== 'idle' && (
+                <div className={`px-6 py-3 border-b border-zinc-800/80 flex items-center gap-2 text-sm ${testStatus === 'success' ? 'bg-emerald-500/5 text-emerald-400' : 'bg-red-500/5 text-red-400'}`}>
+                  {testStatus === 'success' ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                  {testMessage}
                 </div>
               )}
 
-              {expandedTable ? (
-                <div className="studio-card slim">
-                  <table className="studio-mini-table">
-                    <thead>
-                      <tr>
-                        <th>Column</th>
-                        <th>Type</th>
-                        <th>Not null</th>
-                        <th>PK</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(schema.find((s) => s.table === expandedTable)?.columns || []).map((col) => (
-                        <tr key={col.name}>
-                          <td>{col.name}</td>
-                          <td>{col.type || 'ANY'}</td>
-                          <td>{col.notnull ? 'Yes' : 'No'}</td>
-                          <td>{col.pk ? 'PK' : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-            </>
-          )}
-
-          {activeTab === 'query' && (
-            <div className="studio-panel-grid split-wide">
-              <div className="studio-card">
-                <div className="studio-panel-header compact">
-                  <div>
-                    <h2>Query console</h2>
-                    <p>Run SQL and inspect output.</p>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Connection URL</label>
+                  <div className="flex items-center border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                    {database?.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database?.url || `http://localhost:3000/api/v1/databases/${id}/query`}
                   </div>
                 </div>
-                <div className="stack">
-                  <textarea
-                    className="studio-sql-mini compact"
-                    placeholder="SELECT * FROM your_table LIMIT 50;"
-                    value={sql}
-                    onChange={(e) => setSql(e.target.value)}
-                    onKeyDown={(e) => {
-                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                        e.preventDefault();
-                        handleQuery();
-                      }
-                    }}
-                  />
-                  <div className="toolbar">
-                    <button type="button" className="studio-btn studio-btn-primary" onClick={handleQuery} disabled={queryLoading || !sql.trim()}>
-                      {queryLoading ? 'Running…' : 'Execute'}
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Auth Token</label>
+                  <div className="flex items-center justify-between border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300">
+                    <span className="blur-[4px] select-none">eyJh... (Hidden for security)</span>
+                    <button onClick={handleRotateToken} className="text-blue-400 hover:text-blue-300 font-sans flex items-center gap-1.5 ml-4">
+                      <RefreshCw size={14} /> Rotate
                     </button>
-                    <span className="small muted">Ctrl+Enter</span>
                   </div>
                 </div>
-              </div>
-
-              {queryResult ? (
-                <div className="studio-card">
-                  {queryResult.ok ? (
-                    queryResult.rows && queryResult.rows.length > 0 ? (
-                      <div className="studio-result-wrap">
-                        <div className="studio-result-count">{queryResult.rows.length} row{queryResult.rows.length !== 1 ? 's' : ''} returned</div>
-                        <table className="studio-mini-table">
-                          <thead>
-                            <tr>
-                              {Object.keys(queryResult.rows[0] as object).map((key) => <th key={key}>{key}</th>)}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {queryResult.rows.map((row: any, i) => (
-                              <tr key={i}>
-                                {Object.values(row).map((val: any, j) => <td key={j}>{val === null ? 'NULL' : String(val)}</td>)}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="studio-callout success">✓ Query executed successfully</div>
-                    )
-                  ) : (
-                    <div className="studio-callout danger">{queryResult.error}</div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          {activeTab === 'migrations' && (
-            <div className="studio-panel-grid split-wide">
-              <div className="studio-card">
-                <div className="studio-panel-header compact">
-                  <div>
-                    <h2>Migrations</h2>
-                    <p>Apply schema changes and track history.</p>
-                  </div>
-                </div>
-                <div className="stack">
-                  <input className="input" placeholder="Migration name" value={migrationName} onChange={(e) => setMigrationName(e.target.value)} />
-                  <textarea className="studio-sql-mini compact" placeholder="CREATE TABLE users (...);" value={migrationSql} onChange={(e) => setMigrationSql(e.target.value)} />
-                  <button type="button" className="studio-btn studio-btn-primary" onClick={handleApplyMigration} disabled={migrationLoading || !migrationName.trim() || !migrationSql.trim()}>
-                    {migrationLoading ? 'Applying…' : 'Apply migration'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="studio-card">
-                <div className="studio-panel-header compact">
-                  <div>
-                    <h2>History</h2>
-                    <p>{migrations.length} migration{migrations.length !== 1 ? 's' : ''}</p>
-                  </div>
-                </div>
-                {migrations.length === 0 ? (
-                  <div className="studio-empty-state">No migrations yet.</div>
-                ) : (
-                  <table className="studio-mini-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Status</th>
-                        <th>Applied</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {migrations.map((migration) => (
-                        <tr key={migration.id}>
-                          <td>{migration.name}</td>
-                          <td>{migration.status}</td>
-                          <td>{new Date(migration.appliedAt).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
               </div>
             </div>
-          )}
+
+            {/* Quick Actions / Tips */}
+            <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] p-6">
+              <h3 className="font-medium text-zinc-200 mb-4 flex items-center gap-2">
+                <Key size={16} className="text-zinc-400" /> Connecting to your database
+              </h3>
+              <p className="text-sm text-zinc-400 mb-4">
+                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your application to connect securely.
+              </p>
+              <pre className="bg-[#050505] border border-zinc-800 p-4 rounded-lg overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar">
+{`import { createClient } from '@libsql/client';
+
+const client = createClient({
+  url: "YOUR_CONNECTION_URL",
+  authToken: "YOUR_AUTH_TOKEN",
+});
+
+const rs = await client.execute("SELECT * FROM users");
+console.log(rs.rows);`}
+              </pre>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Storage / Meta info */}
+            <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center gap-2">
+                <HardDrive size={16} className="text-zinc-400" />
+                <h2 className="font-medium text-zinc-200">Storage Information</h2>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="flex justify-between items-center border-b border-zinc-800/50 pb-3">
+                  <span className="text-sm text-zinc-500">Storage Used</span>
+                  <span className="text-sm font-medium text-zinc-200">— (Not calculated)</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-zinc-800/50 pb-3">
+                  <span className="text-sm text-zinc-500">Read / Write Ratio</span>
+                  <span className="text-sm font-medium text-zinc-200">—</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-zinc-800/50 pb-3">
+                  <span className="text-sm text-zinc-500">Database ID</span>
+                  <span className="text-xs font-mono text-zinc-400">{database?.id}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </AppShell>

@@ -3,37 +3,23 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
-import { ShellFrame } from '../../components/ShellFrame';
 import { apiRequest } from '../../lib/api';
+import { Database, Table2, X, Plus, Search, HardDrive } from 'lucide-react';
 
-type Database = { id: string; name: string; type: string; status: string; subdomain?: string; createdAt: string; project?: { id: string; name: string } };
+type DatabaseInfo = { id: string; name: string; type: string; status: string; subdomain?: string; createdAt: string; project?: { id: string; name: string } };
 type Project = { id: string; name: string };
 
 export default function DatabasesPage() {
   const router = useRouter();
-  const [databases, setDatabases] = useState<Database[]>([]);
+  const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-
-  // Create form
-  const [projectId, setProjectId] = useState('');
-  const [name, setName] = useState('');
-  const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
-  const [url, setUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [error, setError] = useState('');
-  const [creating, setCreating] = useState(false);
-
-  // Import form
-  const [importProjectId, setImportProjectId] = useState('');
-  const [importName, setImportName] = useState('');
-  const [sourcePath, setSourcePath] = useState('');
-  const [showImport, setShowImport] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   // Filter
-  const [filterProject, setFilterProject] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   async function loadDatabases() {
-    const result = await apiRequest<{ databases: Database[] }>('/databases');
+    const result = await apiRequest<{ databases: DatabaseInfo[] }>('/databases');
     setDatabases(result.databases);
   }
 
@@ -43,23 +29,142 @@ export default function DatabasesPage() {
   }
 
   useEffect(() => {
-    Promise.all([loadDatabases(), loadProjects()]).catch((err: any) => setError(err.message));
+    Promise.all([loadDatabases(), loadProjects()]).catch(console.error);
   }, []);
 
-  async function handleCreate(event: FormEvent) {
-    event.preventDefault();
+  const filteredDatabases = databases.filter((d) => 
+    d.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (d.project?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <AppShell>
+      <div className="p-6 max-w-7xl mx-auto w-full">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-xl font-semibold text-zinc-100">Databases</h1>
+            <p className="text-sm text-zinc-400 mt-1">Manage your local and remote database instances.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={14} />
+              <input 
+                type="text" 
+                placeholder="Search databases..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-4 py-2 bg-[#0f0f0f] border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 transition-colors w-64"
+              />
+            </div>
+            <button 
+              onClick={() => setIsCreateModalOpen(true)}
+              className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+            >
+              <Plus size={16} /> Create Database
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto border border-zinc-800/80 rounded-lg bg-[#0f0f0f]">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800/80 text-zinc-400 text-xs font-medium bg-zinc-900/20">
+                <th className="py-3 px-4 font-normal">Name</th>
+                <th className="py-3 px-4 font-normal">Project</th>
+                <th className="py-3 px-4 font-normal">Type</th>
+                <th className="py-3 px-4 font-normal">Status</th>
+                <th className="py-3 px-4 font-normal">Created</th>
+                <th className="py-3 px-4 font-normal w-24"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredDatabases.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-zinc-500">
+                    <div className="flex flex-col items-center gap-2">
+                      <HardDrive size={32} className="opacity-20" />
+                      <p>No databases found.</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredDatabases.map((db) => (
+                  <tr key={db.id} className="border-b border-zinc-800/40 hover:bg-zinc-800/20 transition-colors group cursor-pointer" onClick={() => router.push(`/databases/${db.id}`)}>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <Database className="text-blue-500" size={14} />
+                        <span className="font-medium text-zinc-200">{db.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-zinc-400">{db.project?.name || '—'}</td>
+                    <td className="py-3 px-4">
+                      <span className="bg-zinc-800 text-zinc-300 border border-zinc-700/50 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider">
+                        {db.type}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                        db.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                        db.status === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' : 
+                        'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                      }`}>
+                        {db.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-zinc-500 text-xs">
+                      {new Date(db.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="py-3 px-4 flex justify-end gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/databases/${db.id}/studio`);
+                        }} 
+                        className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded text-xs font-medium border border-zinc-700 transition-colors"
+                      >
+                        <Table2 size={14} /> Edit Data
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {isCreateModalOpen && (
+        <CreateDatabaseModal 
+          projects={projects}
+          onClose={() => setIsCreateModalOpen(false)} 
+          onSuccess={() => {
+            setIsCreateModalOpen(false);
+            loadDatabases();
+          }}
+        />
+      )}
+    </AppShell>
+  );
+}
+
+function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: () => void }) {
+  const [projectId, setProjectId] = useState(projects[0]?.id || '');
+  const [name, setName] = useState('');
+  const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
     if (!projectId || !name.trim()) return;
     setError('');
     setCreating(true);
     try {
       await apiRequest('/databases', {
         method: 'POST',
-        body: JSON.stringify({ projectId, name, type, url: url || undefined, token: token || undefined }),
+        body: JSON.stringify({ projectId, name, type }),
       });
-      setName('');
-      setUrl('');
-      setToken('');
-      await loadDatabases();
+      onSuccess();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -67,157 +172,68 @@ export default function DatabasesPage() {
     }
   }
 
-  async function handleImport(event: FormEvent) {
-    event.preventDefault();
-    if (!importProjectId || !importName.trim() || !sourcePath.trim()) return;
-    setError('');
-    try {
-      await apiRequest('/databases/import-sqlite', {
-        method: 'POST',
-        body: JSON.stringify({ projectId: importProjectId, name: importName, sourcePath }),
-      });
-      setImportName('');
-      setSourcePath('');
-      setShowImport(false);
-      await loadDatabases();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDelete(id: string, dbName: string) {
-    const event = undefined;
-    if (!confirm(`Delete database "${dbName}"? This action cannot be undone.`)) return;
-    try {
-      await apiRequest(`/databases/${id}`, { method: 'DELETE' });
-      await loadDatabases();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  }
-
-  const filteredDatabases = filterProject
-    ? databases.filter((d) => d.project?.id === filterProject)
-    : databases;
-
   return (
-    <AppShell>
-      <ShellFrame
-        title="Databases"
-        subtitle="Provision, import and manage SQLite and libsql databases across all projects."
-        actions={
-          <button type="button" className="button-secondary" onClick={() => setShowImport(!showImport)}>
-            {showImport ? 'Hide import' : 'Import SQLite file'}
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
+      <div className="bg-[#0f0f0f] border border-zinc-800/80 rounded-xl w-full max-w-[480px] p-6 shadow-2xl">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-100">Create Database</h2>
+            <p className="text-sm text-zinc-400 mt-1">Create a new local SQLite database</p>
+          </div>
+          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors">
+            <X size={20} />
           </button>
-        }
-      >
-        {/* Create form */}
-        <form className="panel stack" onSubmit={handleCreate} style={{ padding: 20 }}>
-          <div className="toolbar">
-            <select id="db-project-select" className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ minWidth: 180 }}>
-              <option value="">Select project…</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <input id="db-name-input" className="input" placeholder="Database name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 1 }} />
-            <select className="input" value={type} onChange={(e) => setType(e.target.value as any)} style={{ width: 130 }}>
-              <option value="sqlite">SQLite</option>
-              <option value="libsql">libsql</option>
-              <option value="remote">Remote</option>
+        </div>
+
+        {error && (
+          <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Project</label>
+            <select 
+              value={projectId} 
+              onChange={(e) => setProjectId(e.target.value)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+            >
+              <option value="" disabled>Select a project</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
-          {type !== 'sqlite' && (
-            <div className="toolbar">
-              <input className="input" placeholder="Remote URL" value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: 1 }} />
-              <input className="input" placeholder="Auth token" type="password" value={token} onChange={(e) => setToken(e.target.value)} style={{ flex: 1 }} />
-            </div>
-          )}
-          <button id="create-db-btn" className="button" type="submit" disabled={creating || !projectId || !name.trim()} style={{ width: 'fit-content' }}>
-            {creating ? 'Creating…' : '+ Create database'}
-          </button>
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Name</label>
+            <input 
+              type="text" 
+              placeholder="e.g. production-db" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+            />
+          </div>
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Engine</label>
+            <select 
+              value={type} 
+              onChange={(e) => setType(e.target.value as any)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+            >
+              <option value="sqlite">Local SQLite</option>
+              <option value="libsql">Local libsql</option>
+              <option value="remote">Remote Connection</option>
+            </select>
+          </div>
+
+          <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
+            <button type="submit" disabled={creating || !projectId || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+              {creating ? 'Creating...' : 'Create Database'}
+            </button>
+          </div>
         </form>
-
-        {/* Import form */}
-        {showImport && (
-          <form className="card stack" style={{ padding: 20 }} onSubmit={handleImport}>
-            <h3 className="section-title" style={{ fontSize: '0.95rem' }}>Import existing SQLite file</h3>
-            <div className="toolbar">
-              <select className="input" value={importProjectId} onChange={(e) => setImportProjectId(e.target.value)} style={{ minWidth: 180 }}>
-                <option value="">Select project…</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-              <input className="input" placeholder="Database name" value={importName} onChange={(e) => setImportName(e.target.value)} style={{ flex: 1 }} />
-            </div>
-            <div className="toolbar">
-              <input className="input" placeholder="Absolute path to .db file on server" value={sourcePath} onChange={(e) => setSourcePath(e.target.value)} style={{ flex: 1 }} />
-              <button className="button" type="submit" disabled={!importProjectId || !importName.trim() || !sourcePath.trim()}>Import</button>
-            </div>
-          </form>
-        )}
-
-        {error ? <div className="badge danger" style={{ padding: '8px 14px' }}>{error}</div> : null}
-
-        {/* Filter */}
-        {databases.length > 0 && (
-          <div className="toolbar">
-            <select className="input" value={filterProject} onChange={(e) => setFilterProject(e.target.value)} style={{ minWidth: 200 }}>
-              <option value="">All projects ({databases.length})</option>
-              {projects.map((p) => {
-                const count = databases.filter((d) => d.project?.id === p.id).length;
-                return <option key={p.id} value={p.id}>{p.name} ({count})</option>;
-              })}
-            </select>
-            <span className="small muted">{filteredDatabases.length} database{filteredDatabases.length !== 1 ? 's' : ''}</span>
-          </div>
-        )}
-
-        {/* Table */}
-        {filteredDatabases.length === 0 ? (
-          <div className="card" style={{ padding: 32, textAlign: 'center' }}>
-            <p className="muted">No databases yet. Select a project and create one above.</p>
-          </div>
-        ) : (
-          <div className="card">
-            <table className="table">
-              <thead>
-                <tr><th>Name</th><th>Project</th><th>Type</th><th>Status</th><th>Subdomain</th><th></th></tr>
-              </thead>
-              <tbody>
-                {filteredDatabases.map((database) => (
-                  <tr key={database.id}>
-                    <td>
-                        <button
-                          type="button"
-                          style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0 }}
-                          onClick={() => router.push(`/databases/${database.id}`)}
-                        >
-                        {database.name}
-                      </button>
-                    </td>
-                    <td className="muted">{database.project?.name || '—'}</td>
-                    <td><span className="badge">{database.type}</span></td>
-                    <td><span className={`badge ${database.status === 'active' ? 'success' : database.status === 'error' ? 'danger' : 'warning'}`}>{database.status}</span></td>
-                    <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{database.subdomain || '—'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="button-secondary"
-                        style={{ color: 'var(--danger)', fontSize: 12, padding: '6px 10px' }}
-                        onClick={() => handleDelete(database.id, database.name)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </ShellFrame>
-    </AppShell>
+      </div>
+    </div>
   );
 }

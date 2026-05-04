@@ -3,6 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiRequest } from '../../lib/api';
+import { Database } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,100 +34,78 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="app-shell">
-      <div className="auth-grid">
-        <section className="hero">
-          <div className="hero-top">
-            <div className="hero-copy">
-              <span className="brand-badge">libsqlite</span>
-              <h1>Self-hosted control plane for SQLite and libsql</h1>
-              <p>
-                Manage local SQLite files, register libsql endpoints, browse schemas, run queries and apply
-                migrations — all from a single secure panel on your own infrastructure.
-              </p>
+    <div className="flex min-h-screen bg-[#0a0a0a] text-zinc-300 font-sans selection:bg-emerald-500/30">
+      <div className="flex-1 flex items-center justify-center p-6 relative z-10">
+        <form className="w-full max-w-[400px] bg-[#0f0f0f] border border-zinc-800/80 rounded-2xl p-8 shadow-2xl" onSubmit={handleSubmit}>
+          <div className="flex flex-col items-center text-center mb-8">
+            <div className="w-12 h-12 bg-zinc-800 rounded-xl flex items-center justify-center mb-4">
+              <Database className="text-zinc-100" size={24} />
             </div>
+            <h2 className="text-2xl font-semibold text-zinc-100">
+              {mode === 'login' ? 'Welcome back' : 'Create your account'}
+            </h2>
+            <p className="text-zinc-400 mt-2 text-sm">
+              {mode === 'login' 
+                ? 'Sign in to access your databases.' 
+                : 'Set up your administrator account.'}
+            </p>
           </div>
-          <div style={{ marginTop: 24 }}>
-            <div className="card" style={{ display: 'inline-block' }}>
-              <ul className="small" style={{ lineHeight: 2, margin: 0, paddingLeft: 18 }}>
-                <li>Projects, roles and permissions (RBAC)</li>
-                <li>SQLite provisioning and import</li>
-                <li>Discovery and adoption of mounted files</li>
-                <li>libsql remote management</li>
-                <li>Schema browser, query editor and migrations</li>
-                <li>Full audit trail</li>
-              </ul>
-            </div>
-          </div>
-        </section>
 
-        <form className="panel stack" onSubmit={handleSubmit}>
-          <div className="section-header">
+          <div className="space-y-4">
             <div>
-              <h2 className="section-title">{mode === 'login' ? 'Sign in' : 'Create account'}</h2>
-              <p className="muted">
-                {mode === 'login'
-                  ? 'Authenticate with your email and password.'
-                  : 'Register a new administrator account.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="field-grid">
-            <label className="stack" style={{ gap: 6 }}>
-              <span className="small">Email</span>
+              <label className="block text-sm font-medium text-zinc-400 mb-1.5">Email address</label>
               <input
-                id="login-email"
-                className="input"
                 type="email"
-                autoComplete="email"
-                placeholder="admin@example.com"
+                required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
+                className="w-full bg-[#050505] border border-zinc-800 rounded-lg px-4 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
+                placeholder="you@example.com"
               />
-            </label>
-            <label className="stack" style={{ gap: 6 }}>
-              <span className="small">Password</span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-1.5">Password</label>
               <input
-                id="login-password"
-                className="input"
                 type="password"
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-[#050505] border border-zinc-800 rounded-lg px-4 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-600 transition-colors"
+                placeholder="••••••••"
               />
-            </label>
+            </div>
           </div>
 
-          {error ? <div className="badge danger" style={{ padding: '8px 14px' }}>{error}</div> : null}
+          {error && (
+            <div className="mt-4 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
 
-          <button id="login-submit" className="button" type="submit" disabled={loading}>
-            {loading ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : (mode === 'login' ? 'Sign in' : 'Create account')}
+          <button 
+            type="submit" 
+            disabled={loading || !email || !password}
+            className="w-full mt-8 bg-zinc-100 hover:bg-white text-zinc-900 font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Please wait...' : mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
 
-          <p className="small muted" style={{ textAlign: 'center', margin: 0 }}>
-            {mode === 'login' ? (
-              <>No account yet?{' '}
-                <button type="button" style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                  onClick={() => { setMode('register'); setError(''); }}>
-                  Create one
-                </button>
-              </>
-            ) : (
-              <>Already have an account?{' '}
-                <button type="button" style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                  onClick={() => { setMode('login'); setError(''); }}>
-                  Sign in
-                </button>
-              </>
-            )}
+          <p className="mt-6 text-center text-sm text-zinc-500">
+            {mode === 'login' ? "Don't have an account? " : "Already have an account? "}
+            <button 
+              type="button" 
+              onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}
+              className="text-zinc-300 hover:text-white font-medium hover:underline transition-all"
+            >
+              {mode === 'login' ? 'Sign up' : 'Sign in'}
+            </button>
           </p>
         </form>
       </div>
+      
+      {/* Visual background pattern */}
+      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none mix-blend-overlay"></div>
     </div>
   );
 }

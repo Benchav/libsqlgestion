@@ -9,7 +9,15 @@ export default async function discoveryRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const body = request.body as any;
     if (!body.projectId) return reply.status(400).send({ error: 'projectId required' });
-    const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath);
+    const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath, Boolean(body.adopt));
+    return reply.send(result);
+  });
+
+  app.post('/discovery/sqlite/adopt', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const body = request.body as any;
+    if (!body.projectId || !body.rootPath) return reply.status(400).send({ error: 'projectId and rootPath required' });
+    const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath, true);
     return reply.send(result);
   });
 }

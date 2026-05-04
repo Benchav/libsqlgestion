@@ -1,6 +1,4 @@
 import fs from 'fs';
-import path from 'path';
-import { promises as fsp } from 'fs';
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { Project } from '../../domain/entities/Project';
@@ -9,11 +7,13 @@ import { randomToken } from '../../infrastructure/security/tokens';
 import { AuditService } from '../audit/AuditService';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { ensureSubdomain } from '../../infrastructure/security/slug';
+import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
   private projectRepo = AppDataSource.getRepository(Project);
   private auditService = new AuditService();
+  private storageService = new SqliteStorageService();
 
   async createDatabase(projectId: string, input: { name: string; type: 'sqlite' | 'libsql' | 'remote'; url?: string; token?: string; subdomain?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
@@ -33,9 +33,7 @@ export class DatabaseService {
     }));
 
     if (input.type === 'sqlite') {
-      const filePath = this.resolveSqlitePath(project.id, database.id);
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, Buffer.from(''));
+      const filePath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
       database.url = filePath;
       database.status = 'active';
       await this.databaseRepo.save(database);
@@ -70,9 +68,7 @@ export class DatabaseService {
       project,
     }));
 
-    const managedPath = this.resolveSqlitePath(project.id, database.id);
-    fs.mkdirSync(path.dirname(managedPath), { recursive: true });
-    await fsp.copyFile(input.sourcePath, managedPath);
+    const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
 
     database.url = managedPath;
     database.status = 'active';
@@ -111,7 +107,7 @@ export class DatabaseService {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
     if (database.type === 'sqlite') {
-      const url = database.url || this.resolveSqlitePath(database.project.id, database.id);
+      const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
       const ok = fs.existsSync(url);
       return { ok, details: ok ? 'sqlite file exists' : 'sqlite file missing' };
     }
@@ -129,8 +125,4 @@ export class DatabaseService {
     }
   }
 
-  private resolveSqlitePath(projectId: string, databaseId: string) {
-    const storageRoot = process.env.SQLITE_STORAGE_ROOT || path.join(process.cwd(), 'data', 'sqlite');
-    return path.join(storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
-  }
 }

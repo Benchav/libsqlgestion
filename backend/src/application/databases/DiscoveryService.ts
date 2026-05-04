@@ -7,13 +7,15 @@ import { encrypt } from '../../infrastructure/crypto';
 import { randomToken } from '../../infrastructure/security/tokens';
 import { ensureSubdomain } from '../../infrastructure/security/slug';
 import { AuditService } from '../audit/AuditService';
+import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 
 export class DiscoveryService {
   private databaseRepo = AppDataSource.getRepository(Database);
   private projectRepo = AppDataSource.getRepository(Project);
   private auditService = new AuditService();
+  private storageService = new SqliteStorageService();
 
-  async scanMountedDirectory(projectId: string, rootPath?: string) {
+  async scanMountedDirectory(projectId: string, rootPath?: string, adopt = false) {
     const baseDir = rootPath || process.env.SQLITE_DISCOVERY_PATH;
     if (!baseDir) {
       throw new Error('SQLITE_DISCOVERY_PATH not configured');
@@ -38,16 +40,23 @@ export class DiscoveryService {
         encryptedToken: encrypt(randomToken()),
         subdomain: ensureSubdomain(fileName, path.parse(filePath).name),
         status: 'active',
-        metadata: { sourcePath: filePath, discovered: true, mountedDirectory: baseDir },
+        metadata: { sourcePath: filePath, discovered: true, mountedDirectory: baseDir, adopted: adopt },
         project,
       }));
+
+      if (adopt) {
+        const managedPath = await this.storageService.adoptExistingFile(filePath, project.id, database.id);
+        database.url = managedPath;
+        database.metadata = { ...(database.metadata ?? {}), managedPath, adopted: true };
+        await this.databaseRepo.save(database);
+      }
 
       discovered.push(database);
       await this.auditService.record({
         action: 'database.discovered',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { filePath, baseDir },
+        metadata: { filePath, baseDir, adopted: adopt },
       });
     }
 

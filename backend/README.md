@@ -37,6 +37,7 @@ Operational notes:
 - Existing SQLite databases can be imported from a server-side file path and then managed like any other database.
 - If you mount a directory of `.db` files and set `SQLITE_DISCOVERY_PATH` plus `SQLITE_DISCOVERY_PROJECT_ID`, the backend can auto-register them at startup.
 - Managed SQLite files are stored in a structured folder tree like `data/sqlite/projects/<projectId>/databases/<databaseId>.db`.
+- Set `SQLITE_DISCOVERY_ADOPT=true` if you want mounted SQLite files to be copied into the managed storage tree during discovery.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
 
 Migrations and remote management:

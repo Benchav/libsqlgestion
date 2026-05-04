@@ -84,7 +84,7 @@ export default function ProjectsPage() {
         {error ? <div className="badge danger" style={{ padding: '8px 14px' }}>{error}</div> : null}
 
         {projects.length === 0 ? (
-          <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+          <div className="card" style={{ padding: 24, textAlign: 'center' }}>
             <p className="muted">No projects yet. Create one to start managing databases.</p>
           </div>
         ) : (

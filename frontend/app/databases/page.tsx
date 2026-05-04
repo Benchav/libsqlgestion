@@ -112,7 +112,7 @@ export default function DatabasesPage() {
         }
       >
         {/* Create form */}
-        <form className="stack" onSubmit={handleCreate} style={{ padding: 0 }}>
+        <form className="panel stack" onSubmit={handleCreate} style={{ padding: 20 }}>
           <div className="toolbar">
             <select id="db-project-select" className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ minWidth: 180 }}>
               <option value="">Select project…</option>
@@ -140,7 +140,7 @@ export default function DatabasesPage() {
 
         {/* Import form */}
         {showImport && (
-          <form className="card stack" style={{ padding: 16 }} onSubmit={handleImport}>
+          <form className="card stack" style={{ padding: 20 }} onSubmit={handleImport}>
             <h3 className="section-title" style={{ fontSize: '0.95rem' }}>Import existing SQLite file</h3>
             <div className="toolbar">
               <select className="input" value={importProjectId} onChange={(e) => setImportProjectId(e.target.value)} style={{ minWidth: 180 }}>

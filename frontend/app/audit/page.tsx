@@ -86,7 +86,7 @@ export default function AuditPage() {
                     </tr>
                     {expandedId === log.id && (
                       <tr key={`${log.id}-detail`}>
-                        <td colSpan={4} style={{ background: 'rgba(125, 211, 252, 0.04)', padding: 16 }}>
+                        <td colSpan={4} style={{ background: '#0b0b0b', padding: 16 }}>
                           <div className="small" style={{ display: 'grid', gap: 6 }}>
                             <div><strong>Event ID:</strong> <span className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{log.id}</span></div>
                             {log.resourceId && (

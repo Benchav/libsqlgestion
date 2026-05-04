@@ -6,10 +6,12 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <section className="hero">
+        <div className="hero-top">
         <div className="hero-copy">
           <span className="brand-badge">Dashboard</span>
           <h1>Control plane overview</h1>
           <p>Quick access to projects, databases, audit logs and system settings.</p>
+        </div>
         </div>
       </section>
 

@@ -64,10 +64,12 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <section className="hero">
+        <div className="hero-top">
         <div className="hero-copy">
           <span className="brand-badge">Settings</span>
           <h1>Platform settings</h1>
           <p>System health, current session info and user management.</p>
+        </div>
         </div>
       </section>
 

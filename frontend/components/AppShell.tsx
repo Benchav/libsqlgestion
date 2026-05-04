@@ -19,10 +19,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <div className="app-shell" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
-        <div className="panel" style={{ padding: 48, textAlign: 'center' }}>
-          <div className="brand-badge" style={{ marginBottom: 16 }}>libsqlite</div>
-          <p className="muted">Loading control plane…</p>
+      <div className="app-shell-loading">
+        <div className="panel" style={{ width: 'min(420px, 100%)', textAlign: 'center' }}>
+          <div className="brand-badge" style={{ marginBottom: 14 }}>libsqlite</div>
+          <p className="muted" style={{ margin: 0 }}>Loading control plane…</p>
         </div>
       </div>
     );
@@ -32,10 +32,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="app-shell">
       <div className="app-grid">
         <aside className="sidebar">
-          <div className="brand">
-            <span className="brand-badge">libsqlite</span>
-            <h1 style={{ fontSize: '1.25rem' }}>Control Plane</h1>
-            <p className="small" style={{ margin: 0 }}>Self-hosted SQLite &amp; libsql management</p>
+          <div className="sidebar-brand">
+            <span className="sidebar-brand-mark">libsqlite</span>
+            <div style={{ minWidth: 0 }}>
+              <h1 className="sidebar-brand-title">Control Plane</h1>
+              <p className="sidebar-brand-subtitle small" style={{ margin: '4px 0 0' }}>Self-hosted SQLite &amp; libsql management</p>
+            </div>
           </div>
 
           <nav className="nav">
@@ -61,7 +63,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        <main className="content">{children}</main>
+        <div className="main-shell">
+          <header className="topbar">
+            <div className="topbar-left">
+              <button type="button" className="icon-button" aria-label="Toggle sidebar">☰</button>
+              <div className="topbar-breadcrumbs">
+                <span className="breadcrumb-link">Databases</span>
+                <span className="topbar-separator">/</span>
+                <span className="breadcrumb-current">Workspace</span>
+              </div>
+            </div>
+
+            <div className="topbar-actions">
+              <span className="topbar-chip hidden sm:inline-flex">aA</span>
+              <button type="button" className="icon-button" aria-label="Search">⌕</button>
+              <button type="button" className="icon-button" aria-label="Activity">◌</button>
+              <button type="button" className="icon-button" aria-label="Settings">⚙</button>
+              <span className="topbar-avatar">{user?.email?.[0]?.toUpperCase() || 'U'}</span>
+            </div>
+          </header>
+
+          <main className="content">{children}</main>
+        </div>
       </div>
     </div>
   );

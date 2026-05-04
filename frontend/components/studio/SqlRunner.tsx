@@ -34,7 +34,7 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
       <div className="studio-sql-header">
         <span className="studio-sql-title">▷ SQL Runner</span>
         <div className="studio-sql-actions">
-          <button className="studio-btn studio-btn-primary" onClick={handleRun} disabled={loading || !sql.trim()}>
+          <button type="button" className="studio-btn studio-btn-primary" onClick={handleRun} disabled={loading || !sql.trim()}>
             {loading ? 'Running…' : '▶ Execute'}
           </button>
           <span className="studio-sql-hint">Ctrl+Enter</span>

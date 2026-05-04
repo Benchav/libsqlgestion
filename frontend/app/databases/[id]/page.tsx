@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { ShellFrame } from '../../../components/ShellFrame';
 import { apiRequest } from '../../../lib/api';
+import '../../../components/studio/studio.css';
 
 type DatabaseDetail = {
   id: string;
@@ -175,237 +176,220 @@ export default function DatabaseDetailPage() {
 
   return (
     <AppShell>
-      {/* Header */}
-      <section className="hero">
-        <div className="hero-top">
-          <div className="hero-copy">
-            <span className="brand-badge">{database?.type || 'database'}</span>
-            <h1>{database?.name || 'Database'}</h1>
-            <p>
-              {database?.project ? (
-                <>Project: <strong>{database.project.name}</strong> · </>
-              ) : null}
+      <div className="studio-shell">
+        <div className="studio-topbar">
+          <div className="studio-breadcrumbs">
+            <button type="button" className="studio-chip" onClick={() => router.push('/databases')}>Databases</button>
+            <span className="studio-divider">/</span>
+            <span className="studio-current">{database?.name || 'Database'}</span>
+          </div>
+
+          <div className="studio-meta-row">
+            <span className={`badge ${database?.status === 'active' ? 'success' : database?.status === 'error' ? 'danger' : 'warning'}`}>{database?.status || '—'}</span>
+            {database?.subdomain ? <span className="badge">{database.subdomain}</span> : null}
+            <button type="button" className="studio-btn" onClick={() => router.push(`/databases/${id}/studio`)}>Open Studio</button>
+            <button type="button" className="studio-btn" onClick={handleTestConnection}>Test connection</button>
+            <button type="button" className="studio-btn" onClick={handleRotateToken}>Rotate token</button>
+          </div>
+        </div>
+
+        <div className="studio-workspace-intro">
+          <div>
+            <div className="studio-kicker">{database?.type || 'database'}</div>
+            <h1 className="studio-title">{database?.name || 'Database'}</h1>
+            <p className="studio-subtitle">
+              {database?.project ? <>Project: <strong>{database.project.name}</strong> · </> : null}
               Created {database?.createdAt ? new Date(database.createdAt).toLocaleDateString() : '—'}
             </p>
-            <div className="hero-actions" style={{ marginTop: 12 }}>
-              <button type="button" className="button" onClick={() => router.push(`/databases/${id}/studio`)}>⊞ Open Studio</button>
-              <button type="button" className="button-secondary" onClick={() => router.push('/databases')}>← All databases</button>
-              <button type="button" className="button-secondary" onClick={handleTestConnection}>Test connection</button>
-              <button type="button" className="button-secondary" onClick={handleRotateToken}>Rotate token</button>
-            </div>
-          </div>
-          <div className="stack" style={{ gap: 8, minWidth: 160 }}>
-            <span className={`badge ${database?.status === 'active' ? 'success' : database?.status === 'error' ? 'danger' : 'warning'}`}>
-              {database?.status}
-            </span>
-            {database?.subdomain ? <span className="badge">{database.subdomain}</span> : null}
           </div>
         </div>
-      </section>
 
-      {/* Test result */}
-      {testResult ? (
-        <div className={`badge ${testResult.ok ? 'success' : 'danger'}`} style={{ padding: '10px 16px' }}>
-          Connection: {testResult.details}
+        {testResult ? <div className={`studio-callout ${testResult.ok ? 'success' : 'danger'}`}>Connection: {testResult.details}</div> : null}
+
+        {error ? <div className="studio-callout danger">{error}</div> : null}
+
+        <div className="studio-tab-strip">
+          {(['schema', 'query', 'migrations'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={`studio-tab ${activeTab === tab ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab === 'schema' ? 'Schema' : tab === 'query' ? 'Query' : 'Migrations'}
+            </button>
+          ))}
         </div>
-      ) : null}
 
-      {error ? <div className="badge danger" style={{ padding: '10px 16px' }}>{error}</div> : null}
+        <div className="studio-panel">
+          {activeTab === 'schema' && (
+            <>
+              <div className="studio-panel-header">
+                <div>
+                  <h2>Schema browser</h2>
+                  <p>{schema.length} table{schema.length !== 1 ? 's' : ''} in this database.</p>
+                </div>
+              </div>
+              {schema.length === 0 ? (
+                <div className="studio-empty-state">No tables found. Use Query or Migrations to create one.</div>
+              ) : (
+                <div className="studio-schema-list">
+                  {schema.map((tableInfo) => (
+                    <button
+                      key={tableInfo.table}
+                      type="button"
+                      className={`studio-schema-item ${expandedTable === tableInfo.table ? 'active' : ''}`}
+                      onClick={() => setExpandedTable(expandedTable === tableInfo.table ? null : tableInfo.table)}
+                    >
+                      <span className="studio-schema-name">{tableInfo.table}</span>
+                      <span className="studio-schema-count">{tableInfo.columns.length}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-      {/* Tab bar */}
-      <div className="toolbar" style={{ gap: 0, borderRadius: 16, overflow: 'hidden' }}>
-        {(['schema', 'query', 'migrations'] as const).map((tab) => (
-          <button
-            type="button"
-            key={tab}
-            className={activeTab === tab ? 'button' : 'button-secondary'}
-            style={{ borderRadius: 0, flex: 1, textTransform: 'capitalize' }}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab === 'schema' ? '⛁ Schema' : tab === 'query' ? '▷ Query' : '↑ Migrations'}
-          </button>
-        ))}
-      </div>
-
-      {/* Schema tab */}
-      {activeTab === 'schema' && (
-        <ShellFrame title="Schema browser" subtitle={`${schema.length} table${schema.length !== 1 ? 's' : ''} found in this database.`}>
-          {schema.length === 0 ? (
-            <div className="card" style={{ padding: 24, textAlign: 'center' }}>
-              <p className="muted">No tables found. Use the Query or Migrations tab to create one.</p>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gap: 12 }}>
-              {schema.map((tableInfo) => (
-                <div key={tableInfo.table} className="card" style={{ cursor: 'pointer' }}>
-                  <div
-                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    onClick={() => setExpandedTable(expandedTable === tableInfo.table ? null : tableInfo.table)}
-                  >
-                    <div>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{tableInfo.table}</span>
-                      <span className="muted small" style={{ marginLeft: 12 }}>
-                        {tableInfo.columns.length} column{tableInfo.columns.length !== 1 ? 's' : ''}
-                      </span>
-                    </div>
-                    <span className="muted">{expandedTable === tableInfo.table ? '▾' : '▸'}</span>
-                  </div>
-
-                  {expandedTable === tableInfo.table && (
-                    <table className="table" style={{ marginTop: 12 }}>
-                      <thead>
-                        <tr>
-                          <th>Column</th>
-                          <th>Type</th>
-                          <th>Not null</th>
-                          <th>PK</th>
+              {expandedTable ? (
+                <div className="studio-card">
+                  <table className="studio-mini-table">
+                    <thead>
+                      <tr>
+                        <th>Column</th>
+                        <th>Type</th>
+                        <th>Not null</th>
+                        <th>PK</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(schema.find((s) => s.table === expandedTable)?.columns || []).map((col) => (
+                        <tr key={col.name}>
+                          <td>{col.name}</td>
+                          <td>{col.type || 'ANY'}</td>
+                          <td>{col.notnull ? 'Yes' : 'No'}</td>
+                          <td>{col.pk ? 'PK' : '—'}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {tableInfo.columns.map((col) => (
-                          <tr key={col.name}>
-                            <td style={{ fontFamily: 'var(--font-mono)' }}>{col.name}</td>
-                            <td><span className="badge">{col.type || 'ANY'}</span></td>
-                            <td>{col.notnull ? '✓' : '—'}</td>
-                            <td>{col.pk ? <span className="badge warning">PK</span> : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </>
+          )}
+
+          {activeTab === 'query' && (
+            <div className="studio-panel-grid">
+              <div className="studio-card">
+                <div className="studio-panel-header">
+                  <div>
+                    <h2>Query console</h2>
+                    <p>Run SQL and inspect output.</p>
+                  </div>
+                </div>
+                <div className="stack">
+                  <textarea
+                    className="studio-sql-mini"
+                    placeholder="SELECT * FROM your_table LIMIT 50;"
+                    value={sql}
+                    onChange={(e) => setSql(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        handleQuery();
+                      }
+                    }}
+                  />
+                  <div className="toolbar">
+                    <button type="button" className="studio-btn studio-btn-primary" onClick={handleQuery} disabled={queryLoading || !sql.trim()}>
+                      {queryLoading ? 'Running…' : 'Execute'}
+                    </button>
+                    <span className="small muted">Ctrl+Enter</span>
+                  </div>
+                </div>
+              </div>
+
+              {queryResult ? (
+                <div className="studio-card">
+                  {queryResult.ok ? (
+                    queryResult.rows && queryResult.rows.length > 0 ? (
+                      <div className="studio-result-wrap">
+                        <div className="studio-result-count">{queryResult.rows.length} row{queryResult.rows.length !== 1 ? 's' : ''} returned</div>
+                        <table className="studio-mini-table">
+                          <thead>
+                            <tr>
+                              {Object.keys(queryResult.rows[0] as object).map((key) => <th key={key}>{key}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {queryResult.rows.map((row: any, i) => (
+                              <tr key={i}>
+                                {Object.values(row).map((val: any, j) => <td key={j}>{val === null ? 'NULL' : String(val)}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="studio-callout success">✓ Query executed successfully</div>
+                    )
+                  ) : (
+                    <div className="studio-callout danger">{queryResult.error}</div>
                   )}
                 </div>
-              ))}
+              ) : null}
             </div>
           )}
-        </ShellFrame>
-      )}
 
-      {/* Query tab */}
-      {activeTab === 'query' && (
-        <ShellFrame title="Query editor" subtitle="Execute SQL statements against this database.">
-          <div className="stack">
-            <textarea
-              className="textarea"
-              placeholder="SELECT * FROM your_table LIMIT 50;"
-              value={sql}
-              onChange={(e) => setSql(e.target.value)}
-              style={{ fontFamily: 'var(--font-mono)', minHeight: 140 }}
-              onKeyDown={(e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                  e.preventDefault();
-                  handleQuery();
-                }
-              }}
-            />
-            <div className="toolbar">
-              <button type="button" className="button" onClick={handleQuery} disabled={queryLoading || !sql.trim()}>
-                {queryLoading ? 'Running…' : '▶ Execute'}
-              </button>
-              <span className="small muted">Ctrl+Enter to run</span>
-            </div>
-          </div>
+          {activeTab === 'migrations' && (
+            <div className="studio-panel-grid">
+              <div className="studio-card">
+                <div className="studio-panel-header">
+                  <div>
+                    <h2>Migrations</h2>
+                    <p>Apply schema changes and track history.</p>
+                  </div>
+                </div>
+                <div className="stack">
+                  <input className="input" placeholder="Migration name" value={migrationName} onChange={(e) => setMigrationName(e.target.value)} />
+                  <textarea className="studio-sql-mini" placeholder="CREATE TABLE users (...);" value={migrationSql} onChange={(e) => setMigrationSql(e.target.value)} />
+                  <button type="button" className="studio-btn studio-btn-primary" onClick={handleApplyMigration} disabled={migrationLoading || !migrationName.trim() || !migrationSql.trim()}>
+                    {migrationLoading ? 'Applying…' : 'Apply migration'}
+                  </button>
+                </div>
+              </div>
 
-          {queryResult && (
-            <div className="card" style={{ marginTop: 12 }}>
-              {queryResult.ok ? (
-                <>
-                  {queryResult.rows && queryResult.rows.length > 0 ? (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            {Object.keys(queryResult.rows[0] as object).map((key) => (
-                              <th key={key} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{key}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {queryResult.rows.map((row: any, i) => (
-                            <tr key={i}>
-                              {Object.values(row).map((val: any, j) => (
-                                <td key={j} style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                                  {val === null ? <span className="muted">NULL</span> : String(val)}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="small muted" style={{ marginTop: 8 }}>{queryResult.rows.length} row{queryResult.rows.length !== 1 ? 's' : ''} returned</div>
-                    </div>
-                  ) : queryResult.result ? (
-                    <div className="badge success">
-                      ✓ {queryResult.result.changes} row{queryResult.result.changes !== 1 ? 's' : ''} affected
-                    </div>
-                  ) : (
-                    <div className="badge success">✓ Query executed successfully</div>
-                  )}
-                </>
-              ) : (
-                <div className="badge danger">{queryResult.error}</div>
-              )}
+              <div className="studio-card">
+                <div className="studio-panel-header">
+                  <div>
+                    <h2>History</h2>
+                    <p>{migrations.length} migration{migrations.length !== 1 ? 's' : ''}</p>
+                  </div>
+                </div>
+                {migrations.length === 0 ? (
+                  <div className="studio-empty-state">No migrations yet.</div>
+                ) : (
+                  <table className="studio-mini-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Applied</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {migrations.map((migration) => (
+                        <tr key={migration.id}>
+                          <td>{migration.name}</td>
+                          <td>{migration.status}</td>
+                          <td>{new Date(migration.appliedAt).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
-        </ShellFrame>
-      )}
-
-      {/* Migrations tab */}
-      {activeTab === 'migrations' && (
-        <ShellFrame title="Migrations" subtitle="Track and apply schema changes to this database.">
-          <div className="card stack" style={{ padding: 20 }}>
-            <h3 className="section-title" style={{ fontSize: '0.95rem' }}>Apply new migration</h3>
-            <input
-              className="input"
-              placeholder="Migration name (e.g. create-users-table)"
-              value={migrationName}
-              onChange={(e) => setMigrationName(e.target.value)}
-            />
-            <textarea
-              className="textarea"
-              placeholder="CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL);"
-              value={migrationSql}
-              onChange={(e) => setMigrationSql(e.target.value)}
-              style={{ fontFamily: 'var(--font-mono)', minHeight: 120 }}
-            />
-              <button type="button" className="button" onClick={handleApplyMigration} disabled={migrationLoading || !migrationName.trim() || !migrationSql.trim()}>
-                {migrationLoading ? 'Applying…' : '↑ Apply migration'}
-              </button>
-          </div>
-
-          <div className="card" style={{ marginTop: 12 }}>
-            <h3 className="section-title" style={{ fontSize: '0.95rem', marginBottom: 12 }}>History</h3>
-            {migrations.length === 0 ? (
-              <p className="muted small">No migrations have been applied to this database yet.</p>
-            ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Status</th>
-                    <th>Applied</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {migrations.map((migration) => (
-                    <tr key={migration.id}>
-                      <td style={{ fontFamily: 'var(--font-mono)' }}>{migration.name}</td>
-                      <td>
-                        <span className={`badge ${migration.status === 'applied' ? 'success' : migration.status === 'failed' ? 'danger' : 'warning'}`}>
-                          {migration.status}
-                        </span>
-                        {migration.errorMessage ? (
-                          <span className="small danger" style={{ marginLeft: 8 }}>{migration.errorMessage}</span>
-                        ) : null}
-                      </td>
-                      <td className="muted">{new Date(migration.appliedAt).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </ShellFrame>
-      )}
+        </div>
+      </div>
     </AppShell>
   );
 }

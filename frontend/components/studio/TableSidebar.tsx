@@ -16,7 +16,7 @@ export function TableSidebar({ tables, activeTable, onSelect, onRefresh }: Props
   return (
     <div className="studio-sidebar">
       <div className="studio-sidebar-header">
-        <span className="studio-sidebar-title">Tables</span>
+        <span className="studio-sidebar-title">Schema</span>
         <button className="studio-icon-btn" onClick={onRefresh} title="Refresh schema">
           ↻
         </button>
@@ -24,6 +24,10 @@ export function TableSidebar({ tables, activeTable, onSelect, onRefresh }: Props
       <div className="studio-sidebar-search">
         {/* Simple count label */}
         <span className="studio-sidebar-count">{tables.length} table{tables.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="studio-sidebar-pills">
+        <span className="studio-sidebar-pill active">Tables</span>
+        <span className="studio-sidebar-pill">Views</span>
       </div>
       <nav className="studio-sidebar-nav">
         {tables.length === 0 && (

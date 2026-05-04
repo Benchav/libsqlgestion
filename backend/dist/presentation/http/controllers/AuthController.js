@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = authRoutes;
 const AuthService_1 = require("../../../application/auth/AuthService");
 const AuditService_1 = require("../../../application/audit/AuditService");
+const authorization_1 = require("../../../application/auth/authorization");
+const data_source_1 = require("../../../infrastructure/db/data-source");
+const UserRole_1 = require("../../../domain/entities/UserRole");
 async function authRoutes(app) {
     const authService = new AuthService_1.AuthService();
     const auditService = new AuditService_1.AuditService();
@@ -61,6 +64,19 @@ async function authRoutes(app) {
     });
     app.get('/me', { preHandler: [app.authenticate] }, async (request, reply) => {
         const user = request.user;
-        return reply.send({ user });
+        const permissions = await (0, authorization_1.getUserPermissions)(user.sub);
+        const userRoleRepo = data_source_1.AppDataSource.getRepository(UserRole_1.UserRole);
+        const userRoles = await userRoleRepo.find({
+            where: { user: { id: user.sub } },
+            relations: ['role'],
+        });
+        const roles = userRoles.map((ur) => ur.role.name);
+        return reply.send({
+            user: {
+                ...user,
+                roles,
+                permissions: Array.from(permissions),
+            },
+        });
     });
 }

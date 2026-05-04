@@ -29,5 +29,10 @@ class ProjectService {
     async getProject(id) {
         return this.projectRepo.findOne({ where: { id }, relations: ['owner', 'members', 'members.user', 'databases'] });
     }
+    async deleteProject(id) {
+        const project = await this.projectRepo.findOneByOrFail({ id });
+        await this.projectRepo.remove(project);
+        return { ok: true };
+    }
 }
 exports.ProjectService = ProjectService;

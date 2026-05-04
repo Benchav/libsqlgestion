@@ -8,7 +8,8 @@ async function databaseRoutes(app) {
     app.get('/databases', { preHandler: [app.authenticate] }, async (_request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(_request, reply, 'databases.read')))
             return;
-        const databases = await databaseService.listDatabases();
+        const query = _request.query || {};
+        const databases = await databaseService.listDatabases(query.projectId);
         return reply.send({ databases });
     });
     app.post('/databases', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -37,6 +38,31 @@ async function databaseRoutes(app) {
         if (!database)
             return reply.status(404).send({ error: 'database not found' });
         return reply.send({ database });
+    });
+    app.patch('/databases/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const { id } = request.params;
+        const body = request.body;
+        try {
+            const database = await databaseService.updateDatabase(id, body);
+            return reply.send({ database });
+        }
+        catch (err) {
+            return reply.status(404).send({ error: err.message });
+        }
+    });
+    app.delete('/databases/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const { id } = request.params;
+        try {
+            const result = await databaseService.deleteDatabase(id);
+            return reply.send(result);
+        }
+        catch (err) {
+            return reply.status(404).send({ error: err.message });
+        }
     });
     app.patch('/databases/:id/rotate-token', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))

@@ -4,7 +4,7 @@ export type ApiResult<T> = {
   error?: string;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
+const API_URL = '/api/v1';
 
 function getCookie(name: string) {
   if (typeof document === 'undefined') return null;

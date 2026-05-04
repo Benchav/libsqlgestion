@@ -31,14 +31,13 @@ export default function SettingsPage() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [error, setError] = useState('');
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
 
   useEffect(() => {
     apiRequest<{ user: UserInfo }>('/me')
       .then((r) => setUser(r.user))
       .catch(() => {});
 
-    fetch(apiBase + '/health', { credentials: 'include' })
+    fetch('/api/v1/health', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => setHealth(data))
       .catch(() => setHealth({ ok: false }));
@@ -46,7 +45,7 @@ export default function SettingsPage() {
     apiRequest<{ users: UserRecord[] }>('/users')
       .then((r) => setUsers(r.users))
       .catch(() => {}); // Silently fail if no permission
-  }, [apiBase]);
+  }, []);
 
   async function handleAssignRole(userId: string, roleName: string) {
     try {
@@ -92,7 +91,7 @@ export default function SettingsPage() {
         <div className="card">
           <div className="card-label">API URL</div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 8, wordBreak: 'break-all', color: 'var(--muted)' }}>
-            {apiBase}
+            /api/v1
           </div>
         </div>
       </div>
@@ -171,7 +170,7 @@ export default function SettingsPage() {
               <tr><td>SQLITE_DISCOVERY_PATH</td><td className="muted">Path to scan for .db files</td></tr>
               <tr><td>SQLITE_DISCOVERY_PROJECT_ID</td><td className="muted">Project ID for discovered databases</td></tr>
               <tr><td>SQLITE_DISCOVERY_ADOPT</td><td className="muted">Copy discovered files into managed storage</td></tr>
-              <tr><td>NEXT_PUBLIC_API_URL</td><td className="muted">Frontend: backend API base URL</td></tr>
+              <tr><td>INTERNAL_API_URL</td><td className="muted">Optional backend URL used by the server-side proxy</td></tr>
             </tbody>
           </table>
         </div>

@@ -3,8 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV INTERNAL_API_URL=http://backend:3000/api/v1
 RUN npm run build
 EXPOSE 3000
 CMD ["npm", "run", "start"]

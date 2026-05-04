@@ -1,13 +1,25 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 const ALGO = 'aes-256-gcm';
-const MASTER_KEY = process.env.MASTER_KEY;
+const MASTER_KEY_FILE = process.env.MASTER_KEY_FILE || path.join(process.cwd(), 'data', 'master.key');
 
-if (!MASTER_KEY) {
-  throw new Error('MASTER_KEY not set in environment');
+function loadMasterKey() {
+  const envKey = process.env.MASTER_KEY;
+  if (envKey) {
+    return envKey;
+  }
+
+  fs.mkdirSync(path.dirname(MASTER_KEY_FILE), { recursive: true });
+  if (!fs.existsSync(MASTER_KEY_FILE)) {
+    fs.writeFileSync(MASTER_KEY_FILE, crypto.randomBytes(32).toString('hex'));
+  }
+
+  return fs.readFileSync(MASTER_KEY_FILE, 'utf8').trim();
 }
 
-const key = Buffer.from(MASTER_KEY, 'hex');
+const key = Buffer.from(loadMasterKey(), 'hex');
 
 export function encrypt(plainText: string) {
   const iv = crypto.randomBytes(12);

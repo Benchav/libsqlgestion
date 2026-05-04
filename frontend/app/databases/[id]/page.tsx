@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -29,6 +29,8 @@ export default function DatabaseDetailPage() {
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
   const [revealedToken, setRevealedToken] = useState('');
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   async function loadDatabase() {
     try {
@@ -70,6 +72,20 @@ export default function DatabaseDetailPage() {
       await loadDatabase();
     } catch (err: any) {
       setError(err.message);
+    }
+  }
+
+  async function handleDeleteDatabase() {
+    if (!confirm('Delete this database? This cannot be undone.')) return;
+
+    setIsDeleting(true);
+    try {
+      await apiRequest(`/databases/${id}`, { method: 'DELETE' });
+      router.push('/databases');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -124,6 +140,19 @@ export default function DatabaseDetailPage() {
             </div>
 
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsEditOpen(true)}
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+              >
+                <Pencil size={16} /> Edit Database
+              </button>
+              <button
+                onClick={handleDeleteDatabase}
+                disabled={isDeleting}
+                className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/20 disabled:opacity-60"
+              >
+                <Trash2 size={16} /> {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
               <button 
                 onClick={() => router.push(`/databases/${id}/studio`)}
                 className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
@@ -244,6 +273,111 @@ console.log(rs.rows);`}
           </div>
         </div>
       </div>
+
+      {isEditOpen && database && (
+        <EditDatabaseModal
+          database={database}
+          onClose={() => setIsEditOpen(false)}
+          onSaved={async () => {
+            setIsEditOpen(false);
+            await loadDatabase();
+          }}
+        />
+      )}
     </AppShell>
+  );
+}
+
+function EditDatabaseModal({
+  database,
+  onClose,
+  onSaved,
+}: {
+  database: DatabaseDetail;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [name, setName] = useState(database.name);
+  const [status, setStatus] = useState(database.status);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSave(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+
+    setError('');
+    setSaving(true);
+    try {
+      await apiRequest(`/databases/${database.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: name.trim(), status }),
+      });
+      await onSaved();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
+      <div className="w-full max-w-[520px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-100">Edit Database</h2>
+            <p className="mt-1 text-sm text-zinc-400">Update the database name or status.</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300">
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSave} className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Status</label>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            >
+              <option value="active">active</option>
+              <option value="inactive">inactive</option>
+              <option value="error">error</option>
+            </select>
+          </div>
+
+          <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !name.trim()}
+              className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }

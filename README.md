@@ -3,7 +3,7 @@
   <br />
   <img src="./docs/assets/logo.png" alt="LibSQLite Logo" width="120" height="120" />
 
-  # LibSQLite
+  # LibSQLite V1
 
   **The self-hosted, Turso-like control plane for SQLite & libSQL.**
 

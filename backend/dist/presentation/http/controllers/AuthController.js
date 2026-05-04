@@ -6,6 +6,9 @@ const AuditService_1 = require("../../../application/audit/AuditService");
 const authorization_1 = require("../../../application/auth/authorization");
 const data_source_1 = require("../../../infrastructure/db/data-source");
 const UserRole_1 = require("../../../domain/entities/UserRole");
+const cookies_1 = require("../../../infrastructure/security/cookies");
+const ACCESS_TOKEN_MAX_AGE = 60 * 60 * 24 * 7;
+const REFRESH_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
 async function authRoutes(app) {
     const authService = new AuthService_1.AuthService();
     const auditService = new AuditService_1.AuditService();
@@ -17,6 +20,10 @@ async function authRoutes(app) {
             const user = await authService.register(body.email, body.password);
             const session = await authService.issueSession(user);
             await auditService.record({ action: 'auth.register', resourceType: 'user', resourceId: user.id });
+            reply.header('Set-Cookie', [
+                (0, cookies_1.sessionCookie)('libsqlite.accessToken', session.accessToken, ACCESS_TOKEN_MAX_AGE),
+                (0, cookies_1.sessionCookie)('libsqlite.refreshToken', session.refreshToken, REFRESH_TOKEN_MAX_AGE),
+            ]);
             return reply.send({
                 user: { id: user.id, email: user.email },
                 accessToken: session.accessToken,
@@ -36,6 +43,10 @@ async function authRoutes(app) {
             return reply.status(401).send({ error: 'invalid credentials' });
         const session = await authService.issueSession(user);
         await auditService.record({ action: 'auth.login', resourceType: 'user', resourceId: user.id });
+        reply.header('Set-Cookie', [
+            (0, cookies_1.sessionCookie)('libsqlite.accessToken', session.accessToken, ACCESS_TOKEN_MAX_AGE),
+            (0, cookies_1.sessionCookie)('libsqlite.refreshToken', session.refreshToken, REFRESH_TOKEN_MAX_AGE),
+        ]);
         return reply.send({
             user: { id: user.id, email: user.email },
             accessToken: session.accessToken,
@@ -44,11 +55,17 @@ async function authRoutes(app) {
     });
     app.post('/auth/refresh', async (request, reply) => {
         const body = request.body;
-        if (!body.refreshToken)
+        const cookies = (0, cookies_1.parseCookies)(request.headers.cookie);
+        const refreshToken = body.refreshToken || cookies['libsqlite.refreshToken'];
+        if (!refreshToken)
             return reply.status(400).send({ error: 'refreshToken required' });
-        const session = await authService.refresh(body.refreshToken);
+        const session = await authService.refresh(refreshToken);
         if (!session)
             return reply.status(401).send({ error: 'invalid refresh token' });
+        reply.header('Set-Cookie', [
+            (0, cookies_1.sessionCookie)('libsqlite.accessToken', session.accessToken, ACCESS_TOKEN_MAX_AGE),
+            (0, cookies_1.sessionCookie)('libsqlite.refreshToken', session.refreshToken, REFRESH_TOKEN_MAX_AGE),
+        ]);
         return reply.send({
             user: { id: session.user.id, email: session.user.email },
             accessToken: session.accessToken,
@@ -57,9 +74,15 @@ async function authRoutes(app) {
     });
     app.post('/auth/logout', async (request, reply) => {
         const body = request.body;
-        if (!body.refreshToken)
-            return reply.status(400).send({ error: 'refreshToken required' });
-        await authService.logout(body.refreshToken);
+        const cookies = (0, cookies_1.parseCookies)(request.headers.cookie);
+        const refreshToken = body.refreshToken || cookies['libsqlite.refreshToken'];
+        if (refreshToken) {
+            await authService.logout(refreshToken);
+        }
+        reply.header('Set-Cookie', [
+            (0, cookies_1.clearSessionCookie)('libsqlite.accessToken'),
+            (0, cookies_1.clearSessionCookie)('libsqlite.refreshToken'),
+        ]);
         return reply.send({ ok: true });
     });
     app.get('/me', { preHandler: [app.authenticate] }, async (request, reply) => {

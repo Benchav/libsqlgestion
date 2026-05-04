@@ -9,6 +9,9 @@ async function migrationRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         return reply.send({ migrations: await migrationService.list(id) });
     });
     app.post('/databases/:id/migrations', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -16,6 +19,9 @@ async function migrationRoutes(app) {
             return;
         const { id } = request.params;
         const body = request.body;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         if (!body.name || (!body.sql && !body.statements))
             return reply.status(400).send({ error: 'name and sql/statements required' });
         const migration = await migrationService.apply(id, body);

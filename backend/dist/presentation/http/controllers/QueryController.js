@@ -10,6 +10,9 @@ async function queryRoutes(app) {
             return;
         const { id } = request.params;
         const body = request.body;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         if (!body.sql)
             return reply.status(400).send({ error: 'sql required' });
         const result = await queryService.execute(id, body.sql, body.params ?? []);

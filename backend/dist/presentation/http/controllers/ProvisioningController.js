@@ -11,6 +11,9 @@ async function provisioningRoutes(app) {
         const body = request.body;
         if (!body.projectId || !body.name)
             return reply.status(400).send({ error: 'projectId and name required' });
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, body.projectId);
+        if (!access)
+            return;
         const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
         return reply.status(201).send(result);
     });
@@ -20,6 +23,9 @@ async function provisioningRoutes(app) {
         const body = request.body;
         if (!body.projectId || !body.name || !body.url || !body.token)
             return reply.status(400).send({ error: 'projectId, name, url and token required' });
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, body.projectId);
+        if (!access)
+            return;
         const result = await provisioningService.provisionLibsql(body.projectId, body);
         return reply.status(201).send(result);
     });

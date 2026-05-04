@@ -9,10 +9,20 @@ const helmet_1 = __importDefault(require("@fastify/helmet"));
 const rate_limit_1 = __importDefault(require("@fastify/rate-limit"));
 async function securityPlugin(app) {
     await app.register(helmet_1.default, {
-        contentSecurityPolicy: false,
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'none'"],
+                baseUri: ["'none'"],
+                frameAncestors: ["'none'"],
+                formAction: ["'none'"],
+            },
+        },
     });
+    const allowedOrigins = process.env.CORS_ORIGIN
+        ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
+        : [];
     await app.register(cors_1.default, {
-        origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true,
+        origin: allowedOrigins.length > 0 ? allowedOrigins : false,
         credentials: true,
     });
     await app.register(rate_limit_1.default, {

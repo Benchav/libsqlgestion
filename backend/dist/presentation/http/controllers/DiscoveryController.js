@@ -11,6 +11,9 @@ async function discoveryRoutes(app) {
         const body = request.body;
         if (!body.projectId)
             return reply.status(400).send({ error: 'projectId required' });
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, body.projectId);
+        if (!access)
+            return;
         const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath, Boolean(body.adopt));
         return reply.send(result);
     });
@@ -20,6 +23,9 @@ async function discoveryRoutes(app) {
         const body = request.body;
         if (!body.projectId || !body.rootPath)
             return reply.status(400).send({ error: 'projectId and rootPath required' });
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, body.projectId);
+        if (!access)
+            return;
         const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath, true);
         return reply.send(result);
     });

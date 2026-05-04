@@ -34,6 +34,9 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         const database = await databaseService.getDatabase(id);
         if (!database)
             return reply.status(404).send({ error: 'database not found' });
@@ -44,6 +47,9 @@ async function databaseRoutes(app) {
             return;
         const { id } = request.params;
         const body = request.body;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         try {
             const database = await databaseService.updateDatabase(id, body);
             return reply.send({ database });
@@ -56,6 +62,9 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         try {
             const result = await databaseService.deleteDatabase(id);
             return reply.send(result);
@@ -68,6 +77,9 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         const result = await databaseService.rotateToken(id);
         return reply.send({ database: result.database, token: result.token });
     });
@@ -75,6 +87,9 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         const result = await databaseService.testConnection(id);
         return reply.send(result);
     });

@@ -9,6 +9,9 @@ async function schemaRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
         return reply.send(await schemaService.getSchema(id));
     });
 }

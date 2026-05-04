@@ -35,6 +35,9 @@ async function projectRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'projects.read')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, id);
+        if (!access)
+            return;
         const project = await projectService.getProject(id);
         if (!project)
             return reply.status(404).send({ error: 'project not found' });
@@ -44,6 +47,9 @@ async function projectRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'projects.write')))
             return;
         const { id } = request.params;
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, id);
+        if (!access)
+            return;
         try {
             const result = await projectService.deleteProject(id);
             const userId = request.user?.sub;

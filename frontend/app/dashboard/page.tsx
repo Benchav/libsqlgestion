@@ -20,9 +20,9 @@ export default function DashboardPage() {
     async function load() {
       try {
         const [projects, databases, logs] = await Promise.all([
-          apiRequest('/projects'),
-          apiRequest('/databases'),
-          apiRequest('/audit'),
+          apiRequest<{ projects: Array<{ id: string; name: string }> }>('/projects'),
+          apiRequest<{ databases: Array<{ id: string; name: string; type: string; status: string }> }>('/databases'),
+          apiRequest<{ logs: Array<{ id: string; action: string; createdAt: string }> }>('/audit'),
         ]);
         setData({ projects: projects.projects, databases: databases.databases, logs: logs.logs });
       } catch (err: any) {

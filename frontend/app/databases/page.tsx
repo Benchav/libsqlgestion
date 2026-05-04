@@ -200,6 +200,10 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
 
+  function deriveNameFromFile(fileName: string) {
+    return fileName.replace(/\.[^.]+$/, '').trim();
+  }
+
   async function handleImport(e: FormEvent) {
     e.preventDefault();
     if (!projectId || !name.trim()) return;
@@ -318,7 +322,13 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               <input
                 type="file"
                 accept=".db,.sqlite,.sqlite3"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  const selectedFile = e.target.files?.[0] || null;
+                  setFile(selectedFile);
+                  if (selectedFile && !name.trim()) {
+                    setName(deriveNameFromFile(selectedFile.name));
+                  }
+                }}
                 className="flex-1 text-sm text-zinc-300 file:mr-4 file:px-3 file:py-2 file:rounded-md file:border-0 file:bg-zinc-100 file:text-zinc-900 hover:file:bg-white"
               />
             </div>

@@ -1,5 +1,5 @@
 const COOKIE_BASE = ['Path=/api/v1', 'HttpOnly', 'SameSite=Lax'];
-const CSRF_COOKIE_BASE = ['Path=/api/v1', 'SameSite=Lax'];
+const CSRF_COOKIE_BASE = ['Path=/', 'SameSite=Lax'];
 
 export function parseCookies(headerValue?: string) {
   const cookies: Record<string, string> = {};

@@ -6,7 +6,7 @@ exports.clearSessionCookie = clearSessionCookie;
 exports.csrfCookie = csrfCookie;
 exports.clearCsrfCookie = clearCsrfCookie;
 const COOKIE_BASE = ['Path=/api/v1', 'HttpOnly', 'SameSite=Lax'];
-const CSRF_COOKIE_BASE = ['Path=/api/v1', 'SameSite=Lax'];
+const CSRF_COOKIE_BASE = ['Path=/', 'SameSite=Lax'];
 function parseCookies(headerValue) {
     const cookies = {};
     if (!headerValue)

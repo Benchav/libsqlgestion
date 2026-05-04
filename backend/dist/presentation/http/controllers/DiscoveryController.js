@@ -11,7 +11,16 @@ async function discoveryRoutes(app) {
         const body = request.body;
         if (!body.projectId)
             return reply.status(400).send({ error: 'projectId required' });
-        const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath);
+        const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath, Boolean(body.adopt));
+        return reply.send(result);
+    });
+    app.post('/discovery/sqlite/adopt', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const body = request.body;
+        if (!body.projectId || !body.rootPath)
+            return reply.status(400).send({ error: 'projectId and rootPath required' });
+        const result = await discoveryService.scanMountedDirectory(body.projectId, body.rootPath, true);
         return reply.send(result);
     });
 }

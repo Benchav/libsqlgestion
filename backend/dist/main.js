@@ -18,7 +18,8 @@ const start = async () => {
     const discoveryPath = process.env.SQLITE_DISCOVERY_PATH;
     if (discoveryProjectId && discoveryPath) {
         const discoveryService = new DiscoveryService_1.DiscoveryService();
-        await discoveryService.scanMountedDirectory(discoveryProjectId, discoveryPath);
+        const adoptDiscovered = String(process.env.SQLITE_DISCOVERY_ADOPT || 'false').toLowerCase() === 'true';
+        await discoveryService.scanMountedDirectory(discoveryProjectId, discoveryPath, adoptDiscovered);
     }
     const app = (0, server_1.buildServer)();
     try {

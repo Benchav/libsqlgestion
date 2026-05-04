@@ -1,22 +1,24 @@
 version: '3.8'
+
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
-      - PORT=3000
-      - DATABASE_FILE=/app/data/control.db
-      - MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      - CORS_ORIGIN=http://localhost:3001
-      - SQLITE_STORAGE_ROOT=/app/data/sqlite
-      - SQLITE_DISCOVERY_PATH=/app/data/sqlite
-      - SQLITE_DISCOVERY_ADOPT=false
+      PORT: '3000'
+      DATABASE_FILE: /app/data/control.db
+      MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CORS_ORIGIN: http://localhost:3001
+      SQLITE_STORAGE_ROOT: /app/data/sqlite
+      SQLITE_DISCOVERY_PATH: /app/data/sqlite
+      SQLITE_DISCOVERY_ADOPT: 'false'
     volumes:
       - ./backend/data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/v1/health"]
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000/api/v1/health']
       interval: 30s
       timeout: 5s
       retries: 3
@@ -27,9 +29,9 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000/api/v1}
     ports:
-      - "3001:3000"
+      - '3001:3000'
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000/api/v1}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000/api/v1}
     depends_on:
       - backend
     restart: unless-stopped

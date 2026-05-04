@@ -16,6 +16,17 @@ const navigation = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, loading } = useAuth();
+  const crumb = pathname === '/dashboard'
+    ? 'Dashboard'
+    : pathname?.startsWith('/projects')
+      ? 'Projects'
+      : pathname?.startsWith('/databases')
+        ? 'Databases'
+        : pathname?.startsWith('/audit')
+          ? 'Audit log'
+          : pathname?.startsWith('/settings')
+            ? 'Settings'
+            : 'Workspace';
 
   if (loading) {
     return (
@@ -68,7 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="topbar-left">
               <button type="button" className="icon-button" aria-label="Toggle sidebar">☰</button>
               <div className="topbar-breadcrumbs">
-                <span className="breadcrumb-link">Databases</span>
+                <span className="breadcrumb-link">{crumb}</span>
                 <span className="topbar-separator">/</span>
                 <span className="breadcrumb-current">Workspace</span>
               </div>

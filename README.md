@@ -112,6 +112,11 @@ npm run start
 - `backend`: `npm test` for utility checks, `npm run smoke` for a live startup/sanity check
 - `frontend`: `npm run build`
 
+Dockerfile-only deploy note:
+
+- The frontend proxies `/api/v1` to the backend container internally.
+- The backend can generate and persist `MASTER_KEY` automatically at `MASTER_KEY_FILE` if you do not supply one.
+
 ## Production note
 
 The backend cannot safely guess arbitrary databases on a remote machine. It can only manage databases that are:

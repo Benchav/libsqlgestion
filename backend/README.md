@@ -64,3 +64,7 @@ Verification:
 
 - `npm test` runs utility checks against the compiled output.
 - `npm run smoke` starts the compiled server and validates health, readiness, auth and a couple of protected endpoints.
+
+Docker note:
+
+- If `MASTER_KEY` is not provided, the backend can persist one automatically at `MASTER_KEY_FILE`.

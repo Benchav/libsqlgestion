@@ -5,6 +5,17 @@ import { LayoutGrid, Database, ChevronLeft, ChevronRight, Filter, ArrowUpDown, C
 
 type ColumnMeta = { name: string; type: string; notnull: number; pk: number };
 
+function getColumnInputKind(column: ColumnMeta): 'text' | 'number' | 'date' | 'datetime-local' | 'checkbox' {
+  const type = (column.type || '').toUpperCase();
+  if (type.includes('BOOL')) return 'checkbox';
+  if (type.includes('DATE') && !type.includes('TIME')) return 'date';
+  if (type.includes('TIME') || type.includes('TIMESTAMP')) return 'datetime-local';
+  if (type.includes('INT') || type.includes('REAL') || type.includes('FLOAT') || type.includes('DOUBLE') || type.includes('NUMERIC') || type.includes('DECIMAL')) {
+    return 'number';
+  }
+  return 'text';
+}
+
 type Props = {
   tableName: string;
   columns: ColumnMeta[];
@@ -44,7 +55,7 @@ export function DataGrid({
 }: Props) {
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
@@ -224,23 +235,42 @@ export function DataGrid({
                         onDoubleClick={() => handleStartEdit(rowIdx, col.name, cellValue)}
                       >
                         {isEditing ? (
-                          <input
-                            ref={inputRef}
-                            className="absolute inset-0 w-full h-full bg-transparent px-3 font-mono text-xs text-zinc-100 focus:outline-none placeholder:text-zinc-600"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={handleCommitEdit}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleCommitEdit();
-                              if (e.key === 'Escape') handleCancelEdit();
-                              if (e.key === 'Tab') {
-                                e.preventDefault();
-                                handleCommitEdit();
-                              }
-                            }}
-                            placeholder={cellValue === null ? 'NULL' : ''}
-                          />
-                        ) : (
+                              getColumnInputKind(col) === 'checkbox' ? (
+                                <label className="absolute inset-0 flex items-center gap-2 px-3 bg-transparent text-zinc-100">
+                                  <input
+                                    ref={inputRef}
+                                    type="checkbox"
+                                    checked={editValue === '1'}
+                                    onChange={(e) => {
+                                      onCellEdit(rowIdx, col.name, e.target.checked ? '1' : '0');
+                                      setEditingCell(null);
+                                    }}
+                                    onBlur={handleCommitEdit}
+                                    className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500"
+                                  />
+                                  <span className="font-sans text-[11px] text-zinc-400">{editValue === '1' ? 'true' : 'false'}</span>
+                                </label>
+                              ) : (
+                                <input
+                                  ref={inputRef}
+                                  type={getColumnInputKind(col)}
+                                  step={getColumnInputKind(col) === 'number' ? 'any' : undefined}
+                                  className="absolute inset-0 w-full h-full bg-transparent px-3 font-mono text-xs text-zinc-100 focus:outline-none placeholder:text-zinc-600"
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onBlur={handleCommitEdit}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleCommitEdit();
+                                    if (e.key === 'Escape') handleCancelEdit();
+                                    if (e.key === 'Tab') {
+                                      e.preventDefault();
+                                      handleCommitEdit();
+                                    }
+                                  }}
+                                  placeholder={cellValue === null ? 'NULL' : ''}
+                                />
+                              )
+                            ) : (
                           <div className="truncate min-h-[18px] flex items-center">
                             {formatCell(cellValue)}
                           </div>

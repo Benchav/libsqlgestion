@@ -3,12 +3,12 @@
   "/api/v1/[...path]/route": "app/api/v1/[...path]/route.js",
   "/audit/page": "app/audit/page.js",
   "/dashboard/page": "app/dashboard/page.js",
-  "/databases/[id]/studio/page": "app/databases/[id]/studio/page.js",
   "/databases/[id]/page": "app/databases/[id]/page.js",
-  "/page": "app/page.js",
-  "/login/page": "app/login/page.js",
   "/databases/page": "app/databases/page.js",
+  "/databases/[id]/studio/page": "app/databases/[id]/studio/page.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
   "/projects/[id]/page": "app/projects/[id]/page.js",
-  "/settings/page": "app/settings/page.js",
-  "/projects/page": "app/projects/page.js"
+  "/projects/page": "app/projects/page.js",
+  "/settings/page": "app/settings/page.js"
 }

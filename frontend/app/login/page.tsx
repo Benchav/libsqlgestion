@@ -36,12 +36,16 @@ export default function LoginPage() {
     <div className="app-shell">
       <div className="auth-grid">
         <section className="hero">
-          <span className="brand-badge">libsqlite</span>
-          <h1>Self-hosted control plane for SQLite and libsql</h1>
-          <p>
-            Manage local SQLite files, register libsql endpoints, browse schemas, run queries and apply
-            migrations — all from a single secure panel on your own infrastructure.
-          </p>
+          <div className="hero-top">
+            <div className="hero-copy">
+              <span className="brand-badge">libsqlite</span>
+              <h1>Self-hosted control plane for SQLite and libsql</h1>
+              <p>
+                Manage local SQLite files, register libsql endpoints, browse schemas, run queries and apply
+                migrations — all from a single secure panel on your own infrastructure.
+              </p>
+            </div>
+          </div>
           <div style={{ marginTop: 24 }}>
             <div className="card" style={{ display: 'inline-block' }}>
               <ul className="small" style={{ lineHeight: 2, margin: 0, paddingLeft: 18 }}>

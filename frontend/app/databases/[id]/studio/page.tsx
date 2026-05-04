@@ -10,7 +10,7 @@ import { SqlRunner } from '../../../../components/studio/SqlRunner';
 import { ChevronRight, X } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
-type TableSchema = { table: string; columns: ColumnMeta[]; foreignKeys: unknown[] };
+type TableSchema = { table: string; kind: 'table' | 'view'; rowCount: number; columns: ColumnMeta[]; foreignKeys: unknown[] };
 type DatabaseInfo = { id: string; name: string; type: string; status: string };
 type RowMode = 'insert' | 'edit';
 
@@ -38,6 +38,7 @@ export default function StudioPage() {
 
   const [database, setDatabase] = useState<DatabaseInfo | null>(null);
   const [tables, setTables] = useState<TableSchema[]>([]);
+  const [activeKind, setActiveKind] = useState<'table' | 'view'>('table');
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'data' | 'sql'>('data');
 
@@ -67,6 +68,9 @@ export default function StudioPage() {
 
   const [error, setError] = useState('');
 
+  const visibleSchemas = tables.filter((schema) => schema.kind === activeKind);
+  const currentTableSchema = tables.find((schema) => schema.table === activeTable);
+
   // Load database info
   useEffect(() => {
     if (!dbId) return;
@@ -78,11 +82,12 @@ export default function StudioPage() {
   // Load schema
   const loadSchema = useCallback(async () => {
     try {
-      const result = await apiRequest<{ tables: TableSchema[] }>(`/databases/${dbId}/schema`);
-      setTables(result.tables || []);
-      // Select first table if none selected
-      if (!activeTable && result.tables?.length > 0) {
-        setActiveTable(result.tables[0].table);
+      const result = await apiRequest<{ tables: TableSchema[]; views: TableSchema[] }>(`/databases/${dbId}/schema`);
+      const combined = [...(result.tables || []), ...(result.views || [])];
+      setTables(combined);
+      const initialGroup = combined.filter((schema) => schema.kind === activeKind);
+      if (!activeTable && initialGroup.length > 0) {
+        setActiveTable(initialGroup[0].table);
       }
     } catch (err: any) {
       setError(err.message);
@@ -127,6 +132,21 @@ export default function StudioPage() {
 
   function handleSelectTable(table: string) {
     setActiveTable(table);
+    setPage(0);
+    setSortColumn(null);
+    setSortDir('ASC');
+    setIsInsertOpen(false);
+    setIsEditOpen(false);
+  }
+
+  function handleSelectKind(kind: 'table' | 'view') {
+    setActiveKind(kind);
+    const nextSchema = tables.find((schema) => schema.kind === kind);
+    if (nextSchema) {
+      setActiveTable(nextSchema.table);
+    } else {
+      setActiveTable(null);
+    }
     setPage(0);
     setSortColumn(null);
     setSortDir('ASC');
@@ -198,7 +218,7 @@ export default function StudioPage() {
   }
 
   async function handleAddRow() {
-    if (!activeTable) return;
+    if (!activeTable || currentTableSchema?.kind !== 'table') return;
     const activeTableSchema = tables.find((t) => t.table === activeTable);
     if (!activeTableSchema) return;
 
@@ -235,7 +255,7 @@ export default function StudioPage() {
   }
 
   function handleOpenInsertRow() {
-    if (!currentTableSchema) return;
+    if (!currentTableSchema || currentTableSchema.kind !== 'table') return;
     const initialValues: Record<string, string> = {};
     currentTableSchema.columns.forEach((column) => {
       initialValues[column.name] = '';
@@ -246,7 +266,7 @@ export default function StudioPage() {
   }
 
   function handleOpenEditRow(rowIndex: number) {
-    if (!currentTableSchema) return;
+    if (!currentTableSchema || currentTableSchema.kind !== 'table') return;
     const row = rows[rowIndex];
     const initialValues: Record<string, string> = {};
     currentTableSchema.columns.forEach((column) => {
@@ -260,7 +280,7 @@ export default function StudioPage() {
   }
 
   async function handleInsertRow() {
-    if (!activeTable || !currentTableSchema) return;
+    if (!activeTable || !currentTableSchema || currentTableSchema.kind !== 'table') return;
 
     const insertColumns = currentTableSchema.columns;
     const missingRequired = insertColumns
@@ -301,7 +321,7 @@ export default function StudioPage() {
   }
 
   async function handleSaveEditRow() {
-    if (editRowIndex === null || !activeTable || !currentTableSchema) return;
+    if (editRowIndex === null || !activeTable || !currentTableSchema || currentTableSchema.kind !== 'table') return;
 
     const row = rows[editRowIndex];
     const pkColumns = currentTableSchema.columns.filter((column) => column.pk === 1);
@@ -376,7 +396,6 @@ export default function StudioPage() {
   }
 
   const currentTableSchema = tables.find((t) => t.table === activeTable);
-
   return (
     <AppShell>
       <div className="flex flex-col h-full bg-[#0a0a0a] text-zinc-300">
@@ -404,10 +423,12 @@ export default function StudioPage() {
 
         <div className="flex-1 flex overflow-hidden">
           <TableSidebar
-            tables={tables.map((t) => ({ table: t.table, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
+            tables={tables.map((t) => ({ table: t.table, kind: t.kind, rowCount: t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
+            activeKind={activeKind}
             activeTab={activeTab}
             onSelectTable={handleSelectTable}
+            onSelectKind={handleSelectKind}
             onSelectTab={setActiveTab}
             onRefresh={loadSchema}
           />
@@ -420,6 +441,7 @@ export default function StudioPage() {
                 columns={currentTableSchema.columns}
                 rows={rows}
                 totalRows={totalRows}
+                readOnly={currentTableSchema.kind === 'view'}
                 page={page}
                 pageSize={PAGE_SIZE}
                 onPageChange={setPage}
@@ -477,6 +499,12 @@ export default function StudioPage() {
           saveLabel="Save changes"
           mode="edit"
         />
+      )}
+
+      {activeTab === 'data' && currentTableSchema?.kind === 'view' && (
+        <div className="fixed bottom-4 right-4 rounded-lg border border-zinc-800 bg-[#0f0f0f] px-4 py-3 text-sm text-zinc-300 shadow-2xl">
+          Views are read-only. Use SQL if you need to modify underlying tables.
+        </div>
       )}
     </AppShell>
   );

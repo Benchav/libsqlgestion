@@ -1,18 +1,15 @@
 import { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
-import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 
 export async function securityPlugin(app: FastifyInstance) {
-  await app.register(helmet, {
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'none'"],
-        baseUri: ["'none'"],
-        frameAncestors: ["'none'"],
-        formAction: ["'none'"],
-      },
-    },
+  app.addHook('onSend', async (_request, reply, payload) => {
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    reply.header('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+    return payload;
   });
 
   const allowedOrigins = process.env.CORS_ORIGIN

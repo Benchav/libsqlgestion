@@ -12,6 +12,22 @@ import { ChevronRight, X } from 'lucide-react';
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
 type TableSchema = { table: string; columns: ColumnMeta[]; foreignKeys: unknown[] };
 type DatabaseInfo = { id: string; name: string; type: string; status: string };
+type RowMode = 'insert' | 'edit';
+
+function getColumnInputKind(column: ColumnMeta): 'text' | 'number' | 'date' | 'datetime-local' | 'checkbox' {
+  const type = (column.type || '').toUpperCase();
+  if (type.includes('BOOL')) return 'checkbox';
+  if (type.includes('DATE') && !type.includes('TIME')) return 'date';
+  if (type.includes('TIME') || type.includes('TIMESTAMP')) return 'datetime-local';
+  if (type.includes('INT') || type.includes('REAL') || type.includes('FLOAT') || type.includes('DOUBLE') || type.includes('NUMERIC') || type.includes('DECIMAL')) {
+    return 'number';
+  }
+  return 'text';
+}
+
+function isTruthyValue(value: string) {
+  return value === '1' || value.toLowerCase() === 'true' || value.toLowerCase() === 'yes' || value.toLowerCase() === 'on';
+}
 
 const PAGE_SIZE = 50;
 
@@ -307,8 +323,9 @@ export default function StudioPage() {
 
     const pkValue = row[pkCol.name];
 
-    const setClauses = currentTableSchema.columns.map((column) => `"${column.name}" = ?`).join(', ');
-    const params = currentTableSchema.columns.map((column) => {
+    const editableColumns = currentTableSchema.columns.filter((column) => column.pk !== 1);
+    const setClauses = editableColumns.map((column) => `"${column.name}" = ?`).join(', ');
+    const params = editableColumns.map((column) => {
       const rawValue = editValues[column.name];
       if (rawValue === undefined || rawValue.trim() === '') return null;
       return rawValue;
@@ -441,6 +458,7 @@ export default function StudioPage() {
           onClose={() => setIsInsertOpen(false)}
           onChange={(column, value) => setInsertValues((current) => ({ ...current, [column]: value }))}
           onSave={handleInsertRow}
+          mode="insert"
         />
       )}
 
@@ -457,6 +475,7 @@ export default function StudioPage() {
           title="Edit Row"
           description={`Update the record in ${activeTable}.`}
           saveLabel="Save changes"
+          mode="edit"
         />
       )}
     </AppShell>
@@ -475,6 +494,7 @@ function InsertRowModal({
   title = 'Insert Row',
   description,
   saveLabel = 'Insert row',
+  mode = 'insert',
 }: {
   tableName: string;
   columns: ColumnMeta[];
@@ -487,6 +507,7 @@ function InsertRowModal({
   title?: string;
   description?: string;
   saveLabel?: string;
+  mode?: RowMode;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
@@ -516,15 +537,38 @@ function InsertRowModal({
                     {column.name}
                     {column.pk ? <span className="ml-2 text-[10px] uppercase tracking-wider text-amber-500">pk</span> : null}
                   </label>
-                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">{column.type || 'ANY'}</span>
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                    {column.type || 'ANY'} {mode === 'edit' && column.pk ? '· locked' : ''}
+                  </span>
                 </div>
-                <input
-                  type="text"
-                  value={values[column.name] || ''}
-                  onChange={(event) => onChange(column.name, event.target.value)}
-                  placeholder={column.notnull ? 'Required' : 'Optional / NULL'}
-                  className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
-                />
+                {getColumnInputKind(column) === 'checkbox' ? (
+                  <label className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={isTruthyValue(values[column.name] || '')}
+                      disabled={Boolean(mode === 'edit' && column.pk)}
+                      onChange={(event) => onChange(column.name, event.target.checked ? '1' : '0')}
+                      className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500"
+                    />
+                    <span>{column.notnull ? 'Required' : 'Optional / NULL'}</span>
+                  </label>
+                ) : (
+                  <input
+                    type={getColumnInputKind(column)}
+                    step={getColumnInputKind(column) === 'number' ? 'any' : undefined}
+                    value={values[column.name] || ''}
+                    onChange={(event) => onChange(column.name, event.target.value)}
+                    readOnly={Boolean(mode === 'edit' && column.pk)}
+                    placeholder={
+                      mode === 'insert' && column.pk && getColumnInputKind(column) === 'number'
+                        ? 'Leave blank for auto increment'
+                        : column.notnull
+                          ? 'Required'
+                          : 'Optional / NULL'
+                    }
+                    className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none read-only:cursor-not-allowed read-only:bg-zinc-900/40"
+                  />
+                )}
               </div>
             ))}
           </div>

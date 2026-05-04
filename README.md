@@ -43,6 +43,7 @@ The backend is implemented and validated. It includes:
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Coolify Guide](COOLIFY.md)
+- [Deployment Checklist](DEPLOYMENT_CHECKLIST.md)
 
 Frontend routes:
 

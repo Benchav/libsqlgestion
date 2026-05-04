@@ -1,6 +1,9 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AuthService } from '../../../application/auth/AuthService';
 import { AuditService } from '../../../application/audit/AuditService';
+import { getUserPermissions } from '../../../application/auth/authorization';
+import { AppDataSource } from '../../../infrastructure/db/data-source';
+import { UserRole } from '../../../domain/entities/UserRole';
 
 export default async function authRoutes(app: FastifyInstance) {
   const authService = new AuthService();
@@ -58,6 +61,21 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.get('/me', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = (request as any).user;
-    return reply.send({ user });
+    const permissions = await getUserPermissions(user.sub);
+
+    const userRoleRepo = AppDataSource.getRepository(UserRole);
+    const userRoles = await userRoleRepo.find({
+      where: { user: { id: user.sub } },
+      relations: ['role'],
+    });
+    const roles = userRoles.map((ur) => ur.role.name);
+
+    return reply.send({
+      user: {
+        ...user,
+        roles,
+        permissions: Array.from(permissions),
+      },
+    });
   });
 }

@@ -108,7 +108,8 @@ export class DatabaseService {
   }
 
   async testConnection(id: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id });
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) throw new Error('database not found');
     if (database.type === 'sqlite') {
       const url = database.url || this.resolveSqlitePath(database.project.id, database.id);
       const ok = fs.existsSync(url);
@@ -129,6 +130,7 @@ export class DatabaseService {
   }
 
   private resolveSqlitePath(projectId: string, databaseId: string) {
-    return path.join(process.cwd(), 'data', 'sqlite', 'projects', projectId, 'databases', `${databaseId}.db`);
+    const storageRoot = process.env.SQLITE_STORAGE_ROOT || path.join(process.cwd(), 'data', 'sqlite');
+    return path.join(storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
   }
 }

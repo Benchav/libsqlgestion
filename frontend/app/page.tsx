@@ -1,19 +1,8 @@
 "use client";
 
 import Link from 'next/link';
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '../lib/api';
 
 export default function HomePage() {
-  const router = useRouter();
-
-  useEffect(() => {
-    if (isAuthenticated()) {
-      router.replace('/dashboard');
-    }
-  }, [router]);
-
   return (
     <div className="app-shell">
       <section className="hero">

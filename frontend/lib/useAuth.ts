@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated, apiRequest, clearSession } from './api';
+import { apiRequest } from './api';
 
 export type CurrentUser = {
   sub: string;
@@ -19,18 +19,12 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      router.replace('/login');
-      return;
-    }
-
     apiRequest<{ user: CurrentUser }>('/me')
       .then((result) => {
         setUser(result.user);
         setLoading(false);
       })
       .catch(() => {
-        clearSession();
         router.replace('/login');
       });
   }, [router]);

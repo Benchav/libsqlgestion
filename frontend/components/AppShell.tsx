@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { clearSession } from '../lib/api';
+import { apiRequest } from '../lib/api';
 import { useAuth } from '../lib/useAuth';
 
 const navigation = [
@@ -52,8 +52,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="small" style={{ wordBreak: 'break-all' }}>{user.email}</span>
             ) : null}
             <span className="badge success" style={{ width: 'fit-content' }}>● Online</span>
-            <button className="button-secondary" onClick={() => {
-              clearSession();
+            <button className="button-secondary" onClick={async () => {
+              await apiRequest('/auth/logout', { method: 'POST' }).catch(() => undefined);
               window.location.href = '/login';
             }}>
               Sign out

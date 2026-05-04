@@ -2,6 +2,7 @@ import fastify from 'fastify';
 import routes from './presentation/http/routes';
 import { AuthService } from './application/auth/AuthService';
 import { securityPlugin } from './presentation/http/plugins/security';
+import { parseCookies } from './infrastructure/security/cookies';
 
 export function buildServer() {
   const app = fastify({ logger: true, trustProxy: true });
@@ -10,11 +11,15 @@ export function buildServer() {
   app.register(securityPlugin);
   app.decorate('authenticate', async function (request: any, reply: any) {
     const authorization = request.headers.authorization;
-    if (!authorization?.startsWith('Bearer ')) {
-      return reply.code(401).send({ error: 'missing bearer token' });
+    const cookies = parseCookies(request.headers.cookie);
+    const accessToken = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : cookies['libsqlite.accessToken'];
+
+    if (!accessToken) {
+      return reply.code(401).send({ error: 'missing session' });
     }
 
-    const accessToken = authorization.slice('Bearer '.length).trim();
     const user = await authService.validateAccessToken(accessToken);
     if (!user) {
       return reply.code(401).send({ error: 'invalid or expired token' });

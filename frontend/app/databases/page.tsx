@@ -86,6 +86,7 @@ export default function DatabasesPage() {
   }
 
   async function handleDelete(id: string, dbName: string) {
+    const event = undefined;
     if (!confirm(`Delete database "${dbName}"? This action cannot be undone.`)) return;
     try {
       await apiRequest(`/databases/${id}`, { method: 'DELETE' });
@@ -105,7 +106,7 @@ export default function DatabasesPage() {
         title="Databases"
         subtitle="Provision, import and manage SQLite and libsql databases across all projects."
         actions={
-          <button className="button-secondary" onClick={() => setShowImport(!showImport)}>
+          <button type="button" className="button-secondary" onClick={() => setShowImport(!showImport)}>
             {showImport ? 'Hide import' : 'Import SQLite file'}
           </button>
         }
@@ -188,10 +189,11 @@ export default function DatabasesPage() {
                 {filteredDatabases.map((database) => (
                   <tr key={database.id}>
                     <td>
-                      <button
-                        style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0 }}
-                        onClick={() => router.push(`/databases/${database.id}`)}
-                      >
+                        <button
+                          type="button"
+                          style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', font: 'inherit', fontWeight: 600, padding: 0 }}
+                          onClick={() => router.push(`/databases/${database.id}`)}
+                        >
                         {database.name}
                       </button>
                     </td>
@@ -201,6 +203,7 @@ export default function DatabasesPage() {
                     <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{database.subdomain || '—'}</td>
                     <td>
                       <button
+                        type="button"
                         className="button-secondary"
                         style={{ color: 'var(--danger)', fontSize: 12, padding: '6px 10px' }}
                         onClick={() => handleDelete(database.id, database.name)}

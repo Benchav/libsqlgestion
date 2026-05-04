@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiRequest, setSession } from '../../lib/api';
+import { apiRequest } from '../../lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -24,7 +24,7 @@ export default function LoginPage() {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
-      setSession(response.accessToken, response.refreshToken);
+      void response;
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Authentication failed');

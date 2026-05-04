@@ -7,38 +7,32 @@ export type ApiResult<T> = {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
 
 export function getToken() {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem('libsqlite.accessToken');
+  return null;
 }
 
 export function getRefreshToken() {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem('libsqlite.refreshToken');
+  return null;
 }
 
 export function setSession(accessToken: string, refreshToken: string) {
-  window.localStorage.setItem('libsqlite.accessToken', accessToken);
-  window.localStorage.setItem('libsqlite.refreshToken', refreshToken);
+  void accessToken;
+  void refreshToken;
 }
 
 export function clearSession() {
-  window.localStorage.removeItem('libsqlite.accessToken');
-  window.localStorage.removeItem('libsqlite.refreshToken');
+  return;
 }
 
 export function isAuthenticated() {
-  return !!getToken();
+  return true;
 }
 
 async function tryRefreshToken(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
-
   try {
     const response = await fetch(`${API_URL}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
+      credentials: 'include',
     });
 
     if (!response.ok) return false;
@@ -63,6 +57,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   let response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers,
+    credentials: 'include',
     cache: 'no-store',
   });
 
@@ -76,6 +71,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       response = await fetch(`${API_URL}${path}`, {
         ...init,
         headers: retryHeaders,
+        credentials: 'include',
         cache: 'no-store',
       });
     }

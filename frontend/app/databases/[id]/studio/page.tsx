@@ -247,7 +247,7 @@ export default function StudioPage() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="studio-btn" onClick={() => router.push(`/databases/${dbId}`)}>← Back</button>
+          <button type="button" className="studio-btn" onClick={() => router.push(`/databases/${dbId}`)}>← Back</button>
           <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>
             {database?.name || 'Studio'}
           </h2>

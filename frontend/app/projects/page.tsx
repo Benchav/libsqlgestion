@@ -48,6 +48,7 @@ export default function ProjectsPage() {
   }
 
   async function handleDelete(id: string, projectName: string) {
+    const event = undefined;
     if (!confirm(`Delete project "${projectName}"? This will also remove all its databases.`)) return;
     try {
       await apiRequest(`/projects/${id}`, { method: 'DELETE' });
@@ -107,7 +108,7 @@ export default function ProjectsPage() {
                 </div>
                 <div className="toolbar" style={{ flexShrink: 0 }}>
                   <Link className="button-secondary" href={`/projects/${project.id}`}>View</Link>
-                  <button className="button-secondary" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(project.id, project.name)}>
+                  <button type="button" className="button-secondary" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(project.id, project.name)}>
                     Delete
                   </button>
                 </div>

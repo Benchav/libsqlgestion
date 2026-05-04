@@ -97,7 +97,7 @@ export default function ProjectDetailPage() {
               {project?.members?.length || 0} member{(project?.members?.length || 0) !== 1 ? 's' : ''}
             </p>
             <div className="hero-actions" style={{ marginTop: 12 }}>
-              <button className="button-secondary" onClick={() => router.push('/projects')}>← All projects</button>
+              <button type="button" className="button-secondary" onClick={() => router.push('/projects')}>← All projects</button>
             </div>
           </div>
           <div className="card" style={{ minWidth: 140, textAlign: 'center' }}>
@@ -126,9 +126,9 @@ export default function ProjectDetailPage() {
               <input className="input" placeholder="Auth token" type="password" value={dbToken} onChange={(e) => setDbToken(e.target.value)} style={{ flex: 1 }} />
             </div>
           )}
-          <button className="button" type="submit" disabled={creating || !dbName.trim()} style={{ width: 'fit-content' }}>
-            {creating ? 'Creating…' : `+ Create ${dbType} database`}
-          </button>
+            <button className="button" type="submit" disabled={creating || !dbName.trim()} style={{ width: 'fit-content' }}>
+              {creating ? 'Creating…' : `+ Create ${dbType} database`}
+            </button>
         </form>
       </ShellFrame>
 

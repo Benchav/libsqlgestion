@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
-import { ShellFrame } from '../../../components/ShellFrame';
 import { apiRequest } from '../../../lib/api';
 import '../../../components/studio/studio.css';
 
@@ -193,7 +192,7 @@ export default function DatabaseDetailPage() {
           </div>
         </div>
 
-        <div className="studio-workspace-intro">
+        <div className="studio-workspace-intro compact">
           <div>
             <div className="studio-kicker">{database?.type || 'database'}</div>
             <h1 className="studio-title">{database?.name || 'Database'}</h1>
@@ -224,7 +223,7 @@ export default function DatabaseDetailPage() {
         <div className="studio-panel">
           {activeTab === 'schema' && (
             <>
-              <div className="studio-panel-header">
+              <div className="studio-panel-header compact">
                 <div>
                   <h2>Schema browser</h2>
                   <p>{schema.length} table{schema.length !== 1 ? 's' : ''} in this database.</p>
@@ -233,7 +232,7 @@ export default function DatabaseDetailPage() {
               {schema.length === 0 ? (
                 <div className="studio-empty-state">No tables found. Use Query or Migrations to create one.</div>
               ) : (
-                <div className="studio-schema-list">
+                <div className="studio-schema-list dense">
                   {schema.map((tableInfo) => (
                     <button
                       key={tableInfo.table}
@@ -249,7 +248,7 @@ export default function DatabaseDetailPage() {
               )}
 
               {expandedTable ? (
-                <div className="studio-card">
+                <div className="studio-card slim">
                   <table className="studio-mini-table">
                     <thead>
                       <tr>
@@ -276,9 +275,9 @@ export default function DatabaseDetailPage() {
           )}
 
           {activeTab === 'query' && (
-            <div className="studio-panel-grid">
+            <div className="studio-panel-grid split-wide">
               <div className="studio-card">
-                <div className="studio-panel-header">
+                <div className="studio-panel-header compact">
                   <div>
                     <h2>Query console</h2>
                     <p>Run SQL and inspect output.</p>
@@ -286,7 +285,7 @@ export default function DatabaseDetailPage() {
                 </div>
                 <div className="stack">
                   <textarea
-                    className="studio-sql-mini"
+                    className="studio-sql-mini compact"
                     placeholder="SELECT * FROM your_table LIMIT 50;"
                     value={sql}
                     onChange={(e) => setSql(e.target.value)}
@@ -339,9 +338,9 @@ export default function DatabaseDetailPage() {
           )}
 
           {activeTab === 'migrations' && (
-            <div className="studio-panel-grid">
+            <div className="studio-panel-grid split-wide">
               <div className="studio-card">
-                <div className="studio-panel-header">
+                <div className="studio-panel-header compact">
                   <div>
                     <h2>Migrations</h2>
                     <p>Apply schema changes and track history.</p>
@@ -349,7 +348,7 @@ export default function DatabaseDetailPage() {
                 </div>
                 <div className="stack">
                   <input className="input" placeholder="Migration name" value={migrationName} onChange={(e) => setMigrationName(e.target.value)} />
-                  <textarea className="studio-sql-mini" placeholder="CREATE TABLE users (...);" value={migrationSql} onChange={(e) => setMigrationSql(e.target.value)} />
+                  <textarea className="studio-sql-mini compact" placeholder="CREATE TABLE users (...);" value={migrationSql} onChange={(e) => setMigrationSql(e.target.value)} />
                   <button type="button" className="studio-btn studio-btn-primary" onClick={handleApplyMigration} disabled={migrationLoading || !migrationName.trim() || !migrationSql.trim()}>
                     {migrationLoading ? 'Applying…' : 'Apply migration'}
                   </button>
@@ -357,7 +356,7 @@ export default function DatabaseDetailPage() {
               </div>
 
               <div className="studio-card">
-                <div className="studio-panel-header">
+                <div className="studio-panel-header compact">
                   <div>
                     <h2>History</h2>
                     <p>{migrations.length} migration{migrations.length !== 1 ? 's' : ''}</p>

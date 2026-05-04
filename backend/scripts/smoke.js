@@ -18,10 +18,10 @@ async function main() {
   await app.listen({ port, host: '127.0.0.1' });
 
   try {
-    const health = await fetch(`http://127.0.0.1:${port}/health`);
+    const health = await fetch(`${baseUrl}/health`);
     if (!health.ok) throw new Error(`health failed: ${health.status}`);
 
-    const ready = await fetch(`http://127.0.0.1:${port}/ready`);
+    const ready = await fetch(`${baseUrl}/ready`);
     if (!ready.ok) throw new Error(`ready failed: ${ready.status}`);
 
     let authResponse = await fetch(`${baseUrl}/auth/register`, {

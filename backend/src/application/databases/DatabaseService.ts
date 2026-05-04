@@ -58,6 +58,7 @@ export class DatabaseService {
       throw new Error('sourcePath does not exist');
     }
     const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
+    const token = input.token ?? randomToken();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
@@ -72,7 +73,7 @@ export class DatabaseService {
 
     database.url = managedPath;
     database.status = 'active';
-    database.encryptedToken = encrypt(input.token ?? randomToken());
+  database.encryptedToken = encrypt(token);
     await this.databaseRepo.save(database);
 
     await this.auditService.record({
@@ -82,7 +83,7 @@ export class DatabaseService {
       metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain },
     });
 
-    return { database };
+    return { database, token };
   }
 
   async listDatabases(projectId?: string) {

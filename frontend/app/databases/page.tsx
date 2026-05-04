@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { apiRequest } from '../../lib/api';
-import { Database, Table2, X, Plus, Search, HardDrive } from 'lucide-react';
+import { Database, Table2, X, Plus, Search, HardDrive, Upload } from 'lucide-react';
 
 type DatabaseInfo = { id: string; name: string; type: string; status: string; subdomain?: string; createdAt: string; project?: { id: string; name: string } };
 type Project = { id: string; name: string };
@@ -14,6 +14,7 @@ export default function DatabasesPage() {
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,6 +57,12 @@ export default function DatabasesPage() {
                 className="pl-9 pr-4 py-2 bg-[#0f0f0f] border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 transition-colors w-64"
               />
             </div>
+            <button 
+              onClick={() => setIsImportModalOpen(true)}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors border border-zinc-700"
+            >
+              <Upload size={16} /> Import Database
+            </button>
             <button 
               onClick={() => setIsCreateModalOpen(true)}
               className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
@@ -143,7 +150,175 @@ export default function DatabasesPage() {
           }}
         />
       )}
+
+      {isImportModalOpen && (
+        <ImportDatabaseModal
+          projects={projects}
+          onClose={() => setIsImportModalOpen(false)}
+          onSuccess={() => {
+            setIsImportModalOpen(false);
+            loadDatabases();
+          }}
+        />
+      )}
     </AppShell>
+  );
+}
+
+function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: () => void }) {
+  const [projectId, setProjectId] = useState(projects[0]?.id || '');
+  const [name, setName] = useState('');
+  const [subdomain, setSubdomain] = useState('');
+  const [mode, setMode] = useState<'path' | 'file'>('file');
+  const [sourcePath, setSourcePath] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleImport(e: FormEvent) {
+    e.preventDefault();
+    if (!projectId || !name.trim()) return;
+
+    if (mode === 'path' && !sourcePath.trim()) {
+      setError('Provide a server path to the .db file.');
+      return;
+    }
+
+    if (mode === 'file' && !file) {
+      setError('Choose a .db file to upload.');
+      return;
+    }
+
+    setError('');
+    setImporting(true);
+
+    try {
+      if (mode === 'path') {
+        await apiRequest('/databases/import-existing', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId,
+            name,
+            sourcePath,
+            subdomain: subdomain || undefined,
+          }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append('projectId', projectId);
+        formData.append('name', name);
+        if (subdomain.trim()) formData.append('subdomain', subdomain.trim());
+        if (file) formData.append('file', file);
+
+        await apiRequest('/databases/import-upload', {
+          method: 'POST',
+          body: formData,
+        });
+      }
+
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
+      <div className="bg-[#0f0f0f] border border-zinc-800/80 rounded-xl w-full max-w-[560px] p-6 shadow-2xl">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-100">Import Database</h2>
+            <p className="text-sm text-zinc-400 mt-1">Import a SQLite file from the server or upload one from your computer.</p>
+          </div>
+          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-400 px-3 py-2 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleImport} className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Project</label>
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+            >
+              <option value="" disabled>Select a project</option>
+              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Name</label>
+            <input
+              type="text"
+              placeholder="e.g. legacy-db"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="w-20 text-sm font-medium text-zinc-300">Subdomain</label>
+            <input
+              type="text"
+              placeholder="optional"
+              value={subdomain}
+              onChange={(e) => setSubdomain(e.target.value)}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 rounded-lg p-1">
+            <button type="button" onClick={() => setMode('file')} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${mode === 'file' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
+              Upload from computer
+            </button>
+            <button type="button" onClick={() => setMode('path')} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${mode === 'path' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
+              Server path
+            </button>
+          </div>
+
+          {mode === 'file' ? (
+            <div className="flex items-center gap-4">
+              <label className="w-20 text-sm font-medium text-zinc-300">File</label>
+              <input
+                type="file"
+                accept=".db,.sqlite,.sqlite3"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="flex-1 text-sm text-zinc-300 file:mr-4 file:px-3 file:py-2 file:rounded-md file:border-0 file:bg-zinc-100 file:text-zinc-900 hover:file:bg-white"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-4">
+              <label className="w-20 text-sm font-medium text-zinc-300">Path</label>
+              <input
+                type="text"
+                placeholder="/mnt/imports/example.db"
+                value={sourcePath}
+                onChange={(e) => setSourcePath(e.target.value)}
+                className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              />
+            </div>
+          )}
+
+          <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
+            <button type="submit" disabled={importing || !projectId || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+              {importing ? 'Importing...' : 'Import Database'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 

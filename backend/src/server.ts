@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import multipart from '@fastify/multipart';
 import routes from './presentation/http/routes';
 import { AuthService } from './application/auth/AuthService';
 import { securityPlugin } from './presentation/http/plugins/security';
@@ -9,6 +10,11 @@ export function buildServer() {
   const app = fastify({ logger: true, trustProxy: true });
   const authService = new AuthService();
 
+  app.register(multipart, {
+    limits: {
+      fileSize: Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000),
+    },
+  });
   app.register(securityPlugin);
   app.addHook('preHandler', async (request, reply) => {
     if (!requireCsrf(request, reply)) {

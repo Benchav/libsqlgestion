@@ -1,4 +1,8 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
 
@@ -29,6 +33,52 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.sourcePath !== 'string') return reply.status(400).send({ error: 'invalid payload' });
     const result = await databaseService.importExistingSqlite(body.projectId, body);
     return reply.status(201).send(result);
+  });
+
+  app.post('/databases/import-upload', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+
+    const fields: Record<string, string> = {};
+    let uploadedPath = '';
+
+    for await (const part of request.parts() as any) {
+      if (part.type === 'file') {
+        if (part.fieldname !== 'file') {
+          part.file.resume();
+          continue;
+        }
+
+        const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsqlite-upload-'));
+        uploadedPath = path.join(tempRoot, part.filename || 'database.db');
+        await pipeline(part.file, fs.createWriteStream(uploadedPath));
+        continue;
+      }
+
+      if (typeof part.value === 'string') {
+        fields[part.fieldname] = part.value;
+      }
+    }
+
+    if (!fields.projectId || !fields.name || !uploadedPath) {
+      return reply.status(400).send({ error: 'projectId, name and file required' });
+    }
+
+    const access = await ensureProjectAccess(request, reply, fields.projectId);
+    if (!access) return;
+
+    try {
+      const result = await databaseService.importExistingSqlite(fields.projectId, {
+        name: fields.name,
+        sourcePath: uploadedPath,
+        subdomain: fields.subdomain || undefined,
+      });
+      return reply.status(201).send(result);
+    } finally {
+      if (uploadedPath) {
+        const tempDir = path.dirname(uploadedPath);
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      }
+    }
   });
 
   app.get('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {

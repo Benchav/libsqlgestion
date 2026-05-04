@@ -48,11 +48,14 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  headers.set('Content-Type', 'application/json');
+function buildHeaders(initHeaders: HeadersInit | undefined, body: BodyInit | null | undefined, method: string) {
+  const headers = new Headers(initHeaders);
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
 
-  const method = String(init.method || 'GET').toUpperCase();
+  if (!isFormData && body !== undefined && body !== null && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const csrfToken = getCookie('libsqlite.csrfToken.v2') || getCookie('libsqlite.csrfToken');
     if (csrfToken) {
@@ -66,6 +69,13 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     headers.set('Authorization', `Bearer ${token}`);
   }
 
+  return headers;
+}
+
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = String(init.method || 'GET').toUpperCase();
+  const headers = buildHeaders(init.headers, init.body, method);
+
   let response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers,
@@ -77,12 +87,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   if (response.status === 401) {
     const refreshed = await tryRefreshToken();
     if (refreshed) {
-      const retryHeaders = new Headers(init.headers);
-      retryHeaders.set('Content-Type', 'application/json');
-      const retryToken = getToken();
-      if (retryToken) {
-        retryHeaders.set('Authorization', `Bearer ${retryToken}`);
-      }
+      const retryHeaders = buildHeaders(init.headers, init.body, method);
       response = await fetch(`${API_URL}${path}`, {
         ...init,
         headers: retryHeaders,

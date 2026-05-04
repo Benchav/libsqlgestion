@@ -37,7 +37,7 @@ class DatabaseService {
             project,
         }));
         if (input.type === 'sqlite') {
-            const filePath = this.resolveSqlitePath(database.id);
+            const filePath = this.resolveSqlitePath(project.id, database.id);
             fs_1.default.mkdirSync(path_1.default.dirname(filePath), { recursive: true });
             if (!fs_1.default.existsSync(filePath))
                 fs_1.default.writeFileSync(filePath, Buffer.from(''));
@@ -71,7 +71,7 @@ class DatabaseService {
             metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
             project,
         }));
-        const managedPath = this.resolveSqlitePath(database.id);
+        const managedPath = this.resolveSqlitePath(project.id, database.id);
         fs_1.default.mkdirSync(path_1.default.dirname(managedPath), { recursive: true });
         await fs_2.promises.copyFile(input.sourcePath, managedPath);
         database.url = managedPath;
@@ -103,9 +103,11 @@ class DatabaseService {
         return { database, token: newToken };
     }
     async testConnection(id) {
-        const database = await this.databaseRepo.findOneByOrFail({ id });
+        const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+        if (!database)
+            throw new Error('database not found');
         if (database.type === 'sqlite') {
-            const url = database.url || this.resolveSqlitePath(database.id);
+            const url = database.url || this.resolveSqlitePath(database.project.id, database.id);
             const ok = fs_1.default.existsSync(url);
             return { ok, details: ok ? 'sqlite file exists' : 'sqlite file missing' };
         }
@@ -124,8 +126,9 @@ class DatabaseService {
             client.close();
         }
     }
-    resolveSqlitePath(databaseId) {
-        return path_1.default.join(process.cwd(), 'data', 'sqlite', `${databaseId}.db`);
+    resolveSqlitePath(projectId, databaseId) {
+        const storageRoot = process.env.SQLITE_STORAGE_ROOT || path_1.default.join(process.cwd(), 'data', 'sqlite');
+        return path_1.default.join(storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
     }
 }
 exports.DatabaseService = DatabaseService;

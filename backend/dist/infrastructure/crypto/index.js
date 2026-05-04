@@ -6,12 +6,22 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.encrypt = encrypt;
 exports.decrypt = decrypt;
 const crypto_1 = __importDefault(require("crypto"));
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 const ALGO = 'aes-256-gcm';
-const MASTER_KEY = process.env.MASTER_KEY;
-if (!MASTER_KEY) {
-    throw new Error('MASTER_KEY not set in environment');
+const MASTER_KEY_FILE = process.env.MASTER_KEY_FILE || path_1.default.join(process.cwd(), 'data', 'master.key');
+function loadMasterKey() {
+    const envKey = process.env.MASTER_KEY;
+    if (envKey) {
+        return envKey;
+    }
+    fs_1.default.mkdirSync(path_1.default.dirname(MASTER_KEY_FILE), { recursive: true });
+    if (!fs_1.default.existsSync(MASTER_KEY_FILE)) {
+        fs_1.default.writeFileSync(MASTER_KEY_FILE, crypto_1.default.randomBytes(32).toString('hex'));
+    }
+    return fs_1.default.readFileSync(MASTER_KEY_FILE, 'utf8').trim();
 }
-const key = Buffer.from(MASTER_KEY, 'hex');
+const key = Buffer.from(loadMasterKey(), 'hex');
 function encrypt(plainText) {
     const iv = crypto_1.default.randomBytes(12);
     const cipher = crypto_1.default.createCipheriv(ALGO, key, iv);

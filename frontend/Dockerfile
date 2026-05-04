@@ -3,7 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-ENV INTERNAL_API_URL=http://backend:3000/api/v1
+ENV PORT=5001
+ENV INTERNAL_API_URL=http://backend:5000/api/v1
 RUN npm run build
-EXPOSE 3000
+EXPOSE 5001
 CMD ["npm", "run", "start"]

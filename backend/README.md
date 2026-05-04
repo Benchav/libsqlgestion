@@ -68,3 +68,4 @@ Verification:
 Docker note:
 
 - If `MASTER_KEY` is not provided, the backend can persist one automatically at `MASTER_KEY_FILE`.
+- Default port: `5000`.

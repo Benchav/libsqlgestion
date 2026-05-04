@@ -4,6 +4,7 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 ENV MASTER_KEY_FILE=/app/data/master.key
+ENV PORT=5000
 RUN npm run build
-EXPOSE 3000
+EXPOSE 5000
 CMD ["node", "dist/main.js"]

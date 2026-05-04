@@ -164,7 +164,7 @@ export default function SettingsPage() {
             <tbody>
               <tr><td>MASTER_KEY</td><td className="muted">64-char hex key for AES-256-GCM encryption</td></tr>
               <tr><td>DATABASE_FILE</td><td className="muted">Path to the control plane SQLite database</td></tr>
-              <tr><td>PORT</td><td className="muted">Backend port (default: 3000)</td></tr>
+              <tr><td>PORT</td><td className="muted">Backend port (default: 5000)</td></tr>
               <tr><td>CORS_ORIGIN</td><td className="muted">Allowed origins (comma-separated)</td></tr>
               <tr><td>SQLITE_STORAGE_ROOT</td><td className="muted">Root path for managed database files</td></tr>
               <tr><td>SQLITE_DISCOVERY_PATH</td><td className="muted">Path to scan for .db files</td></tr>

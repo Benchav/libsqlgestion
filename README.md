@@ -116,6 +116,7 @@ Dockerfile-only deploy note:
 
 - The frontend proxies `/api/v1` to the backend container internally.
 - The backend can generate and persist `MASTER_KEY` automatically at `MASTER_KEY_FILE` if you do not supply one.
+- Default ports: backend `5000`, frontend `5001`.
 
 ## Production note
 

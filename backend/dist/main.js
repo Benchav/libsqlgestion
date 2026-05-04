@@ -23,8 +23,8 @@ const start = async () => {
     }
     const app = (0, server_1.buildServer)();
     try {
-        await app.listen({ port: Number(process.env.PORT || 3000), host: '0.0.0.0' });
-        console.log('Server started on port', process.env.PORT || 3000);
+        await app.listen({ port: Number(process.env.PORT || 5000), host: '0.0.0.0' });
+        console.log('Server started on port', process.env.PORT || 5000);
     }
     catch (err) {
         app.log.error(err);

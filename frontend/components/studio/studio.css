@@ -62,13 +62,13 @@
 
 .studio-tab:hover {
   color: var(--studio-text);
-  background: rgba(125, 211, 252, 0.04);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .studio-tab.active {
   color: var(--studio-accent);
   border-bottom-color: var(--studio-accent);
-  background: rgba(125, 211, 252, 0.06);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .studio-shell {
@@ -353,12 +353,12 @@
 
 .studio-sidebar-pill.active {
   color: var(--studio-text);
-  background: rgba(125, 211, 252, 0.08);
+  background: #1a1a1a;
 }
 
 .studio-sidebar-search {
   padding: 8px 14px 10px;
-  border-bottom: 1px solid rgba(125, 211, 252, 0.08);
+  border-bottom: 1px solid var(--studio-border);
 }
 
 .studio-sidebar-searchbox {
@@ -522,6 +522,7 @@
   padding: 10px 16px;
   border-bottom: 1px solid var(--studio-border);
   flex-shrink: 0;
+  background: #0f0f0f;
 }
 
 .studio-grid-toolbar-left {

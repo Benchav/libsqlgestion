@@ -36,9 +36,9 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
         const body = request.body;
-        if (!body.projectId || !body.name || !body.sourcePath)
-            return reply.status(400).send({ error: 'projectId, name and sourcePath required' });
-        if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.sourcePath !== 'string')
+        if (!body.projectId || !body.sourcePath)
+            return reply.status(400).send({ error: 'projectId and sourcePath required' });
+        if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string')
             return reply.status(400).send({ error: 'invalid payload' });
         const result = await databaseService.importExistingSqlite(body.projectId, body);
         return reply.status(201).send(result);
@@ -48,6 +48,7 @@ async function databaseRoutes(app) {
             return;
         const fields = {};
         let uploadedPath = '';
+        let uploadedFileName = '';
         for await (const part of request.parts()) {
             if (part.type === 'file') {
                 if (part.fieldname !== 'file') {
@@ -55,7 +56,8 @@ async function databaseRoutes(app) {
                     continue;
                 }
                 const tempRoot = await fs_1.default.promises.mkdtemp(path_1.default.join(os_1.default.tmpdir(), 'libsqlite-upload-'));
-                uploadedPath = path_1.default.join(tempRoot, part.filename || 'database.db');
+                uploadedFileName = part.filename || 'database.db';
+                uploadedPath = path_1.default.join(tempRoot, uploadedFileName);
                 await (0, promises_1.pipeline)(part.file, fs_1.default.createWriteStream(uploadedPath));
                 continue;
             }
@@ -63,8 +65,8 @@ async function databaseRoutes(app) {
                 fields[part.fieldname] = part.value;
             }
         }
-        if (!fields.projectId || !fields.name || !uploadedPath) {
-            return reply.status(400).send({ error: 'projectId, name and file required' });
+        if (!fields.projectId || !uploadedPath) {
+            return reply.status(400).send({ error: 'projectId and file required' });
         }
         const access = await (0, guards_1.ensureProjectAccess)(request, reply, fields.projectId);
         if (!access)
@@ -72,6 +74,7 @@ async function databaseRoutes(app) {
         try {
             const result = await databaseService.importExistingSqlite(fields.projectId, {
                 name: fields.name,
+                sourceName: uploadedFileName,
                 sourcePath: uploadedPath,
                 subdomain: fields.subdomain || undefined,
             });

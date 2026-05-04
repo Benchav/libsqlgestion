@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DatabaseService = void 0;
 const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 const data_source_1 = require("../../infrastructure/db/data-source");
 const Database_1 = require("../../domain/entities/Database");
 const Project_1 = require("../../domain/entities/Project");
@@ -59,16 +60,24 @@ class DatabaseService {
         if (!fs_1.default.existsSync(input.sourcePath)) {
             throw new Error('sourcePath does not exist');
         }
-        const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
+        const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
+        const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(databaseName, (0, tokens_1.randomToken)());
         const token = input.token ?? (0, tokens_1.randomToken)();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
-            name: input.name,
+            name: databaseName,
             type: 'sqlite',
             status: 'inactive',
             subdomain,
             metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
             project,
         }));
+        function deriveDatabaseName(name, sourceName, sourcePath) {
+            const explicitName = name?.trim();
+            if (explicitName)
+                return explicitName;
+            const candidate = sourceName || (sourcePath ? path_1.default.basename(sourcePath) : '');
+            return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
+        }
         const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
         database.url = managedPath;
         database.status = 'active';
@@ -152,3 +161,10 @@ class DatabaseService {
     }
 }
 exports.DatabaseService = DatabaseService;
+function deriveDatabaseName(name, sourceName, sourcePath) {
+    const explicitName = name?.trim();
+    if (explicitName)
+        return explicitName;
+    const candidate = sourceName || (sourcePath ? path_1.default.basename(sourcePath) : '');
+    return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
+}

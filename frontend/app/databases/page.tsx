@@ -206,7 +206,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
 
   async function handleImport(e: FormEvent) {
     e.preventDefault();
-    if (!projectId || !name.trim()) return;
+    if (!projectId) return;
 
     if (mode === 'path' && !sourcePath.trim()) {
       setError('Provide a server path to the .db file.');
@@ -227,7 +227,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
           method: 'POST',
           body: JSON.stringify({
             projectId,
-            name,
+            ...(name.trim() ? { name: name.trim() } : {}),
             sourcePath,
             subdomain: subdomain || undefined,
           }),
@@ -236,7 +236,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
       } else {
         const formData = new FormData();
         formData.append('projectId', projectId);
-        formData.append('name', name);
+        if (name.trim()) formData.append('name', name.trim());
         if (subdomain.trim()) formData.append('subdomain', subdomain.trim());
         if (file) formData.append('file', file);
 
@@ -347,7 +347,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
 
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-            <button type="submit" disabled={importing || !projectId || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+            <button type="submit" disabled={importing || !projectId || (mode === 'path' ? !sourcePath.trim() : !file)} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
               {importing ? 'Importing...' : 'Import Database'}
             </button>
           </div>

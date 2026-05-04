@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { Project } from '../../domain/entities/Project';
@@ -52,22 +53,30 @@ export class DatabaseService {
     return { database, token };
   }
 
-  async importExistingSqlite(projectId: string, input: { name: string; sourcePath: string; subdomain?: string; token?: string; metadata?: Record<string, unknown> }) {
+  async importExistingSqlite(projectId: string, input: { name?: string; sourceName?: string; sourcePath: string; subdomain?: string; token?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     if (!fs.existsSync(input.sourcePath)) {
       throw new Error('sourcePath does not exist');
     }
-    const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
+    const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
+    const subdomain = input.subdomain ?? ensureSubdomain(databaseName, randomToken());
     const token = input.token ?? randomToken();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
-      name: input.name,
+      name: databaseName,
       type: 'sqlite',
       status: 'inactive',
       subdomain,
       metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
       project,
     }));
+function deriveDatabaseName(name?: string, sourceName?: string, sourcePath?: string) {
+  const explicitName = name?.trim();
+  if (explicitName) return explicitName;
+
+  const candidate = sourceName || (sourcePath ? path.basename(sourcePath) : '');
+  return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
+}
 
     const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
 
@@ -155,4 +164,12 @@ export class DatabaseService {
     });
     return database;
   }
+}
+
+function deriveDatabaseName(name?: string, sourceName?: string, sourcePath?: string) {
+  const explicitName = name?.trim();
+  if (explicitName) return explicitName;
+
+  const candidate = sourceName || (sourcePath ? path.basename(sourcePath) : '');
+  return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
 }

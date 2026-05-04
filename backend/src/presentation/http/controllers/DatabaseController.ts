@@ -29,8 +29,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.post('/databases/import-sqlite', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const body = request.body as any;
-    if (!body.projectId || !body.name || !body.sourcePath) return reply.status(400).send({ error: 'projectId, name and sourcePath required' });
-    if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.sourcePath !== 'string') return reply.status(400).send({ error: 'invalid payload' });
+    if (!body.projectId || !body.sourcePath) return reply.status(400).send({ error: 'projectId and sourcePath required' });
+    if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string') return reply.status(400).send({ error: 'invalid payload' });
     const result = await databaseService.importExistingSqlite(body.projectId, body);
     return reply.status(201).send(result);
   });
@@ -40,6 +40,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
 
     const fields: Record<string, string> = {};
     let uploadedPath = '';
+    let uploadedFileName = '';
 
     for await (const part of request.parts() as any) {
       if (part.type === 'file') {
@@ -49,7 +50,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
         }
 
         const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsqlite-upload-'));
-        uploadedPath = path.join(tempRoot, part.filename || 'database.db');
+        uploadedFileName = part.filename || 'database.db';
+        uploadedPath = path.join(tempRoot, uploadedFileName);
         await pipeline(part.file, fs.createWriteStream(uploadedPath));
         continue;
       }
@@ -59,8 +61,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
       }
     }
 
-    if (!fields.projectId || !fields.name || !uploadedPath) {
-      return reply.status(400).send({ error: 'projectId, name and file required' });
+    if (!fields.projectId || !uploadedPath) {
+      return reply.status(400).send({ error: 'projectId and file required' });
     }
 
     const access = await ensureProjectAccess(request, reply, fields.projectId);
@@ -69,6 +71,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     try {
       const result = await databaseService.importExistingSqlite(fields.projectId, {
         name: fields.name,
+        sourceName: uploadedFileName,
         sourcePath: uploadedPath,
         subdomain: fields.subdomain || undefined,
       });

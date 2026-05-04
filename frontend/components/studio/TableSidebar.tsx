@@ -17,7 +17,7 @@ export function TableSidebar({ tables, activeTable, onSelect, onRefresh }: Props
     <div className="studio-sidebar">
       <div className="studio-sidebar-header">
         <span className="studio-sidebar-title">Schema</span>
-        <button className="studio-icon-btn" onClick={onRefresh} title="Refresh schema">
+          <button type="button" className="studio-icon-btn" onClick={onRefresh} title="Refresh schema">
           ↻
         </button>
       </div>
@@ -34,10 +34,11 @@ export function TableSidebar({ tables, activeTable, onSelect, onRefresh }: Props
           <div className="studio-sidebar-empty">No tables found</div>
         )}
         {tables.map((t) => (
-          <button
-            key={t.table}
-            className={`studio-sidebar-item ${activeTable === t.table ? 'active' : ''}`}
-            onClick={() => onSelect(t.table)}
+            <button
+              type="button"
+              key={t.table}
+              className={`studio-sidebar-item ${activeTable === t.table ? 'active' : ''}`}
+              onClick={() => onSelect(t.table)}
           >
             <span className="studio-sidebar-item-icon">⊞</span>
             <span className="studio-sidebar-item-name">{t.table}</span>

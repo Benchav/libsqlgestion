@@ -66,7 +66,7 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
                   <div className="studio-sql-results-count">
                     ✓ {result.rows.length} row{result.rows.length !== 1 ? 's' : ''} returned
                   </div>
-                  <div className="studio-grid-scroll" style={{ maxHeight: 360 }}>
+                  <div className="studio-grid-scroll studio-sql-results-scroll">
                     <table className="studio-table">
                       <thead>
                         <tr>

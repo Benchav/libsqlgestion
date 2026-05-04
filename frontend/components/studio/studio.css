@@ -24,11 +24,19 @@
   background: linear-gradient(180deg, rgba(10, 16, 31, 0.98), rgba(8, 12, 24, 0.98));
 }
 
+.studio-layout--tall {
+  min-height: calc(100vh - 76px);
+}
+
 .studio-main {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+}
+
+.studio-main--padded {
+  padding-bottom: 8px;
 }
 
 .studio-tab-bar {
@@ -795,6 +803,10 @@
 .studio-sql-results {
   flex: 1;
   overflow: auto;
+}
+
+.studio-sql-results-scroll {
+  max-height: 360px;
 }
 
 .studio-sql-results-table {

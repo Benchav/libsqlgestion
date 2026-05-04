@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 type ColumnMeta = { name: string; type: string; notnull: number; pk: number };
 
@@ -76,12 +76,12 @@ export function DataGrid({
 
   const typeColor = useCallback((type: string) => {
     const t = type.toUpperCase();
-    if (t.includes('INT')) return 'var(--accent)';
+    if (t.includes('INT')) return 'var(--studio-accent)';
     if (t.includes('TEXT') || t.includes('VARCHAR') || t.includes('CHAR')) return '#a78bfa';
     if (t.includes('REAL') || t.includes('FLOAT') || t.includes('DOUBLE')) return '#f59e0b';
     if (t.includes('BLOB')) return '#ef4444';
     if (t.includes('DATE') || t.includes('TIME')) return '#10b981';
-    return 'var(--muted)';
+    return 'var(--studio-muted)';
   }, []);
 
   const formatCell = useCallback((value: unknown) => {

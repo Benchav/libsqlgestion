@@ -260,7 +260,7 @@ export default function StudioPage() {
 
         {error ? <div className="studio-callout danger">{error}</div> : null}
 
-        <div className="studio-layout">
+        <div className="studio-layout studio-layout--tall">
           <TableSidebar
             tables={tables.map((t) => ({ table: t.table, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
@@ -268,7 +268,7 @@ export default function StudioPage() {
             onRefresh={loadSchema}
           />
 
-          <div className="studio-main">
+            <div className="studio-main studio-main--padded">
             <div className="studio-tab-bar">
               <button type="button" className={`studio-tab ${activeTab === 'data' ? 'active' : ''}`} onClick={() => setActiveTab('data')}>
                 Data{activeTable ? ` · ${activeTable}` : ''}

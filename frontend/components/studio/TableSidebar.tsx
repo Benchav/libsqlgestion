@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from 'react';
+import { Search, RotateCw, LayoutGrid } from 'lucide-react';
 
 type TableInfo = {
   table: string;
@@ -10,11 +11,13 @@ type TableInfo = {
 type Props = {
   tables: TableInfo[];
   activeTable: string | null;
-  onSelect: (table: string) => void;
+  activeTab: 'data' | 'sql';
+  onSelectTable: (table: string) => void;
+  onSelectTab: (tab: 'data' | 'sql') => void;
   onRefresh: () => void;
 };
 
-export function TableSidebar({ tables, activeTable, onSelect, onRefresh }: Props) {
+export function TableSidebar({ tables, activeTable, activeTab, onSelectTable, onSelectTab, onRefresh }: Props) {
   const [query, setQuery] = useState('');
 
   const visibleTables = useMemo(
@@ -23,45 +26,83 @@ export function TableSidebar({ tables, activeTable, onSelect, onRefresh }: Props
   );
 
   return (
-    <div className="studio-sidebar">
-      <div className="studio-sidebar-header">
-        <span className="studio-sidebar-title">Schema</span>
-        <button type="button" className="studio-icon-btn" onClick={onRefresh} title="Refresh schema">
-          ↻
+    <div className="w-64 flex-shrink-0 bg-[#09090b] border-r border-zinc-800/80 flex flex-col h-full text-[13px]">
+      <div className="p-4 flex flex-col gap-4">
+        <button 
+          onClick={() => onSelectTab('sql')}
+          className={`w-full flex items-center gap-2 px-3 py-2 rounded-md transition-colors text-left ${
+            activeTab === 'sql' 
+              ? 'bg-zinc-800/80 text-zinc-100' 
+              : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+          }`}
+        >
+          <div className="w-4 h-4 rounded-sm border border-zinc-500 flex items-center justify-center text-[10px] font-mono">_</div>
+          <span className="font-medium">SQL console</span>
         </button>
-      </div>
-      <div className="studio-sidebar-search">
-        <div className="studio-sidebar-searchbox">
-          <span className="studio-sidebar-search-icon">⌕</span>
-          <input
-            type="text"
-            placeholder="Search tables"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-        <span className="studio-sidebar-count">{visibleTables.length} table{visibleTables.length !== 1 ? 's' : ''}</span>
-      </div>
-      <div className="studio-sidebar-pills">
-        <span className="studio-sidebar-pill active">Tables</span>
-        <span className="studio-sidebar-pill">Views</span>
-      </div>
-      <nav className="studio-sidebar-nav">
-        {visibleTables.length === 0 && (
-          <div className="studio-sidebar-empty">No tables found</div>
-        )}
-        {visibleTables.map((t) => (
-          <button
-            type="button"
-            key={t.table}
-            className={`studio-sidebar-item ${activeTable === t.table ? 'active' : ''}`}
-            onClick={() => onSelect(t.table)}
+
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Schema</span>
+          <button 
+            type="button" 
+            onClick={onRefresh} 
+            className="text-zinc-500 hover:text-zinc-300 transition-colors p-1 rounded hover:bg-zinc-800"
+            title="Refresh schema"
           >
-            <span className="studio-sidebar-item-icon">⊞</span>
-            <span className="studio-sidebar-item-name">{t.table}</span>
-            <span className="studio-sidebar-item-cols">{t.columns.length}</span>
+            <RotateCw size={14} />
           </button>
-        ))}
+        </div>
+
+        <div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={14} />
+            <input
+              type="text"
+              placeholder="Search tables"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full bg-[#18181b] border border-zinc-800 rounded-lg pl-9 pr-3 py-1.5 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
+            />
+          </div>
+          <div className="text-[11px] text-zinc-600 mt-2 font-medium">
+            {visibleTables.length} table{visibleTables.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button className="px-3 py-1 rounded-full bg-zinc-800 text-zinc-200 text-xs font-medium">Tables</button>
+          <button className="px-3 py-1 rounded-full text-zinc-500 hover:text-zinc-300 text-xs font-medium transition-colors">Views</button>
+        </div>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto px-2 pb-4 custom-scrollbar">
+        {visibleTables.length === 0 && (
+          <div className="px-3 py-2 text-zinc-500 text-xs text-center">No tables found</div>
+        )}
+        <div className="flex flex-col gap-0.5">
+          {visibleTables.map((t) => (
+            <button
+              type="button"
+              key={t.table}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-colors text-left ${
+                activeTab === 'data' && activeTable === t.table 
+                  ? 'bg-zinc-800/80 text-zinc-100' 
+                  : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+              }`}
+              onClick={() => {
+                onSelectTable(t.table);
+                onSelectTab('data');
+              }}
+            >
+              <div className="flex items-center gap-2 overflow-hidden">
+                <LayoutGrid size={14} className={activeTab === 'data' && activeTable === t.table ? 'text-zinc-300' : 'text-zinc-500'} />
+                <span className="font-medium truncate">{t.table}</span>
+              </div>
+              <span className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                {t.columns.length}
+              </span>
+            </button>
+          ))}
+        </div>
       </nav>
     </div>
   );

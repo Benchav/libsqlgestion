@@ -7,7 +7,7 @@ import { AppShell } from '../../../../components/AppShell';
 import { TableSidebar } from '../../../../components/studio/TableSidebar';
 import { DataGrid } from '../../../../components/studio/DataGrid';
 import { SqlRunner } from '../../../../components/studio/SqlRunner';
-import '../../../../components/studio/studio.css';
+import { ChevronRight } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
 type TableSchema = { table: string; columns: ColumnMeta[]; foreignKeys: unknown[] };
@@ -63,14 +63,13 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (dbId) loadSchema();
-  }, [dbId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dbId]);
 
   // Load table data
   const loadTableData = useCallback(async () => {
     if (!activeTable || !dbId) return;
     setGridLoading(true);
     try {
-      // Get count
       const countResult = await apiRequest<{ ok: boolean; rows: Array<{ cnt: number }> }>(`/databases/${dbId}/query`, {
         method: 'POST',
         body: JSON.stringify({ sql: `SELECT COUNT(*) as cnt FROM "${activeTable}"` }),
@@ -78,7 +77,6 @@ export default function StudioPage() {
       const count = countResult.rows?.[0]?.cnt ?? 0;
       setTotalRows(count);
 
-      // Get rows
       const orderClause = sortColumn ? ` ORDER BY "${sortColumn}" ${sortDir}` : '';
       const dataResult = await apiRequest<{ ok: boolean; rows: Record<string, unknown>[] }>(`/databases/${dbId}/query`, {
         method: 'POST',
@@ -99,23 +97,19 @@ export default function StudioPage() {
     loadTableData();
   }, [loadTableData]);
 
-  // Handle table selection
   function handleSelectTable(table: string) {
     setActiveTable(table);
     setPage(0);
     setSortColumn(null);
     setSortDir('ASC');
-    setActiveTab('data');
   }
 
-  // Handle sort
   function handleSort(column: string, dir: 'ASC' | 'DESC') {
     setSortColumn(column);
     setSortDir(dir);
     setPage(0);
   }
 
-  // Handle cell edit
   async function handleCellEdit(rowIndex: number, column: string, value: unknown) {
     if (!activeTable) return;
     const row = rows[rowIndex];
@@ -144,7 +138,6 @@ export default function StudioPage() {
     }
   }
 
-  // Handle delete row
   async function handleDeleteRow(rowIndex: number) {
     if (!activeTable) return;
     const row = rows[rowIndex];
@@ -174,16 +167,13 @@ export default function StudioPage() {
     }
   }
 
-  // Handle add row
   async function handleAddRow() {
     if (!activeTable) return;
     const activeTableSchema = tables.find((t) => t.table === activeTable);
     if (!activeTableSchema) return;
 
-    // Insert with defaults
-    const cols = activeTableSchema.columns.filter((c) => c.pk !== 1); // skip auto-increment PK
+    const cols = activeTableSchema.columns.filter((c) => c.pk !== 1);
     if (cols.length === 0) {
-      // Table only has PK, try inserting with defaults
       try {
         await apiRequest(`/databases/${dbId}/query`, {
           method: 'POST',
@@ -196,7 +186,6 @@ export default function StudioPage() {
       return;
     }
 
-    // Insert a row with NULL values for all columns
     const colNames = cols.map((c) => `"${c.name}"`).join(', ');
     const colValues = cols.map((c) => (c.notnull ? "''" : 'NULL')).join(', ');
     try {
@@ -206,7 +195,6 @@ export default function StudioPage() {
           sql: `INSERT INTO "${activeTable}" (${colNames}) VALUES (${colValues})`,
         }),
       });
-      // Go to last page to see the new row
       const newCount = totalRows + 1;
       const lastPage = Math.max(0, Math.ceil(newCount / PAGE_SIZE) - 1);
       setPage(lastPage);
@@ -216,7 +204,6 @@ export default function StudioPage() {
     }
   }
 
-  // Handle SQL execute
   async function handleSqlExecute(sql: string) {
     setSqlLoading(true);
     setSqlResult(null);
@@ -230,7 +217,6 @@ export default function StudioPage() {
         rows: result.rows,
         changes: result.result?.changes,
       });
-      // Refresh schema in case tables were created/dropped
       loadSchema();
       if (activeTable) loadTableData();
     } catch (err: any) {
@@ -244,40 +230,41 @@ export default function StudioPage() {
 
   return (
     <AppShell>
-      <div className="studio-shell">
-        <div className="studio-topbar">
-          <div className="studio-breadcrumbs">
-            <button type="button" className="studio-chip" onClick={() => router.push(`/databases/${dbId}`)}>Database</button>
-            <span className="studio-divider">/</span>
-            <span className="studio-current">Studio</span>
+      <div className="flex flex-col h-full bg-[#0a0a0a] text-zinc-300">
+        {/* Topbar for Studio */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/80 bg-[#09090b] text-sm flex-shrink-0 z-20">
+          <div className="flex items-center text-zinc-400">
+            <span className="cursor-pointer hover:text-zinc-200 transition-colors" onClick={() => router.push('/databases')}>Databases</span>
+            <ChevronRight size={14} className="mx-2 text-zinc-600" />
+            <span className="cursor-pointer hover:text-zinc-200 transition-colors" onClick={() => router.push(`/databases/${dbId}`)}>{database?.name || 'Database'}</span>
+            <ChevronRight size={14} className="mx-2 text-zinc-600" />
+            <span className="text-zinc-100 font-medium">Studio</span>
           </div>
 
-          <div className="studio-meta-row">
-            {database?.type && <span className="badge">{database.type}</span>}
-            {database?.status && <span className={`badge ${database.status === 'active' ? 'success' : 'warning'}`}>{database.status}</span>}
+          <div className="flex items-center gap-3">
+            {database?.type && <span className="bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider">{database.type}</span>}
+            {database?.status && <span className={`px-2 py-0.5 rounded text-[11px] font-medium border uppercase tracking-wider ${database.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>{database.status}</span>}
           </div>
         </div>
 
-        {error ? <div className="studio-callout danger">{error}</div> : null}
+        {error && (
+          <div className="m-4 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm flex-shrink-0">
+            {error}
+          </div>
+        )}
 
-        <div className="studio-layout studio-layout--tall">
+        <div className="flex-1 flex overflow-hidden">
           <TableSidebar
             tables={tables.map((t) => ({ table: t.table, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
-            onSelect={handleSelectTable}
+            activeTab={activeTab}
+            onSelectTable={handleSelectTable}
+            onSelectTab={setActiveTab}
             onRefresh={loadSchema}
           />
 
-            <div className="studio-main studio-main--padded">
-            <div className="studio-tab-bar">
-              <button type="button" className={`studio-tab ${activeTab === 'data' ? 'active' : ''}`} onClick={() => setActiveTab('data')}>
-                Data{activeTable ? ` · ${activeTable}` : ''}
-              </button>
-              <button type="button" className={`studio-tab ${activeTab === 'sql' ? 'active' : ''}`} onClick={() => setActiveTab('sql')}>
-                SQL
-              </button>
-            </div>
-
+          <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a]">
+            {/* Main Area */}
             {activeTab === 'data' && activeTable && currentTableSchema ? (
               <DataGrid
                 tableName={activeTable}
@@ -296,16 +283,16 @@ export default function StudioPage() {
                 loading={gridLoading}
               />
             ) : activeTab === 'data' && !activeTable ? (
-              <div className="studio-empty-state">Select a table from the sidebar to browse data.</div>
-            ) : null}
-
-            {activeTab === 'sql' && (
+              <div className="h-full flex items-center justify-center text-zinc-500 text-sm">
+                Select a table from the sidebar to view data.
+              </div>
+            ) : activeTab === 'sql' ? (
               <SqlRunner
                 onExecute={handleSqlExecute}
                 loading={sqlLoading}
                 result={sqlResult}
               />
-            )}
+            ) : null}
           </div>
         </div>
       </div>

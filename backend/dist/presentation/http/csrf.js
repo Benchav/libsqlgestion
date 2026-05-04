@@ -8,6 +8,7 @@ exports.requireCsrf = requireCsrf;
 const crypto_1 = __importDefault(require("crypto"));
 const cookies_1 = require("../../infrastructure/security/cookies");
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const CSRF_COOKIE_NAME = 'libsqlite.csrfToken.v2';
 const CSRF_EXEMPT_PATHS = [
     '/api/v1/auth/login',
     '/api/v1/auth/register',
@@ -24,8 +25,8 @@ function requireCsrf(request, reply) {
     if (CSRF_EXEMPT_PATHS.some((path) => request.url.startsWith(path)))
         return true;
     const cookies = (0, cookies_1.parseCookies)(request.headers.cookie);
-    const cookieToken = cookies['libsqlite.csrfToken'];
-    const headerToken = request.headers['x-csrf-token'];
+    const cookieToken = cookies[CSRF_COOKIE_NAME] || cookies['libsqlite.csrfToken'];
+    const headerToken = request.headers['x-csrf-token-v2'] || request.headers['x-csrf-token'];
     const provided = Array.isArray(headerToken) ? headerToken[0] : headerToken;
     if (!cookieToken || !provided || cookieToken !== provided) {
         reply.code(403).send({ error: 'invalid csrf token' });

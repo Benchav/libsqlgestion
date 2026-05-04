@@ -18,7 +18,7 @@ function issueSessionCookies(accessToken, refreshToken) {
         cookies: [
             (0, cookies_1.sessionCookie)('libsqlite.accessToken', accessToken, ACCESS_TOKEN_MAX_AGE),
             (0, cookies_1.sessionCookie)('libsqlite.refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE),
-            (0, cookies_1.csrfCookie)('libsqlite.csrfToken', csrfToken, CSRF_TOKEN_MAX_AGE),
+            (0, cookies_1.csrfCookie)('libsqlite.csrfToken.v2', csrfToken, CSRF_TOKEN_MAX_AGE),
         ],
     };
 }
@@ -92,6 +92,7 @@ async function authRoutes(app) {
             (0, cookies_1.clearSessionCookie)('libsqlite.accessToken'),
             (0, cookies_1.clearSessionCookie)('libsqlite.refreshToken'),
             (0, cookies_1.clearCsrfCookie)('libsqlite.csrfToken'),
+            (0, cookies_1.clearCsrfCookie)('libsqlite.csrfToken.v2'),
         ]);
         return reply.send({ ok: true });
     });

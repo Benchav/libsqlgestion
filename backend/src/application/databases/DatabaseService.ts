@@ -125,4 +125,33 @@ export class DatabaseService {
     }
   }
 
+  async deleteDatabase(id: string) {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) throw new Error('database not found');
+
+    await this.databaseRepo.remove(database);
+
+    await this.auditService.record({
+      action: 'database.delete',
+      resourceType: 'database',
+      resourceId: id,
+      metadata: { name: database.name, type: database.type },
+    });
+
+    return { ok: true };
+  }
+
+  async updateDatabase(id: string, input: { name?: string; status?: string }) {
+    const database = await this.databaseRepo.findOneByOrFail({ id });
+    if (input.name) database.name = input.name;
+    if (input.status) database.status = input.status as any;
+    await this.databaseRepo.save(database);
+    await this.auditService.record({
+      action: 'database.update',
+      resourceType: 'database',
+      resourceId: id,
+      metadata: input,
+    });
+    return database;
+  }
 }

@@ -4,6 +4,7 @@ This folder contains the project documentation for users, operators and contribu
 
 - [Architecture](ARCHITECTURE.md)
 - [Usage Guide](USAGE.md)
+- [Operations Manual](OPERATIONS.md)
 - [API Reference](API.md)
 - [Deployment Guide](DEPLOYMENT.md)
 - [Security Guide](SECURITY.md)

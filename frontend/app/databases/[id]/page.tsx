@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
+import { ShellFrame } from '../../../components/ShellFrame';
 import { apiRequest } from '../../../lib/api';
 import '../../../components/studio/studio.css';
 

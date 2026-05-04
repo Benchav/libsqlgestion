@@ -1,10 +1,13 @@
 import fastify from 'fastify';
 import routes from './presentation/http/routes';
 import { AuthService } from './application/auth/AuthService';
+import { securityPlugin } from './presentation/http/plugins/security';
 
 export function buildServer() {
-  const app = fastify({ logger: true });
+  const app = fastify({ logger: true, trustProxy: true });
   const authService = new AuthService();
+
+  app.register(securityPlugin);
   app.decorate('authenticate', async function (request: any, reply: any) {
     const authorization = request.headers.authorization;
     if (!authorization?.startsWith('Bearer ')) {

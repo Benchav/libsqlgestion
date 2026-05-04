@@ -7,9 +7,11 @@ exports.buildServer = buildServer;
 const fastify_1 = __importDefault(require("fastify"));
 const routes_1 = __importDefault(require("./presentation/http/routes"));
 const AuthService_1 = require("./application/auth/AuthService");
+const security_1 = require("./presentation/http/plugins/security");
 function buildServer() {
-    const app = (0, fastify_1.default)({ logger: true });
+    const app = (0, fastify_1.default)({ logger: true, trustProxy: true });
     const authService = new AuthService_1.AuthService();
+    app.register(security_1.securityPlugin);
     app.decorate('authenticate', async function (request, reply) {
         const authorization = request.headers.authorization;
         if (!authorization?.startsWith('Bearer ')) {

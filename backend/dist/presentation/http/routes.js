@@ -12,7 +12,9 @@ const UserController_1 = __importDefault(require("./controllers/UserController")
 const SchemaController_1 = __importDefault(require("./controllers/SchemaController"));
 const QueryController_1 = __importDefault(require("./controllers/QueryController"));
 const ProvisioningController_1 = __importDefault(require("./controllers/ProvisioningController"));
+const HealthController_1 = __importDefault(require("./controllers/HealthController"));
 async function routes(app) {
+    app.register(HealthController_1.default);
     app.register(AuthController_1.default);
     app.register(ProjectController_1.default);
     app.register(DatabaseController_1.default);

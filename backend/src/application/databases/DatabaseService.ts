@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { promises as fsp } from 'fs';
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { Project } from '../../domain/entities/Project';
 import { encrypt, decrypt } from '../../infrastructure/crypto';
 import { randomToken } from '../../infrastructure/security/tokens';
 import { AuditService } from '../audit/AuditService';
+import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -35,6 +37,9 @@ export class DatabaseService {
       database.url = filePath;
       database.status = 'active';
       await this.databaseRepo.save(database);
+    } else if (input.url) {
+      database.status = 'active';
+      await this.databaseRepo.save(database);
     }
 
     await this.auditService.record({
@@ -45,6 +50,40 @@ export class DatabaseService {
     });
 
     return { database, token };
+  }
+
+  async importExistingSqlite(projectId: string, input: { name: string; sourcePath: string; subdomain?: string; token?: string; metadata?: Record<string, unknown> }) {
+    const project = await this.projectRepo.findOneByOrFail({ id: projectId });
+    if (!fs.existsSync(input.sourcePath)) {
+      throw new Error('sourcePath does not exist');
+    }
+
+    const database = await this.databaseRepo.save(this.databaseRepo.create({
+      name: input.name,
+      type: 'sqlite',
+      status: 'inactive',
+      subdomain: input.subdomain,
+      metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
+      project,
+    }));
+
+    const managedPath = this.resolveSqlitePath(database.id);
+    fs.mkdirSync(path.dirname(managedPath), { recursive: true });
+    await fsp.copyFile(input.sourcePath, managedPath);
+
+    database.url = managedPath;
+    database.status = 'active';
+    database.encryptedToken = encrypt(input.token ?? randomToken());
+    await this.databaseRepo.save(database);
+
+    await this.auditService.record({
+      action: 'database.import',
+      resourceType: 'database',
+      resourceId: database.id,
+      metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain },
+    });
+
+    return { database };
   }
 
   async listDatabases(projectId?: string) {
@@ -73,9 +112,17 @@ export class DatabaseService {
       return { ok, details: ok ? 'sqlite file exists' : 'sqlite file missing' };
     }
 
-    if (!database.encryptedToken) return { ok: false, details: 'missing token' };
+    if (!database.url || !database.encryptedToken) return { ok: false, details: 'missing url or token' };
     const token = decrypt(database.encryptedToken);
-    return { ok: Boolean(database.url && token.length > 0), details: 'remote/libsql validation deferred to integration layer' };
+    const client = createLibsqlClient(database.url, token);
+    try {
+      await client.execute('SELECT 1');
+      return { ok: true, details: 'connection ok' };
+    } catch (error: any) {
+      return { ok: false, details: error.message };
+    } finally {
+      client.close();
+    }
   }
 
   private resolveSqlitePath(databaseId: string) {

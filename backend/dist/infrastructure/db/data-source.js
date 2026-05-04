@@ -11,11 +11,14 @@ const UserRole_1 = require("../../domain/entities/UserRole");
 const AuditLog_1 = require("../../domain/entities/AuditLog");
 const Session_1 = require("../../domain/entities/Session");
 const ProjectMember_1 = require("../../domain/entities/ProjectMember");
+const _1710000000000_InitialControlPlane_1 = require("../../migrations/1710000000000-InitialControlPlane");
 const databaseFile = process.env.DATABASE_FILE || './data/control.db';
 exports.AppDataSource = new typeorm_1.DataSource({
     type: 'sqlite',
     database: databaseFile,
-    synchronize: true,
+    synchronize: false,
+    migrationsRun: false,
     logging: false,
     entities: [User_1.User, Project_1.Project, Database_1.Database, Role_1.Role, Permission_1.Permission, UserRole_1.UserRole, AuditLog_1.AuditLog, Session_1.Session, ProjectMember_1.ProjectMember],
+    migrations: [_1710000000000_InitialControlPlane_1.InitialControlPlane1710000000000],
 });

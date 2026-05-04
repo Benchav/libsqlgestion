@@ -20,6 +20,15 @@ async function databaseRoutes(app) {
         const result = await databaseService.createDatabase(body.projectId, body);
         return reply.status(201).send({ database: result.database, token: result.token });
     });
+    app.post('/databases/import-sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const body = request.body;
+        if (!body.projectId || !body.name || !body.sourcePath)
+            return reply.status(400).send({ error: 'projectId, name and sourcePath required' });
+        const result = await databaseService.importExistingSqlite(body.projectId, body);
+        return reply.status(201).send(result);
+    });
     app.get('/databases/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
             return;

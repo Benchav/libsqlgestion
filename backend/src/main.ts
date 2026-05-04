@@ -7,6 +7,7 @@ import { bootstrapSecurityCatalog } from './application/auth/auth.bootstrap';
 
 const start = async () => {
   await AppDataSource.initialize();
+  await AppDataSource.runMigrations();
   await bootstrapSecurityCatalog();
   const app = buildServer();
   try {

@@ -27,3 +27,12 @@ Main endpoints:
 - `POST /api/v1/databases/:id/query`
 - `POST /api/v1/provisioning/sqlite`
 - `POST /api/v1/provisioning/libsql`
+- `POST /api/v1/databases/import-sqlite`
+- `GET /health`
+- `GET /ready`
+
+Operational notes:
+
+- The backend now starts with real migrations instead of `synchronize: true`.
+- Existing SQLite databases can be imported from a server-side file path and then managed like any other database.
+- Security middleware includes CORS, Helmet, rate limiting, and request timing logs.

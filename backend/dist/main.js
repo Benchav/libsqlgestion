@@ -11,6 +11,7 @@ const server_1 = require("./server");
 const auth_bootstrap_1 = require("./application/auth/auth.bootstrap");
 const start = async () => {
     await data_source_1.AppDataSource.initialize();
+    await data_source_1.AppDataSource.runMigrations();
     await (0, auth_bootstrap_1.bootstrapSecurityCatalog)();
     const app = (0, server_1.buildServer)();
     try {

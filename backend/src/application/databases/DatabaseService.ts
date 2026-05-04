@@ -33,7 +33,7 @@ export class DatabaseService {
     }));
 
     if (input.type === 'sqlite') {
-      const filePath = this.resolveSqlitePath(database.id);
+      const filePath = this.resolveSqlitePath(project.id, database.id);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, Buffer.from(''));
       database.url = filePath;
@@ -70,7 +70,7 @@ export class DatabaseService {
       project,
     }));
 
-    const managedPath = this.resolveSqlitePath(database.id);
+    const managedPath = this.resolveSqlitePath(project.id, database.id);
     fs.mkdirSync(path.dirname(managedPath), { recursive: true });
     await fsp.copyFile(input.sourcePath, managedPath);
 
@@ -110,7 +110,7 @@ export class DatabaseService {
   async testConnection(id: string) {
     const database = await this.databaseRepo.findOneByOrFail({ id });
     if (database.type === 'sqlite') {
-      const url = database.url || this.resolveSqlitePath(database.id);
+      const url = database.url || this.resolveSqlitePath(database.project.id, database.id);
       const ok = fs.existsSync(url);
       return { ok, details: ok ? 'sqlite file exists' : 'sqlite file missing' };
     }
@@ -128,7 +128,7 @@ export class DatabaseService {
     }
   }
 
-  private resolveSqlitePath(databaseId: string) {
-    return path.join(process.cwd(), 'data', 'sqlite', `${databaseId}.db`);
+  private resolveSqlitePath(projectId: string, databaseId: string) {
+    return path.join(process.cwd(), 'data', 'sqlite', 'projects', projectId, 'databases', `${databaseId}.db`);
   }
 }

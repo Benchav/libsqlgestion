@@ -39,6 +39,12 @@ export default function StudioPage() {
   const [insertSaving, setInsertSaving] = useState(false);
   const [insertError, setInsertError] = useState('');
 
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editRowIndex, setEditRowIndex] = useState<number | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+
   // SQL runner state
   const [sqlResult, setSqlResult] = useState<{ ok: boolean; rows?: unknown[]; error?: string; changes?: number } | null>(null);
   const [sqlLoading, setSqlLoading] = useState(false);
@@ -109,6 +115,7 @@ export default function StudioPage() {
     setSortColumn(null);
     setSortDir('ASC');
     setIsInsertOpen(false);
+    setIsEditOpen(false);
   }
 
   function handleSort(column: string, dir: 'ASC' | 'DESC') {
@@ -222,6 +229,20 @@ export default function StudioPage() {
     setIsInsertOpen(true);
   }
 
+  function handleOpenEditRow(rowIndex: number) {
+    if (!currentTableSchema) return;
+    const row = rows[rowIndex];
+    const initialValues: Record<string, string> = {};
+    currentTableSchema.columns.forEach((column) => {
+      const value = row[column.name];
+      initialValues[column.name] = value === null || value === undefined ? '' : String(value);
+    });
+    setEditRowIndex(rowIndex);
+    setEditValues(initialValues);
+    setEditError('');
+    setIsEditOpen(true);
+  }
+
   async function handleInsertRow() {
     if (!activeTable || !currentTableSchema) return;
 
@@ -260,6 +281,58 @@ export default function StudioPage() {
       setInsertError(err.message);
     } finally {
       setInsertSaving(false);
+    }
+  }
+
+  async function handleSaveEditRow() {
+    if (editRowIndex === null || !activeTable || !currentTableSchema) return;
+
+    const row = rows[editRowIndex];
+    const pkColumns = currentTableSchema.columns.filter((column) => column.pk === 1);
+    const pkCol = pkColumns[0];
+
+    if (!pkCol) {
+      setEditError('Cannot edit: table has no primary key.');
+      return;
+    }
+
+    const missingRequired = currentTableSchema.columns
+      .filter((column) => column.notnull === 1 && column.pk !== 1)
+      .find((column) => editValues[column.name] === undefined || editValues[column.name].trim() === '');
+
+    if (missingRequired) {
+      setEditError(`Column "${missingRequired.name}" is required.`);
+      return;
+    }
+
+    const pkValue = row[pkCol.name];
+
+    const setClauses = currentTableSchema.columns.map((column) => `"${column.name}" = ?`).join(', ');
+    const params = currentTableSchema.columns.map((column) => {
+      const rawValue = editValues[column.name];
+      if (rawValue === undefined || rawValue.trim() === '') return null;
+      return rawValue;
+    });
+    params.push(pkValue === null || pkValue === undefined ? null : String(pkValue));
+
+    setEditSaving(true);
+    setEditError('');
+    try {
+      await apiRequest(`/databases/${dbId}/query`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sql: `UPDATE "${activeTable}" SET ${setClauses} WHERE "${pkCol.name}" = ?`,
+          params,
+        }),
+      });
+      setIsEditOpen(false);
+      setEditRowIndex(null);
+      await loadTableData();
+      loadSchema();
+    } catch (err: any) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -337,6 +410,7 @@ export default function StudioPage() {
                 sortColumn={sortColumn}
                 sortDir={sortDir}
                 onCellEdit={handleCellEdit}
+                onEditRow={handleOpenEditRow}
                 onDeleteRow={handleDeleteRow}
                 onAddRow={handleAddRow}
                 onInsertRow={handleOpenInsertRow}
@@ -369,6 +443,22 @@ export default function StudioPage() {
           onSave={handleInsertRow}
         />
       )}
+
+      {isEditOpen && activeTable && currentTableSchema && editRowIndex !== null && (
+        <InsertRowModal
+          tableName={activeTable}
+          columns={currentTableSchema.columns}
+          values={editValues}
+          saving={editSaving}
+          error={editError}
+          onClose={() => setIsEditOpen(false)}
+          onChange={(column, value) => setEditValues((current) => ({ ...current, [column]: value }))}
+          onSave={handleSaveEditRow}
+          title="Edit Row"
+          description={`Update the record in ${activeTable}.`}
+          saveLabel="Save changes"
+        />
+      )}
     </AppShell>
   );
 }
@@ -382,6 +472,9 @@ function InsertRowModal({
   onClose,
   onChange,
   onSave,
+  title = 'Insert Row',
+  description,
+  saveLabel = 'Insert row',
 }: {
   tableName: string;
   columns: ColumnMeta[];
@@ -391,14 +484,17 @@ function InsertRowModal({
   onClose: () => void;
   onChange: (column: string, value: string) => void;
   onSave: () => Promise<void>;
+  title?: string;
+  description?: string;
+  saveLabel?: string;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
       <div className="w-full max-w-3xl rounded-xl border border-zinc-800/80 bg-[#0f0f0f] shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-zinc-800/80 px-6 py-4">
           <div>
-            <h2 className="text-xl font-semibold text-zinc-100">Insert Row</h2>
-            <p className="mt-1 text-sm text-zinc-400">Fill the fields for {tableName} and save a new record.</p>
+            <h2 className="text-xl font-semibold text-zinc-100">{title}</h2>
+            <p className="mt-1 text-sm text-zinc-400">{description || `Fill the fields for ${tableName} and save a new record.`}</p>
           </div>
           <button onClick={onClose} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300">
             <X size={20} />
@@ -444,7 +540,7 @@ function InsertRowModal({
             disabled={saving}
             className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
           >
-            {saving ? 'Saving...' : 'Insert row'}
+              {saving ? 'Saving...' : saveLabel}
           </button>
         </div>
       </div>

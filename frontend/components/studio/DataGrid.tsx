@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { LayoutGrid, Database, ChevronLeft, ChevronRight, Filter, ArrowUpDown, Columns, Plus, MoreVertical, Key, X } from 'lucide-react';
+import { LayoutGrid, Database, ChevronLeft, ChevronRight, Filter, ArrowUpDown, Columns, Plus, MoreVertical, Key, X, Pencil } from 'lucide-react';
 
 type ColumnMeta = { name: string; type: string; notnull: number; pk: number };
 
@@ -17,6 +17,7 @@ type Props = {
   sortColumn: string | null;
   sortDir: 'ASC' | 'DESC';
   onCellEdit: (rowIndex: number, column: string, value: unknown) => void;
+  onEditRow: (rowIndex: number) => void;
   onDeleteRow: (rowIndex: number) => void;
   onAddRow: () => void;
   onInsertRow: () => void;
@@ -35,6 +36,7 @@ export function DataGrid({
   sortColumn,
   sortDir,
   onCellEdit,
+  onEditRow,
   onDeleteRow,
   onAddRow,
   onInsertRow,
@@ -247,14 +249,24 @@ export function DataGrid({
                     );
                   })}
                   <td className="w-10 py-1 px-2 text-center">
-                    <button
-                      type="button"
-                      className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-1 rounded hover:bg-red-500/10"
-                      onClick={() => onDeleteRow(rowIdx)}
-                      title="Delete row"
-                    >
-                      <X size={14} />
-                    </button>
+                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                      <button
+                        type="button"
+                        className="rounded p-1 text-zinc-600 transition-colors hover:bg-blue-500/10 hover:text-blue-400"
+                        onClick={() => onEditRow(rowIdx)}
+                        title="Edit row"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1 text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                        onClick={() => onDeleteRow(rowIdx)}
+                        title="Delete row"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

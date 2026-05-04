@@ -59,3 +59,8 @@ Coolify deployment:
 - The project is deployable in Coolify as a Docker app because it already includes a `Dockerfile` and `docker-compose.yml` example.
 - Set the environment variables from `.env.example` in Coolify, map persistent storage for `backend/data`, and expose the backend port.
 - If you deploy the frontend separately later, Coolify can manage both services independently.
+
+Verification:
+
+- `npm test` runs utility checks against the compiled output.
+- `npm run smoke` starts the compiled server and validates health, readiness, auth and a couple of protected endpoints.

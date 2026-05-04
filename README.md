@@ -106,6 +106,11 @@ npm run build
 npm run start
 ```
 
+## Verification
+
+- `backend`: `npm test` for utility checks, `npm run smoke` for a live startup/sanity check
+- `frontend`: `npm run build`
+
 ## Production note
 
 The backend cannot safely guess arbitrary databases on a remote machine. It can only manage databases that are:

@@ -4,8 +4,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.securityPlugin = securityPlugin;
-const cors_1 = __importDefault(require("@fastify/cors"));
 const rate_limit_1 = __importDefault(require("@fastify/rate-limit"));
+function isOriginAllowed(origin, allowedOrigins) {
+    if (!origin)
+        return false;
+    return allowedOrigins.includes(origin);
+}
 async function securityPlugin(app) {
     app.addHook('onSend', async (_request, reply, payload) => {
         reply.header('X-Content-Type-Options', 'nosniff');
@@ -18,9 +22,18 @@ async function securityPlugin(app) {
     const allowedOrigins = process.env.CORS_ORIGIN
         ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
         : [];
-    await app.register(cors_1.default, {
-        origin: allowedOrigins.length > 0 ? allowedOrigins : false,
-        credentials: true,
+    app.addHook('onRequest', async (request, reply) => {
+        const origin = request.headers.origin;
+        if (origin && isOriginAllowed(origin, allowedOrigins)) {
+            reply.header('Access-Control-Allow-Origin', origin);
+            reply.header('Vary', 'Origin');
+            reply.header('Access-Control-Allow-Credentials', 'true');
+            reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token');
+            reply.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+        }
+        if (request.method === 'OPTIONS') {
+            reply.code(204).send();
+        }
     });
     await app.register(rate_limit_1.default, {
         max: 120,

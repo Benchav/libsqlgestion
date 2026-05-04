@@ -1,6 +1,13 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = databaseRoutes;
+const fs_1 = __importDefault(require("fs"));
+const os_1 = __importDefault(require("os"));
+const path_1 = __importDefault(require("path"));
+const promises_1 = require("stream/promises");
 const DatabaseService_1 = require("../../../application/databases/DatabaseService");
 const guards_1 = require("../guards");
 async function databaseRoutes(app) {
@@ -35,6 +42,47 @@ async function databaseRoutes(app) {
             return reply.status(400).send({ error: 'invalid payload' });
         const result = await databaseService.importExistingSqlite(body.projectId, body);
         return reply.status(201).send(result);
+    });
+    app.post('/databases/import-upload', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const fields = {};
+        let uploadedPath = '';
+        for await (const part of request.parts()) {
+            if (part.type === 'file') {
+                if (part.fieldname !== 'file') {
+                    part.file.resume();
+                    continue;
+                }
+                const tempRoot = await fs_1.default.promises.mkdtemp(path_1.default.join(os_1.default.tmpdir(), 'libsqlite-upload-'));
+                uploadedPath = path_1.default.join(tempRoot, part.filename || 'database.db');
+                await (0, promises_1.pipeline)(part.file, fs_1.default.createWriteStream(uploadedPath));
+                continue;
+            }
+            if (typeof part.value === 'string') {
+                fields[part.fieldname] = part.value;
+            }
+        }
+        if (!fields.projectId || !fields.name || !uploadedPath) {
+            return reply.status(400).send({ error: 'projectId, name and file required' });
+        }
+        const access = await (0, guards_1.ensureProjectAccess)(request, reply, fields.projectId);
+        if (!access)
+            return;
+        try {
+            const result = await databaseService.importExistingSqlite(fields.projectId, {
+                name: fields.name,
+                sourcePath: uploadedPath,
+                subdomain: fields.subdomain || undefined,
+            });
+            return reply.status(201).send(result);
+        }
+        finally {
+            if (uploadedPath) {
+                const tempDir = path_1.default.dirname(uploadedPath);
+                await fs_1.default.promises.rm(tempDir, { recursive: true, force: true });
+            }
+        }
     });
     app.get('/databases/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))

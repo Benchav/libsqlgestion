@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildServer = buildServer;
 const fastify_1 = __importDefault(require("fastify"));
+const multipart_1 = __importDefault(require("@fastify/multipart"));
 const routes_1 = __importDefault(require("./presentation/http/routes"));
 const AuthService_1 = require("./application/auth/AuthService");
 const security_1 = require("./presentation/http/plugins/security");
@@ -13,6 +14,11 @@ const csrf_1 = require("./presentation/http/csrf");
 function buildServer() {
     const app = (0, fastify_1.default)({ logger: true, trustProxy: true });
     const authService = new AuthService_1.AuthService();
+    app.register(multipart_1.default, {
+        limits: {
+            fileSize: Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000),
+        },
+    });
     app.register(security_1.securityPlugin);
     app.addHook('preHandler', async (request, reply) => {
         if (!(0, csrf_1.requireCsrf)(request, reply)) {

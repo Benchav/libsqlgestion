@@ -60,6 +60,7 @@ class DatabaseService {
             throw new Error('sourcePath does not exist');
         }
         const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
+        const token = input.token ?? (0, tokens_1.randomToken)();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: input.name,
             type: 'sqlite',
@@ -71,7 +72,7 @@ class DatabaseService {
         const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
         database.url = managedPath;
         database.status = 'active';
-        database.encryptedToken = (0, crypto_1.encrypt)(input.token ?? (0, tokens_1.randomToken)());
+        database.encryptedToken = (0, crypto_1.encrypt)(token);
         await this.databaseRepo.save(database);
         await this.auditService.record({
             action: 'database.import',
@@ -79,7 +80,7 @@ class DatabaseService {
             resourceId: database.id,
             metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain },
         });
-        return { database };
+        return { database, token };
     }
     async listDatabases(projectId) {
         if (!projectId)

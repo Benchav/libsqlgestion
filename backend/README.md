@@ -9,7 +9,7 @@ Quick start (local):
 3. Run in dev: `npm run dev` (requires `ts-node-dev`)
 
 Notes:
-- The backend currently uses opaque access tokens + refresh tokens stored in the `sessions` table.
+- The backend uses opaque access tokens + refresh tokens. In the default frontend flow, they are also written to `HttpOnly` cookies.
 - The project uses TypeORM migrations for the control plane. For production, keep migrations enabled and back up the control database.
 - `MASTER_KEY` must be 32 bytes in hex (64 hex chars). It's used to encrypt database tokens.
 
@@ -39,6 +39,7 @@ Operational notes:
 - Managed SQLite files are stored in a structured folder tree like `data/sqlite/projects/<projectId>/databases/<databaseId>.db`.
 - Set `SQLITE_DISCOVERY_ADOPT=true` if you want mounted SQLite files to be copied into the managed storage tree during discovery.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
+- Authorization is enforced both by permission and by project/database ownership membership checks.
 
 Migrations and remote management:
 

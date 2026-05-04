@@ -27,9 +27,9 @@ The backend is implemented and validated. It includes:
 - health and readiness endpoints
 - Docker and Coolify deployment support
 
-The frontend admin panel is planned next.
+ The frontend admin panel is scaffolded in `frontend/` and now includes a working dashboard, projects, databases, database detail, studio, login, and settings views.
 
-The frontend admin panel is now scaffolded in `frontend/` and follows the same design goals: clear structure, simple operations, and production deployment through Docker/Coolify.
+ Session cookies are `HttpOnly` and the backend accepts them alongside bearer tokens for API requests.
 
 ## Documentation
 
@@ -43,6 +43,17 @@ The frontend admin panel is now scaffolded in `frontend/` and follows the same d
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Coolify Guide](COOLIFY.md)
+
+Frontend routes:
+
+- `/dashboard`
+- `/login`
+- `/projects`
+- `/projects/:id`
+- `/databases`
+- `/databases/:id`
+- `/databases/:id/studio`
+- `/settings`
 
 ## Repository layout
 
@@ -68,6 +79,7 @@ The backend can:
 - register libsql databases by URL and token
 - execute safe reads and writes against SQLite/local or libsql/remote databases
 - apply migrations directly to a database via API
+- keep auth tokens in secure `HttpOnly` cookies in production
 
 ## Storage layout
 

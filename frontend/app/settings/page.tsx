@@ -31,13 +31,14 @@ export default function SettingsPage() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [error, setError] = useState('');
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
 
   useEffect(() => {
     apiRequest<{ user: UserInfo }>('/me')
       .then((r) => setUser(r.user))
       .catch(() => {});
 
-    fetch((process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1') + '/health')
+    fetch(apiBase + '/health', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => setHealth(data))
       .catch(() => setHealth({ ok: false }));
@@ -45,7 +46,7 @@ export default function SettingsPage() {
     apiRequest<{ users: UserRecord[] }>('/users')
       .then((r) => setUsers(r.users))
       .catch(() => {}); // Silently fail if no permission
-  }, []);
+  }, [apiBase]);
 
   async function handleAssignRole(userId: string, roleName: string) {
     try {
@@ -91,7 +92,7 @@ export default function SettingsPage() {
         <div className="card">
           <div className="card-label">API URL</div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 8, wordBreak: 'break-all', color: 'var(--muted)' }}>
-            {process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1'}
+            {apiBase}
           </div>
         </div>
       </div>

@@ -9,10 +9,16 @@ const routes_1 = __importDefault(require("./presentation/http/routes"));
 const AuthService_1 = require("./application/auth/AuthService");
 const security_1 = require("./presentation/http/plugins/security");
 const cookies_1 = require("./infrastructure/security/cookies");
+const csrf_1 = require("./presentation/http/csrf");
 function buildServer() {
     const app = (0, fastify_1.default)({ logger: true, trustProxy: true });
     const authService = new AuthService_1.AuthService();
     app.register(security_1.securityPlugin);
+    app.addHook('preHandler', async (request, reply) => {
+        if (!(0, csrf_1.requireCsrf)(request, reply)) {
+            return reply;
+        }
+    });
     app.decorate('authenticate', async function (request, reply) {
         const authorization = request.headers.authorization;
         const cookies = (0, cookies_1.parseCookies)(request.headers.cookie);

@@ -22,6 +22,8 @@ async function projectRoutes(app) {
         const body = request.body;
         if (!body.name)
             return reply.status(400).send({ error: 'name required' });
+        if (typeof body.name !== 'string' || !body.name.trim())
+            return reply.status(400).send({ error: 'invalid name' });
         const userId = request.user?.sub;
         const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
         const owner = await userRepo.findOneBy({ id: userId });

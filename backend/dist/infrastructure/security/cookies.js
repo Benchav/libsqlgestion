@@ -3,7 +3,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseCookies = parseCookies;
 exports.sessionCookie = sessionCookie;
 exports.clearSessionCookie = clearSessionCookie;
+exports.csrfCookie = csrfCookie;
+exports.clearCsrfCookie = clearCsrfCookie;
 const COOKIE_BASE = ['Path=/api/v1', 'HttpOnly', 'SameSite=Lax'];
+const CSRF_COOKIE_BASE = ['Path=/api/v1', 'SameSite=Lax'];
 function parseCookies(headerValue) {
     const cookies = {};
     if (!headerValue)
@@ -28,6 +31,20 @@ function sessionCookie(name, value, maxAgeSeconds) {
 }
 function clearSessionCookie(name) {
     const parts = [`${name}=`, 'Max-Age=0', ...COOKIE_BASE];
+    if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+        parts.push('Secure');
+    }
+    return parts.join('; ');
+}
+function csrfCookie(name, value, maxAgeSeconds) {
+    const parts = [`${name}=${encodeURIComponent(value)}`, `Max-Age=${maxAgeSeconds}`, ...CSRF_COOKIE_BASE];
+    if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+        parts.push('Secure');
+    }
+    return parts.join('; ');
+}
+function clearCsrfCookie(name) {
+    const parts = [`${name}=`, 'Max-Age=0', ...CSRF_COOKIE_BASE];
     if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
         parts.push('Secure');
     }

@@ -20,6 +20,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'projects.write'))) return;
     const body = request.body as any;
     if (!body.name) return reply.status(400).send({ error: 'name required' });
+    if (typeof body.name !== 'string' || !body.name.trim()) return reply.status(400).send({ error: 'invalid name' });
 
     const userId = (request as any).user?.sub;
     const userRepo = AppDataSource.getRepository(User);

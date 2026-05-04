@@ -16,6 +16,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const body = request.body as any;
     if (!body.projectId || !body.name || !body.type) return reply.status(400).send({ error: 'projectId, name and type required' });
+    if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.type !== 'string') return reply.status(400).send({ error: 'invalid payload' });
+    if (!['sqlite', 'libsql', 'remote'].includes(body.type)) return reply.status(400).send({ error: 'invalid database type' });
     const result = await databaseService.createDatabase(body.projectId, body);
     return reply.status(201).send({ database: result.database, token: result.token });
   });
@@ -24,6 +26,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const body = request.body as any;
     if (!body.projectId || !body.name || !body.sourcePath) return reply.status(400).send({ error: 'projectId, name and sourcePath required' });
+    if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.sourcePath !== 'string') return reply.status(400).send({ error: 'invalid payload' });
     const result = await databaseService.importExistingSqlite(body.projectId, body);
     return reply.status(201).send(result);
   });

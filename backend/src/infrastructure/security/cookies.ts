@@ -1,4 +1,5 @@
 const COOKIE_BASE = ['Path=/api/v1', 'HttpOnly', 'SameSite=Lax'];
+const CSRF_COOKIE_BASE = ['Path=/api/v1', 'SameSite=Lax'];
 
 export function parseCookies(headerValue?: string) {
   const cookies: Record<string, string> = {};
@@ -25,6 +26,22 @@ export function sessionCookie(name: string, value: string, maxAgeSeconds: number
 
 export function clearSessionCookie(name: string) {
   const parts = [`${name}=`, 'Max-Age=0', ...COOKIE_BASE];
+  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function csrfCookie(name: string, value: string, maxAgeSeconds: number) {
+  const parts = [`${name}=${encodeURIComponent(value)}`, `Max-Age=${maxAgeSeconds}`, ...CSRF_COOKIE_BASE];
+  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function clearCsrfCookie(name: string) {
+  const parts = [`${name}=`, 'Max-Age=0', ...CSRF_COOKIE_BASE];
   if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
     parts.push('Secure');
   }

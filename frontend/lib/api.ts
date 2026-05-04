@@ -6,6 +6,12 @@ export type ApiResult<T> = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
 
+function getCookie(name: string) {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.split('; ').find((row) => row.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
 export function getToken() {
   return null;
 }
@@ -45,6 +51,14 @@ async function tryRefreshToken(): Promise<boolean> {
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
+
+  const method = String(init.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    const csrfToken = getCookie('libsqlite.csrfToken');
+    if (csrfToken) {
+      headers.set('x-csrf-token', csrfToken);
+    }
+  }
 
   const token = getToken();
   if (token) {

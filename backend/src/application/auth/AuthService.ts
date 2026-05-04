@@ -55,10 +55,14 @@ export class AuthService {
     const session = await this.sessionRepo.findOne({ where: { refreshTokenHash }, relations: ['user'] });
     if (!session || session.revokedAt) return null;
     if (session.expiresAt && session.expiresAt.getTime() < Date.now()) return null;
-    const nextTokens = await this.issueSession(session.user);
+    const accessToken = randomToken();
+    const accessTokenHash = hashToken(accessToken);
+    session.accessTokenHash = accessTokenHash;
+    session.refreshTokenHash = hashToken(refreshToken);
+    await this.sessionRepo.save(session);
     session.revokedAt = new Date();
     await this.sessionRepo.save(session);
-    return { user: session.user, ...nextTokens };
+    return { user: session.user, accessToken };
   }
 
   async logout(refreshToken: string) {

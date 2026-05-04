@@ -36,6 +36,7 @@ The frontend admin panel is now scaffolded in `frontend/` and follows the same d
 - [Architecture](docs/ARCHITECTURE.md)
 - [Usage Guide](docs/USAGE.md)
 - [Operations Manual](docs/OPERATIONS.md)
+- [Production Guide](docs/PRODUCTION.md)
 - [API Reference](docs/API.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
 - [Security Guide](docs/SECURITY.md)

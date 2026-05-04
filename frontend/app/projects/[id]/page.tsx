@@ -3,6 +3,7 @@
 import { useEffect, useState, FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
+import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
 import { Database, Plus, ChevronRight, Activity, Users, HardDrive, X } from 'lucide-react';
 
@@ -23,6 +24,8 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [generatedToken, setGeneratedToken] = useState('');
+  const [generatedDatabaseName, setGeneratedDatabaseName] = useState('');
 
   async function loadProject() {
     try {
@@ -198,17 +201,32 @@ export default function ProjectDetailPage() {
         <CreateDatabaseModal 
           projectId={id}
           onClose={() => setIsCreateModalOpen(false)} 
-          onSuccess={() => {
+          onSuccess={(token, databaseName, databaseId) => {
             setIsCreateModalOpen(false);
+            if (token) {
+              setGeneratedToken(token);
+              setGeneratedDatabaseName(databaseName || 'database');
+              if (typeof window !== 'undefined' && databaseId) {
+                window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
+              }
+            }
             loadProject();
           }}
         />
+      )}
+
+      {generatedToken && (
+        <div className="px-6 pb-0 max-w-7xl mx-auto w-full">
+          <div className="mb-6">
+            <TokenReveal token={generatedToken} label={`Token for ${generatedDatabaseName}`} />
+          </div>
+        </div>
       )}
     </AppShell>
   );
 }
 
-function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: string, onClose: () => void, onSuccess: () => void }) {
+function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: string, onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
   const [url, setUrl] = useState('');
@@ -222,11 +240,11 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
     setError('');
     setCreating(true);
     try {
-      await apiRequest('/databases', {
+      const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases', {
         method: 'POST',
         body: JSON.stringify({ projectId, name, type, url: url || undefined, token: token || undefined }),
       });
-      onSuccess();
+      onSuccess(result.token, result.database.name, result.database.id);
     } catch (err: any) {
       setError(err.message);
     } finally {

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
+import { TokenReveal } from '../../components/TokenReveal';
 import { apiRequest } from '../../lib/api';
 import { Database, Table2, X, Plus, Search, HardDrive, Upload } from 'lucide-react';
 
@@ -15,6 +16,8 @@ export default function DatabasesPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [generatedToken, setGeneratedToken] = useState('');
+  const [generatedDatabaseName, setGeneratedDatabaseName] = useState('');
 
   // Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -144,8 +147,15 @@ export default function DatabasesPage() {
         <CreateDatabaseModal 
           projects={projects}
           onClose={() => setIsCreateModalOpen(false)} 
-          onSuccess={() => {
+          onSuccess={(token, databaseName, databaseId) => {
             setIsCreateModalOpen(false);
+            if (token) {
+              setGeneratedToken(token);
+              setGeneratedDatabaseName(databaseName || 'database');
+              if (typeof window !== 'undefined' && databaseId) {
+                window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
+              }
+            }
             loadDatabases();
           }}
         />
@@ -155,17 +165,32 @@ export default function DatabasesPage() {
         <ImportDatabaseModal
           projects={projects}
           onClose={() => setIsImportModalOpen(false)}
-          onSuccess={() => {
+          onSuccess={(token, databaseName, databaseId) => {
             setIsImportModalOpen(false);
+            if (token) {
+              setGeneratedToken(token);
+              setGeneratedDatabaseName(databaseName || 'database');
+              if (typeof window !== 'undefined' && databaseId) {
+                window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
+              }
+            }
             loadDatabases();
           }}
         />
+      )}
+
+      {generatedToken && (
+        <div className="px-6 pb-0 max-w-7xl mx-auto w-full">
+          <div className="mb-6">
+            <TokenReveal token={generatedToken} label={`Token for ${generatedDatabaseName}`} />
+          </div>
+        </div>
       )}
     </AppShell>
   );
 }
 
-function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: () => void }) {
+function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [name, setName] = useState('');
   const [subdomain, setSubdomain] = useState('');
@@ -194,7 +219,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
 
     try {
       if (mode === 'path') {
-        await apiRequest('/databases/import-existing', {
+        const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases/import-sqlite', {
           method: 'POST',
           body: JSON.stringify({
             projectId,
@@ -203,6 +228,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
             subdomain: subdomain || undefined,
           }),
         });
+        onSuccess(result.token, result.database.name, result.database.id);
       } else {
         const formData = new FormData();
         formData.append('projectId', projectId);
@@ -210,13 +236,12 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
         if (subdomain.trim()) formData.append('subdomain', subdomain.trim());
         if (file) formData.append('file', file);
 
-        await apiRequest('/databases/import-upload', {
+        const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases/import-upload', {
           method: 'POST',
           body: formData,
         });
+        onSuccess(result.token, result.database.name, result.database.id);
       }
-
-      onSuccess();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -322,7 +347,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   );
 }
 
-function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: () => void }) {
+function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [name, setName] = useState('');
   const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
@@ -335,11 +360,11 @@ function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
     setError('');
     setCreating(true);
     try {
-      await apiRequest('/databases', {
+      const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases', {
         method: 'POST',
         body: JSON.stringify({ projectId, name, type }),
       });
-      onSuccess();
+      onSuccess(result.token, result.database.name, result.database.id);
     } catch (err: any) {
       setError(err.message);
     } finally {

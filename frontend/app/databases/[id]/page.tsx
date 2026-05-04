@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
+import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
 import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle } from 'lucide-react';
 
@@ -27,11 +28,16 @@ export default function DatabaseDetailPage() {
   const [error, setError] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
+  const [revealedToken, setRevealedToken] = useState('');
 
   async function loadDatabase() {
     try {
       const result = await apiRequest<{ database: DatabaseDetail }>(`/databases/${id}`);
       setDatabase(result.database);
+      if (typeof window !== 'undefined') {
+        const storedToken = window.sessionStorage.getItem(`libsqlite.databaseToken.${id}`) || '';
+        setRevealedToken(storedToken);
+      }
     } catch (err: any) {
       setError(err.message);
     }
@@ -56,7 +62,11 @@ export default function DatabaseDetailPage() {
   async function handleRotateToken() {
     if (!confirm('Rotate token? Active connections using the old token will be dropped.')) return;
     try {
-      await apiRequest(`/databases/${id}/rotate-token`, { method: 'PATCH' });
+      const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/rotate-token`, { method: 'PATCH' });
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(`libsqlite.databaseToken.${id}`, result.token);
+      }
+      setRevealedToken(result.token);
       await loadDatabase();
     } catch (err: any) {
       setError(err.message);
@@ -165,12 +175,16 @@ export default function DatabaseDetailPage() {
 
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Auth Token</label>
-                  <div className="flex items-center justify-between border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300">
-                    <span className="blur-[4px] select-none">eyJh... (Hidden for security)</span>
-                    <button onClick={handleRotateToken} className="text-blue-400 hover:text-blue-300 font-sans flex items-center gap-1.5 ml-4">
-                      <RefreshCw size={14} /> Rotate
-                    </button>
-                  </div>
+                  {revealedToken ? (
+                    <TokenReveal token={revealedToken} />
+                  ) : (
+                    <div className="flex items-center justify-between border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300">
+                      <span className="blur-[4px] select-none">Token is only shown once after create/import/rotate</span>
+                      <button onClick={handleRotateToken} className="text-blue-400 hover:text-blue-300 font-sans flex items-center gap-1.5 ml-4">
+                        <RefreshCw size={14} /> Rotate
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

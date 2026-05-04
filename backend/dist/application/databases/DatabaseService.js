@@ -14,6 +14,7 @@ const crypto_1 = require("../../infrastructure/crypto");
 const tokens_1 = require("../../infrastructure/security/tokens");
 const AuditService_1 = require("../audit/AuditService");
 const LibsqlClient_1 = require("../../infrastructure/libsql/LibsqlClient");
+const slug_1 = require("../../infrastructure/security/slug");
 class DatabaseService {
     constructor() {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
@@ -24,12 +25,13 @@ class DatabaseService {
         const project = await this.projectRepo.findOneByOrFail({ id: projectId });
         const token = input.token ?? (0, tokens_1.randomToken)();
         const encryptedToken = (0, crypto_1.encrypt)(token);
+        const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: input.name,
             type: input.type,
             url: input.url,
             encryptedToken,
-            subdomain: input.subdomain,
+            subdomain,
             status: 'inactive',
             metadata: input.metadata,
             project,
@@ -60,11 +62,12 @@ class DatabaseService {
         if (!fs_1.default.existsSync(input.sourcePath)) {
             throw new Error('sourcePath does not exist');
         }
+        const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: input.name,
             type: 'sqlite',
             status: 'inactive',
-            subdomain: input.subdomain,
+            subdomain,
             metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
             project,
         }));

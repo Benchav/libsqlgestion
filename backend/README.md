@@ -35,7 +35,14 @@ Operational notes:
 
 - The backend now starts with real migrations instead of `synchronize: true`.
 - Existing SQLite databases can be imported from a server-side file path and then managed like any other database.
+- If you mount a directory of `.db` files and set `SQLITE_DISCOVERY_PATH` plus `SQLITE_DISCOVERY_PROJECT_ID`, the backend can auto-register them at startup.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
+
+Migrations and remote management:
+
+- You can apply migrations directly by API against a database URL and token through the `POST /api/v1/databases/:id/migrations` endpoint.
+- For libsql remote databases, the backend executes SQL using the registered URL and token.
+- For local SQLite, the backend executes the SQL against the file on disk.
 
 Production reality check:
 

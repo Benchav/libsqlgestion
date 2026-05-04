@@ -9,10 +9,17 @@ dotenv_1.default.config();
 const data_source_1 = require("./infrastructure/db/data-source");
 const server_1 = require("./server");
 const auth_bootstrap_1 = require("./application/auth/auth.bootstrap");
+const DiscoveryService_1 = require("./application/databases/DiscoveryService");
 const start = async () => {
     await data_source_1.AppDataSource.initialize();
     await data_source_1.AppDataSource.runMigrations();
     await (0, auth_bootstrap_1.bootstrapSecurityCatalog)();
+    const discoveryProjectId = process.env.SQLITE_DISCOVERY_PROJECT_ID;
+    const discoveryPath = process.env.SQLITE_DISCOVERY_PATH;
+    if (discoveryProjectId && discoveryPath) {
+        const discoveryService = new DiscoveryService_1.DiscoveryService();
+        await discoveryService.scanMountedDirectory(discoveryProjectId, discoveryPath);
+    }
     const app = (0, server_1.buildServer)();
     try {
         await app.listen({ port: Number(process.env.PORT || 3000), host: '0.0.0.0' });

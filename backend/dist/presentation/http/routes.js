@@ -13,6 +13,8 @@ const SchemaController_1 = __importDefault(require("./controllers/SchemaControll
 const QueryController_1 = __importDefault(require("./controllers/QueryController"));
 const ProvisioningController_1 = __importDefault(require("./controllers/ProvisioningController"));
 const HealthController_1 = __importDefault(require("./controllers/HealthController"));
+const DiscoveryController_1 = __importDefault(require("./controllers/DiscoveryController"));
+const MigrationController_1 = __importDefault(require("./controllers/MigrationController"));
 async function routes(app) {
     app.register(HealthController_1.default);
     app.register(AuthController_1.default);
@@ -23,4 +25,6 @@ async function routes(app) {
     app.register(SchemaController_1.default);
     app.register(QueryController_1.default);
     app.register(ProvisioningController_1.default);
+    app.register(DiscoveryController_1.default);
+    app.register(MigrationController_1.default);
 }

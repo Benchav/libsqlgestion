@@ -188,6 +188,7 @@ export default function DatabaseDetailPage() {
               Created {database?.createdAt ? new Date(database.createdAt).toLocaleDateString() : '—'}
             </p>
             <div className="hero-actions" style={{ marginTop: 12 }}>
+              <button className="button" onClick={() => router.push(`/databases/${id}/studio`)}>⊞ Open Studio</button>
               <button className="button-secondary" onClick={() => router.push('/databases')}>← All databases</button>
               <button className="button-secondary" onClick={handleTestConnection}>Test connection</button>
               <button className="button-secondary" onClick={handleRotateToken}>Rotate token</button>

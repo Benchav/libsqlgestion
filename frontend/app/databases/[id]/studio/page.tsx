@@ -395,7 +395,6 @@ export default function StudioPage() {
     }
   }
 
-  const currentTableSchema = tables.find((t) => t.table === activeTable);
   return (
     <AppShell>
       <div className="flex flex-col h-full bg-[#0a0a0a] text-zinc-300">
@@ -423,7 +422,7 @@ export default function StudioPage() {
 
         <div className="flex-1 flex overflow-hidden">
           <TableSidebar
-            tables={tables.map((t) => ({ table: t.table, kind: t.kind, rowCount: t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
+            tables={visibleSchemas.map((t) => ({ table: t.table, kind: t.kind, rowCount: t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
             activeKind={activeKind}
             activeTab={activeTab}

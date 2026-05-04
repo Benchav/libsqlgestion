@@ -21,6 +21,7 @@ type Props = {
   columns: ColumnMeta[];
   rows: Record<string, unknown>[];
   totalRows: number;
+  readOnly?: boolean;
   page: number;
   pageSize: number;
   onPageChange: (page: number) => void;
@@ -40,6 +41,7 @@ export function DataGrid({
   columns,
   rows,
   totalRows,
+  readOnly = false,
   page,
   pageSize,
   onPageChange,
@@ -153,25 +155,29 @@ export function DataGrid({
             </button>
           </div>
 
-          <button 
-            onClick={onAddRow}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors text-xs font-medium"
-          >
-            <Plus size={14} /> Quick add
-          </button>
+          {!readOnly && (
+            <>
+              <button 
+                onClick={onAddRow}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors text-xs font-medium"
+              >
+                <Plus size={14} /> Quick add
+              </button>
 
-          <button
-            onClick={onInsertRow}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/20 transition-colors text-xs font-medium"
-          >
-            <Plus size={14} /> Insert row
-          </button>
+              <button
+                onClick={onInsertRow}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/20 transition-colors text-xs font-medium"
+              >
+                <Plus size={14} /> Insert row
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* Grid Area */}
       <div className="flex-1 overflow-auto custom-scrollbar relative">
-        <table className="w-full text-left border-collapse whitespace-nowrap table-fixed">
+        <table className="min-w-max w-full text-left border-collapse whitespace-nowrap table-auto">
           <thead className="sticky top-0 z-10 bg-[#09090b]">
             <tr>
               <th className="w-10 border-b border-r border-zinc-800 py-1.5 px-2 text-center text-zinc-500 font-medium text-xs bg-[#09090b]">
@@ -180,14 +186,14 @@ export function DataGrid({
               {columns.map((col) => (
                 <th
                   key={col.name}
-                  className="border-b border-r border-zinc-800 py-1.5 px-3 bg-[#09090b] cursor-pointer hover:bg-zinc-800/50 transition-colors group select-none min-w-[120px]"
+                  className="border-b border-r border-zinc-800 py-1.5 px-3 bg-[#09090b] cursor-pointer hover:bg-zinc-800/50 transition-colors group select-none min-w-[160px]"
                   onClick={() => handleHeaderClick(col.name)}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 overflow-hidden">
                       {col.pk ? <Key size={12} className="text-amber-500 shrink-0" /> : null}
-                      <span className="font-semibold text-zinc-200 text-xs truncate">{col.name}</span>
-                      <span className={`text-[10px] uppercase font-mono tracking-wider ${getTypeColor(col.type)} truncate`}>
+                      <span className="font-semibold text-zinc-200 text-xs">{col.name}</span>
+                      <span className={`text-[10px] uppercase font-mono tracking-wider ${getTypeColor(col.type)}`}>
                         {col.type || 'ANY'}
                       </span>
                     </div>
@@ -229,12 +235,14 @@ export function DataGrid({
                     return (
                       <td
                         key={col.name}
-                        className={`border-r border-zinc-800/40 px-3 py-1 text-zinc-300 relative truncate
+                        className={`border-r border-zinc-800/40 px-3 py-1 text-zinc-300 relative
                           ${isEditing ? 'bg-blue-500/10 ring-1 ring-inset ring-blue-500 z-10' : ''} 
                           ${cellValue === null && !isEditing ? 'bg-zinc-900/20' : ''}`}
-                        onDoubleClick={() => handleStartEdit(rowIdx, col.name, cellValue)}
+                        onDoubleClick={() => {
+                          if (!readOnly) handleStartEdit(rowIdx, col.name, cellValue);
+                        }}
                       >
-                        {isEditing ? (
+                        {isEditing && !readOnly ? (
                               getColumnInputKind(col) === 'checkbox' ? (
                                 <label className="absolute inset-0 flex items-center gap-2 px-3 bg-transparent text-zinc-100">
                                   <input
@@ -278,26 +286,30 @@ export function DataGrid({
                       </td>
                     );
                   })}
-                  <td className="w-10 py-1 px-2 text-center">
-                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                      <button
-                        type="button"
-                        className="rounded p-1 text-zinc-600 transition-colors hover:bg-blue-500/10 hover:text-blue-400"
-                        onClick={() => onEditRow(rowIdx)}
-                        title="Edit row"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1 text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-400"
-                        onClick={() => onDeleteRow(rowIdx)}
-                        title="Delete row"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  </td>
+                  {!readOnly ? (
+                    <td className="w-10 py-1 px-2 text-center">
+                      <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <button
+                          type="button"
+                          className="rounded p-1 text-zinc-600 transition-colors hover:bg-blue-500/10 hover:text-blue-400"
+                          onClick={() => onEditRow(rowIdx)}
+                          title="Edit row"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                          onClick={() => onDeleteRow(rowIdx)}
+                          title="Delete row"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  ) : (
+                    <td className="w-10 py-1 px-2 text-center text-zinc-600 text-[10px]">view</td>
+                  )}
                 </tr>
               ))
             )}

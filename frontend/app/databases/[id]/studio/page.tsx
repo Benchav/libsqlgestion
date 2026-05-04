@@ -244,88 +244,69 @@ export default function StudioPage() {
 
   return (
     <AppShell>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button type="button" className="studio-btn" onClick={() => router.push(`/databases/${dbId}`)}>← Back</button>
-          <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>
-            {database?.name || 'Studio'}
-          </h2>
-          {database?.type && <span className="badge">{database.type}</span>}
-          {database?.status && (
-            <span className={`badge ${database.status === 'active' ? 'success' : 'warning'}`}>
-              {database.status}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <div className="badge danger" style={{ padding: '8px 14px', marginBottom: 8 }}>{error}
-          <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', marginLeft: 8 }} onClick={() => setError('')}>✕</button>
-        </div>
-      )}
-
-      {/* Studio layout */}
-      <div className="studio-layout">
-        <TableSidebar
-          tables={tables.map((t) => ({ table: t.table, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
-          activeTable={activeTable}
-          onSelect={handleSelectTable}
-          onRefresh={loadSchema}
-        />
-
-        <div className="studio-main">
-          {/* Tab bar */}
-          <div className="studio-tab-bar">
-            <button
-              className={`studio-tab ${activeTab === 'data' ? 'active' : ''}`}
-              onClick={() => setActiveTab('data')}
-            >
-              ⊞ Data{activeTable ? `: ${activeTable}` : ''}
-            </button>
-            <button
-              className={`studio-tab ${activeTab === 'sql' ? 'active' : ''}`}
-              onClick={() => setActiveTab('sql')}
-            >
-              ▷ SQL Runner
-            </button>
+      <div className="studio-shell">
+        <div className="studio-topbar">
+          <div className="studio-breadcrumbs">
+            <button type="button" className="studio-chip" onClick={() => router.push(`/databases/${dbId}`)}>Database</button>
+            <span className="studio-divider">/</span>
+            <span className="studio-current">Studio</span>
           </div>
 
-          {/* Content */}
-          {activeTab === 'data' && activeTable && currentTableSchema ? (
-            <DataGrid
-              tableName={activeTable}
-              columns={currentTableSchema.columns}
-              rows={rows}
-              totalRows={totalRows}
-              page={page}
-              pageSize={PAGE_SIZE}
-              onPageChange={setPage}
-              onSort={handleSort}
-              sortColumn={sortColumn}
-              sortDir={sortDir}
-              onCellEdit={handleCellEdit}
-              onDeleteRow={handleDeleteRow}
-              onAddRow={handleAddRow}
-              loading={gridLoading}
-            />
-          ) : activeTab === 'data' && !activeTable ? (
-            <div style={{ display: 'grid', placeItems: 'center', flex: 1 }}>
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <div style={{ fontSize: 40, opacity: 0.3, marginBottom: 16 }}>⊞</div>
-                <p className="muted">Select a table from the sidebar to browse data.</p>
-              </div>
-            </div>
-          ) : null}
+          <div className="studio-meta-row">
+            {database?.type && <span className="badge">{database.type}</span>}
+            {database?.status && <span className={`badge ${database.status === 'active' ? 'success' : 'warning'}`}>{database.status}</span>}
+          </div>
+        </div>
 
-          {activeTab === 'sql' && (
-            <SqlRunner
-              onExecute={handleSqlExecute}
-              loading={sqlLoading}
-              result={sqlResult}
-            />
-          )}
+        {error ? <div className="studio-callout danger">{error}</div> : null}
+
+        <div className="studio-layout">
+          <TableSidebar
+            tables={tables.map((t) => ({ table: t.table, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
+            activeTable={activeTable}
+            onSelect={handleSelectTable}
+            onRefresh={loadSchema}
+          />
+
+          <div className="studio-main">
+            <div className="studio-tab-bar">
+              <button type="button" className={`studio-tab ${activeTab === 'data' ? 'active' : ''}`} onClick={() => setActiveTab('data')}>
+                Data{activeTable ? ` · ${activeTable}` : ''}
+              </button>
+              <button type="button" className={`studio-tab ${activeTab === 'sql' ? 'active' : ''}`} onClick={() => setActiveTab('sql')}>
+                SQL
+              </button>
+            </div>
+
+            {activeTab === 'data' && activeTable && currentTableSchema ? (
+              <DataGrid
+                tableName={activeTable}
+                columns={currentTableSchema.columns}
+                rows={rows}
+                totalRows={totalRows}
+                page={page}
+                pageSize={PAGE_SIZE}
+                onPageChange={setPage}
+                onSort={handleSort}
+                sortColumn={sortColumn}
+                sortDir={sortDir}
+                onCellEdit={handleCellEdit}
+                onDeleteRow={handleDeleteRow}
+                onAddRow={handleAddRow}
+                loading={gridLoading}
+              />
+            ) : activeTab === 'data' && !activeTable ? (
+              <div className="studio-empty-state">Select a table from the sidebar to browse data.</div>
+            ) : null}
+
+            {activeTab === 'sql' && (
+              <SqlRunner
+                onExecute={handleSqlExecute}
+                loading={sqlLoading}
+                result={sqlResult}
+              />
+            )}
+          </div>
         </div>
       </div>
     </AppShell>

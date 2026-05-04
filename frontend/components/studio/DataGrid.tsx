@@ -101,7 +101,7 @@ export function DataGrid({
           <span className="studio-grid-count">{totalRows} row{totalRows !== 1 ? 's' : ''}</span>
         </div>
         <div className="studio-grid-toolbar-right">
-          <button className="studio-btn studio-btn-primary" onClick={onAddRow} title="Insert row">
+          <button type="button" className="studio-btn studio-btn-primary" onClick={onAddRow} title="Insert row">
             + Add row
           </button>
         </div>
@@ -186,6 +186,7 @@ export function DataGrid({
                   })}
                   <td className="studio-td-actions">
                     <button
+                      type="button"
                       className="studio-row-delete"
                       onClick={() => onDeleteRow(rowIdx)}
                       title="Delete row"

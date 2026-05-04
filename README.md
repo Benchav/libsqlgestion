@@ -23,7 +23,7 @@
 
 ---
 
-## 🌟 What is LibSQLite?
+## What is LibSQLite?
 
 LibSQLite brings the modern developer experience of serverless databases to your own infrastructure. It is a comprehensive **database management platform** designed to orchestrate and interface with SQLite and libSQL files.
 
@@ -31,19 +31,19 @@ Whether you want to manage local `.db` files or connect to remote libSQL edge no
 
 <br>
 
-## ✨ Key Features
+## Key Features
 
-- 🗄️ **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dashboard.
-- ⚡ **libSQL Remote Ready**: Native support for registering and managing libSQL remote databases via secure tokens.
-- 📂 **Auto-Discovery & Import**: Effortlessly discover `.db` files mounted from your server or import existing ones.
-- 🛠️ **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface.
-- 🔄 **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
-- 🔐 **Enterprise-Grade Security**: Full RBAC, encrypted token storage, comprehensive audit logging, and `HttpOnly` session hardening.
-- 🚀 **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify** using Docker.
+- **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dashboard.
+- **libSQL Remote Ready**: Native support for registering and managing libSQL remote databases via secure tokens.
+- **Auto-Discovery & Import**: Effortlessly discover `.db` files mounted from your server or import existing ones.
+- **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface.
+- **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
+- **Enterprise-Grade Security**: Full RBAC, encrypted token storage, comprehensive audit logging, and `HttpOnly` session hardening.
+- **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify** using Docker.
 
 <br>
 
-## 🚀 Quick Start
+## Quick Start
 
 Get up and running with LibSQLite in seconds using Docker Compose or Node.js.
 
@@ -77,7 +77,7 @@ npm run dev
 
 <br>
 
-## 🗺️ Architecture Overview
+## Architecture Overview
 
 At its core, LibSQLite enforces a strict separation between the **Control Plane** (Backend metadata and management) and the **Data Plane** (Actual SQLite/libSQL files).
 
@@ -97,20 +97,20 @@ data/sqlite/projects/<projectId>/databases/<databaseId>.db
 
 <br>
 
-## 📚 Documentation
+## Documentation
 
 Deep-dive into our extensive guides to master your self-hosted infrastructure:
 
 | Getting Started | Operations | Architecture |
 | :--- | :--- | :--- |
-| 📖 [Usage Guide](docs/USAGE.md) | 🚢 [Production Guide](docs/PRODUCTION.md) | 🏛️ [Architecture](docs/ARCHITECTURE.md) |
-| 🛠️ [Development Guide](docs/DEVELOPMENT.md) | 🔐 [Security Guide](docs/SECURITY.md) | 🌐 [API Reference](docs/API.md) |
-| 🐳 [Deployment Guide](docs/DEPLOYMENT.md) | ❄️ [Coolify Guide](COOLIFY.md) | ⚙️ [Operations Manual](docs/OPERATIONS.md) |
-| ✅ [Deploy Checklist](DEPLOYMENT_CHECKLIST.md) | 🐛 [Troubleshooting](docs/TROUBLESHOOTING.md) | |
+| [Usage Guide](docs/USAGE.md) | [Production Guide](docs/PRODUCTION.md) | [Architecture](docs/ARCHITECTURE.md) |
+| [Development Guide](docs/DEVELOPMENT.md) | [Security Guide](docs/SECURITY.md) | [API Reference](docs/API.md) |
+| [Deployment Guide](docs/DEPLOYMENT.md) | [Coolify Guide](COOLIFY.md) | [Operations Manual](docs/OPERATIONS.md) |
+| [Deploy Checklist](DEPLOYMENT_CHECKLIST.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | |
 
 <br>
 
-## 💻 Tech Stack
+## Tech Stack
 
 - **Frontend**: Next.js 14+ (App Router), React, Tailwind CSS, Lucide Icons.
 - **Backend**: Node.js, Fastify, TypeORM, `@libsql/client`.

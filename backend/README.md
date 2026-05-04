@@ -36,3 +36,16 @@ Operational notes:
 - The backend now starts with real migrations instead of `synchronize: true`.
 - Existing SQLite databases can be imported from a server-side file path and then managed like any other database.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
+
+Production reality check:
+
+- This backend does not magically discover every database that exists on a remote Ubuntu server.
+- It can manage SQLite files that the backend can access on disk, and libsql databases that you register by URL and token.
+- If you mount a directory or volume that contains SQLite files, you can import them into the control plane and manage them from the panel.
+- For arbitrary remote databases, you still need a registration/import step, because the backend cannot safely infer credentials or locations by itself.
+
+Coolify deployment:
+
+- The project is deployable in Coolify as a Docker app because it already includes a `Dockerfile` and `docker-compose.yml` example.
+- Set the environment variables from `.env.example` in Coolify, map persistent storage for `backend/data`, and expose the backend port.
+- If you deploy the frontend separately later, Coolify can manage both services independently.

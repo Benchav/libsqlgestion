@@ -14,10 +14,10 @@ export class Session {
   @Column()
   refreshTokenHash!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'datetime', nullable: true })
   revokedAt?: Date | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'datetime', nullable: true })
   expiresAt?: Date | null;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })

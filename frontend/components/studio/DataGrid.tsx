@@ -16,6 +16,13 @@ function getColumnInputKind(column: ColumnMeta): 'text' | 'number' | 'date' | 'd
   return 'text';
 }
 
+function isTruthyValue(value: unknown) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
 type Props = {
   tableName: string;
   columns: ColumnMeta[];
@@ -58,18 +65,29 @@ export function DataGrid({
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const commitLockRef = useRef(false);
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
   const handleStartEdit = useCallback((rowIdx: number, colName: string, currentValue: unknown) => {
+    const column = columns.find((col) => col.name === colName);
     setEditingCell({ row: rowIdx, col: colName });
-    setEditValue(currentValue === null ? '' : String(currentValue));
-  }, []);
+    if (column && getColumnInputKind(column) === 'checkbox') {
+      setEditValue(currentValue === null || currentValue === undefined ? '' : (isTruthyValue(currentValue) ? '1' : '0'));
+      return;
+    }
+    setEditValue(currentValue === null || currentValue === undefined ? '' : String(currentValue));
+  }, [columns]);
 
   const handleCommitEdit = useCallback(() => {
+    if (commitLockRef.current) return;
     if (editingCell) {
+      commitLockRef.current = true;
       onCellEdit(editingCell.row, editingCell.col, editValue === '' ? null : editValue);
       setEditingCell(null);
+      window.setTimeout(() => {
+        commitLockRef.current = false;
+      }, 0);
     }
   }, [editingCell, editValue, onCellEdit]);
 
@@ -248,15 +266,20 @@ export function DataGrid({
                                   <input
                                     ref={inputRef}
                                     type="checkbox"
-                                    checked={editValue === '1'}
+                                    checked={isTruthyValue(editValue)}
                                     onChange={(e) => {
+                                      if (commitLockRef.current) return;
+                                      commitLockRef.current = true;
                                       onCellEdit(rowIdx, col.name, e.target.checked ? '1' : '0');
                                       setEditingCell(null);
+                                      window.setTimeout(() => {
+                                        commitLockRef.current = false;
+                                      }, 0);
                                     }}
                                     onBlur={handleCommitEdit}
                                     className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500"
                                   />
-                                  <span className="font-sans text-[11px] text-zinc-400">{editValue === '1' ? 'true' : 'false'}</span>
+                                  <span className="font-sans text-[11px] text-zinc-400">{isTruthyValue(editValue) ? 'true' : 'false'}</span>
                                 </label>
                               ) : (
                                 <input

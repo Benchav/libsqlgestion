@@ -5,6 +5,7 @@ export type ApiResult<T> = {
 };
 
 const API_URL = '/api/v1';
+const SESSION_KEY = 'libsqlite.auth.v1';
 
 function getCookie(name: string) {
   if (typeof document === 'undefined') return null;
@@ -23,14 +24,20 @@ export function getRefreshToken() {
 export function setSession(accessToken: string, refreshToken: string) {
   void accessToken;
   void refreshToken;
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.setItem(SESSION_KEY, '1');
+  }
 }
 
 export function clearSession() {
-  return;
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(SESSION_KEY);
+  }
 }
 
 export function isAuthenticated() {
-  return true;
+  if (typeof window === 'undefined') return false;
+  return window.sessionStorage.getItem(SESSION_KEY) === '1';
 }
 
 async function tryRefreshToken(): Promise<boolean> {
@@ -42,6 +49,7 @@ async function tryRefreshToken(): Promise<boolean> {
     });
 
     if (!response.ok) return false;
+    setSession('', '');
     return true;
   } catch {
     return false;
@@ -98,11 +106,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
 
   if (!response.ok) {
-    if (response.status === 401) {
-      clearSession();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+  if (response.status === 401) {
+    clearSession();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
     }
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error || response.statusText);

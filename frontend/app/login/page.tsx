@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiRequest } from '../../lib/api';
+import { apiRequest, setSession } from '../../lib/api';
 import { Database } from 'lucide-react';
 
 export default function LoginPage() {
@@ -25,6 +25,7 @@ export default function LoginPage() {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
+      setSession('', '');
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Authentication failed');

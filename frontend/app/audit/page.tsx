@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { apiRequest } from '../../lib/api';
 import { History, Search, FileJson, ChevronDown, ChevronUp } from 'lucide-react';
@@ -18,17 +18,26 @@ type AuditLog = {
 
 export default function AuditPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(() => {
-    const initialPage = Number.parseInt(searchParams.get('page') || '1', 10);
-    return Number.isFinite(initialPage) && initialPage > 0 ? initialPage : 1;
-  });
+  const [page, setPage] = useState(1);
   const [limit] = useState(25);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const initialPage = Number.parseInt(params.get('page') || '1', 10);
+    const initialSearch = params.get('search') || '';
+
+    if (Number.isFinite(initialPage) && initialPage > 0) {
+      setPage(initialPage);
+    }
+    setSearch(initialSearch);
+  }, []);
 
   useEffect(() => {
     setExpandedId(null);
@@ -60,11 +69,11 @@ export default function AuditPage() {
     }
 
     const nextQuery = nextParams.toString();
-    const currentQuery = searchParams.toString();
+    const currentQuery = typeof window !== 'undefined' ? window.location.search.replace(/^\?/, '') : '';
     if (nextQuery !== currentQuery) {
       router.replace(`/audit?${nextQuery}`, { scroll: false });
     }
-  }, [limit, page, router, search, searchParams]);
+  }, [limit, page, router, search]);
 
   return (
     <AppShell>

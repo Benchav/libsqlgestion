@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { apiRequest } from '../../lib/api';
 import { History, Search, FileJson, ChevronDown, ChevronUp } from 'lucide-react';
@@ -16,12 +17,17 @@ type AuditLog = {
 };
 
 export default function AuditPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => {
+    const initialPage = Number.parseInt(searchParams.get('page') || '1', 10);
+    return Number.isFinite(initialPage) && initialPage > 0 ? initialPage : 1;
+  });
   const [limit] = useState(25);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,20 +47,24 @@ export default function AuditPage() {
       .catch((err: any) => setError(err.message));
   }, [page, limit, search]);
 
-  const filteredLogs = logs.filter((log) => {
-    const term = search.toLowerCase();
-    const resourceType = log.resourceType || '';
-    const actorEmail = log.actor?.email || '';
-    return (
-      log.action.toLowerCase().includes(term) ||
-      resourceType.toLowerCase().includes(term) ||
-      actorEmail.toLowerCase().includes(term)
-    );
-  });
-
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const canGoPrevious = page > 1;
   const canGoNext = page < totalPages;
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams();
+    nextParams.set('page', String(page));
+    nextParams.set('limit', String(limit));
+    if (search.trim()) {
+      nextParams.set('search', search.trim());
+    }
+
+    const nextQuery = nextParams.toString();
+    const currentQuery = searchParams.toString();
+    if (nextQuery !== currentQuery) {
+      router.replace(`/audit?${nextQuery}`, { scroll: false });
+    }
+  }, [limit, page, router, search, searchParams]);
 
   return (
     <AppShell>

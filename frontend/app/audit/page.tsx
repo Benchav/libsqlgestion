@@ -119,7 +119,7 @@ export default function AuditPage() {
                   </tr>
                 </thead>
                 <tbody className="text-sm text-zinc-300">
-                  {filteredLogs.map((log) => {
+                  {logs.map((log) => {
                     const isExpanded = expandedId === log.id;
                     const isDelete = log.action.includes('DELETE');
                     return (

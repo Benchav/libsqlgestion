@@ -67,6 +67,7 @@ export default function StudioPage() {
   const [sqlLoading, setSqlLoading] = useState(false);
 
   const [error, setError] = useState('');
+  const [schemaLoading, setSchemaLoading] = useState(false);
 
   const visibleSchemas = tables.filter((schema) => schema.kind === activeKind);
   const currentTableSchema = tables.find((schema) => schema.table === activeTable);
@@ -81,6 +82,7 @@ export default function StudioPage() {
 
   // Load schema
   const loadSchema = useCallback(async () => {
+    setSchemaLoading(true);
     try {
       const result = await apiRequest<{ tables: TableSchema[]; views: TableSchema[] }>(`/databases/${dbId}/schema`);
       const combined = [...(result.tables || []), ...(result.views || [])];
@@ -91,6 +93,8 @@ export default function StudioPage() {
       }
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setSchemaLoading(false);
     }
   }, [dbId, activeTable]);
 
@@ -415,8 +419,9 @@ export default function StudioPage() {
         </div>
 
         {error && (
-          <div className="m-4 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm flex-shrink-0">
-            {error}
+          <div className="m-4 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm flex-shrink-0 error-banner flex items-center justify-between gap-3">
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="text-red-400/60 hover:text-red-300 transition-colors shrink-0"><X size={14} /></button>
           </div>
         )}
 
@@ -537,8 +542,8 @@ function InsertRowModal({
   mode?: RowMode;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
-      <div className="w-full max-w-3xl rounded-xl border border-zinc-800/80 bg-[#0f0f0f] shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px] modal-backdrop">
+      <div className="w-full max-w-3xl rounded-xl border border-zinc-800/80 bg-[#0f0f0f] shadow-2xl modal-content">
         <div className="flex items-start justify-between gap-4 border-b border-zinc-800/80 px-6 py-4">
           <div>
             <h2 className="text-xl font-semibold text-zinc-100">{title}</h2>

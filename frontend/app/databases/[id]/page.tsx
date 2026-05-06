@@ -322,8 +322,8 @@ function EditDatabaseModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
-      <div className="w-full max-w-[520px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px] modal-backdrop">
+      <div className="w-full max-w-[520px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl modal-content">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold text-zinc-100">Edit Database</h2>

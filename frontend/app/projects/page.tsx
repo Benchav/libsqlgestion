@@ -167,8 +167,8 @@ function CreateProjectModal({ onClose, onSuccess }: { onClose: () => void, onSuc
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
-      <div className="bg-[#0f0f0f] border border-zinc-800/80 rounded-xl w-full max-w-[480px] p-6 shadow-2xl">
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-[2px] modal-backdrop">
+      <div className="bg-[#0f0f0f] border border-zinc-800/80 rounded-xl w-full max-w-[480px] p-6 shadow-2xl modal-content">
         <div className="flex justify-between items-start mb-6">
           <div>
             <h2 className="text-xl font-semibold text-zinc-100">New Project</h2>

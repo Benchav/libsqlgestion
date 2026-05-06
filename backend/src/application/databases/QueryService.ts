@@ -1,10 +1,10 @@
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
-import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
+import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { decrypt } from '../../infrastructure/crypto';
 
-const READ_ONLY_REGEX = /^\s*(select|pragma|with)\b/i;
+const READ_ONLY_REGEX = /^\s*(select|pragma|with|explain)\b/i;
 
 export class QueryService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -20,12 +20,21 @@ export class QueryService {
       try {
         const result = await client.execute(sql, params as any);
         return { ok: true, rows: result.rows, rowsAffected: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
+      } catch (error: any) {
+        throw new DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
       } finally {
         client.close();
       }
     }
 
-    const client = new SqliteClient(database.url || '');
+    let client: SqliteClient;
+    try {
+      client = new SqliteClient(database.url || '');
+    } catch (error: any) {
+      // File validation errors from the constructor
+      throw error instanceof DatabaseError ? error : DatabaseError.from(error);
+    }
+
     try {
       if (READ_ONLY_REGEX.test(sql)) {
         const rows = await client.all(sql, params);
@@ -39,3 +48,4 @@ export class QueryService {
     }
   }
 }
+

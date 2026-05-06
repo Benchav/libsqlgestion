@@ -8,9 +8,9 @@ import { History, Search, FileJson, ChevronDown, ChevronUp } from 'lucide-react'
 type AuditLog = {
   id: string;
   action: string;
-  entityType: string;
-  entityId: string;
-  userEmail?: string;
+  resourceType?: string;
+  resourceId?: string;
+  actor?: { email?: string } | null;
   metadata?: Record<string, unknown>;
   createdAt: string;
 };
@@ -29,10 +29,12 @@ export default function AuditPage() {
 
   const filteredLogs = logs.filter((log) => {
     const term = search.toLowerCase();
+    const resourceType = log.resourceType || '';
+    const actorEmail = log.actor?.email || '';
     return (
       log.action.toLowerCase().includes(term) ||
-      log.entityType.toLowerCase().includes(term) ||
-      (log.userEmail || '').toLowerCase().includes(term)
+      resourceType.toLowerCase().includes(term) ||
+      actorEmail.toLowerCase().includes(term)
     );
   });
 
@@ -107,11 +109,11 @@ export default function AuditPage() {
                           </td>
                           <td className="py-3 px-6">
                             <div className="flex flex-col">
-                              <span className="font-medium text-zinc-200">{log.entityType}</span>
-                              <span className="text-xs text-zinc-500 font-mono mt-0.5">{log.entityId}</span>
+                              <span className="font-medium text-zinc-200">{log.resourceType || '—'}</span>
+                              <span className="text-xs text-zinc-500 font-mono mt-0.5">{log.resourceId || '—'}</span>
                             </div>
                           </td>
-                          <td className="py-3 px-6 text-zinc-400">{log.userEmail || 'System'}</td>
+                          <td className="py-3 px-6 text-zinc-400">{log.actor?.email || 'System'}</td>
                           <td className="py-3 px-6 text-zinc-500">
                             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                           </td>

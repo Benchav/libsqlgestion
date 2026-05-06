@@ -212,7 +212,7 @@ export default function SettingsPage() {
                   {[
                     ['MASTER_KEY', '64-char hex key for AES-256-GCM encryption'],
                     ['DATABASE_FILE', 'Path to the control plane SQLite database'],
-                    ['PORT', 'Backend API port (default: 3000)'],
+                    ['PORT', 'Backend API port (default: 5000)'],
                     ['CORS_ORIGIN', 'Allowed frontend origins'],
                     ['SQLITE_STORAGE_ROOT', 'Root path for managed database files'],
                     ['SQLITE_DISCOVERY_PATH', 'Directory to scan for unmanaged .db files'],

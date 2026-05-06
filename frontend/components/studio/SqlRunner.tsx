@@ -71,7 +71,28 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
 
       {/* Results */}
       <div className="flex-1 overflow-auto custom-scrollbar p-4 relative bg-[#0a0a0a]">
-        {result ? (
+        {loading ? (
+          <div className="animate-fadeIn space-y-3">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="spinner spinner-sm" style={{ borderTopColor: '#34d399' }}></div>
+              <span className="text-xs text-zinc-500 font-medium">Executing query…</span>
+            </div>
+            <div className="border border-zinc-800/80 rounded-lg overflow-hidden bg-[#09090b]">
+              <div className="px-3 py-2 border-b border-zinc-800/80 bg-[#09090b]">
+                <div className="skeleton skeleton-text w-32"></div>
+              </div>
+              <div className="p-0">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="flex border-b border-zinc-800/40 px-3 py-2.5 gap-6">
+                    <div className="skeleton skeleton-text flex-1" style={{ width: `${30 + Math.random() * 40}%` }}></div>
+                    <div className="skeleton skeleton-text flex-1" style={{ width: `${20 + Math.random() * 50}%` }}></div>
+                    <div className="skeleton skeleton-text flex-1" style={{ width: `${25 + Math.random() * 35}%` }}></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : result ? (
           result.ok ? (
             <>
               {result.rows && result.rows.length > 0 ? (

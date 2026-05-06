@@ -10,7 +10,7 @@ function applyTemplate(template, database) {
     };
     let result = template.trim();
     for (const [placeholder, value] of Object.entries(values)) {
-        result = result.replaceAll(placeholder, value);
+        result = result.split(placeholder).join(value);
     }
     return result;
 }

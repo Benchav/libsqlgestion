@@ -101,6 +101,14 @@ Request body:
 }
 ```
 
+**Responses:**
+- `200 OK`: Successful query execution.
+- `400 Bad Request`: Missing `sql` parameter.
+- `404 Not Found`: Database not found.
+- `422 Unprocessable Entity`: SQL syntax error, constraint violation, or non-existent table/column.
+- `503 Service Unavailable`: Database is currently locked (SQLITE_BUSY).
+- `500 Internal Server Error`: Generic execution failure or corrupted database (SQLITE_CORRUPT).
+
 ## Migrations
 
 ### `GET /databases/:id/migrations`
@@ -119,6 +127,16 @@ Request body:
   "sql": "CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL);"
 }
 ```
+
+**Notes on Migrations:**
+- Migrations run inside a transaction (`BEGIN` ... `COMMIT` / `ROLLBACK`) for atomicity.
+- SQL syntax supports string literals with internal semicolons without breaking splitting logic.
+
+**Responses:**
+- `201 Created`: Migration successfully applied.
+- `400 Bad Request`: Missing name or SQL statements, or invalid name formatting.
+- `422 Unprocessable Entity`: SQL syntax errors or constraints failing during migration execution.
+- `404 Not Found`: Database not found.
 
 ## Provisioning
 

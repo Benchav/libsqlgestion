@@ -87,8 +87,8 @@ Concrete adapters and integrations.
 Examples:
 
 - TypeORM data source
-- SQLite file access
-- libsql client
+- SQLite file access (with robust `DatabaseError` classification and integrity checks)
+- libsql client (with remote fallback handling)
 - AES-GCM encryption
 - token hashing
 - storage layout service
@@ -153,3 +153,11 @@ This keeps the filesystem predictable and easy to back up.
 - secret handling is centralized
 - storage paths are deterministic
 - the backend can be deployed the same way on local machines, VPS or Coolify
+
+## Stability and Resiliency
+
+To prevent data corruption and application crashes:
+
+- **Error Classification**: All database errors are wrapped in a generic `DatabaseError` structure to safely distinguish `SQLITE_CORRUPT`, `SQLITE_BUSY`, constraints, and syntax errors, bubbling up meaningful HTTP codes.
+- **Migration Atomicity**: Local SQLite migrations are enclosed in `BEGIN` ... `COMMIT` / `ROLLBACK` transactions to ensure partial migrations do not leave databases in a broken state.
+- **Integrity Checks**: `PRAGMA integrity_check` is automatically validated when a database connection is tested, immediately alerting if underlying disk files are corrupt.

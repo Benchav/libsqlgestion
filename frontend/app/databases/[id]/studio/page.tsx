@@ -435,6 +435,7 @@ export default function StudioPage() {
             onSelectKind={handleSelectKind}
             onSelectTab={setActiveTab}
             onRefresh={loadSchema}
+            loading={schemaLoading}
           />
 
           <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a]">

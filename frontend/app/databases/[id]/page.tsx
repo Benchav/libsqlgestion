@@ -14,6 +14,7 @@ type DatabaseDetail = {
   status: string;
   subdomain?: string;
   url?: string;
+  connectionUrl?: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
   project?: { id: string; name: string };
@@ -238,9 +239,7 @@ export default function DatabaseDetailPage() {
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Connection URL</label>
                   <div className="flex items-center border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
-                    {database?.subdomain
-                      ? `libsql://${database.subdomain}.libsqlite.local`
-                      : database?.url || 'Managed SQLite file'}
+                    {database?.connectionUrl || database?.url || 'Managed SQLite file'}
                   </div>
                 </div>
 

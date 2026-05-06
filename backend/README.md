@@ -38,6 +38,7 @@ Operational notes:
 - If you mount a directory of `.db` files and set `SQLITE_DISCOVERY_PATH` plus `SQLITE_DISCOVERY_PROJECT_ID`, the backend can auto-register them at startup.
 - Managed SQLite files are stored in a structured folder tree like `data/sqlite/projects/<projectId>/databases/<databaseId>.db`.
 - Set `SQLITE_DISCOVERY_ADOPT=true` if you want mounted SQLite files to be copied into the managed storage tree during discovery.
+- Set `DATABASE_PUBLIC_URL_TEMPLATE` if you want the panel to generate a user-facing connection URL for each managed database. Example: `http://192.168.100.100:8081/{subdomain}` or `libsql://{subdomain}.your-domain.com`.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
 - Authorization is enforced both by permission and by project/database ownership membership checks.
 

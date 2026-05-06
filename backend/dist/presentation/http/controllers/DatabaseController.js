@@ -9,7 +9,14 @@ const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const promises_1 = require("stream/promises");
 const DatabaseService_1 = require("../../../application/databases/DatabaseService");
+const connection_url_1 = require("../../../application/databases/connection-url");
 const guards_1 = require("../guards");
+function withConnectionUrl(database) {
+    return {
+        ...database,
+        connectionUrl: (0, connection_url_1.buildDatabaseConnectionUrl)(database),
+    };
+}
 async function databaseRoutes(app) {
     const databaseService = new DatabaseService_1.DatabaseService();
     app.get('/databases', { preHandler: [app.authenticate] }, async (_request, reply) => {
@@ -17,7 +24,7 @@ async function databaseRoutes(app) {
             return;
         const query = _request.query || {};
         const databases = await databaseService.listDatabases(query.projectId);
-        return reply.send({ databases });
+        return reply.send({ databases: databases.map((database) => withConnectionUrl(database)) });
     });
     app.post('/databases', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -30,7 +37,7 @@ async function databaseRoutes(app) {
         if (!['sqlite', 'libsql', 'remote'].includes(body.type))
             return reply.status(400).send({ error: 'invalid database type' });
         const result = await databaseService.createDatabase(body.projectId, body);
-        return reply.status(201).send({ database: result.database, token: result.token });
+        return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
     });
     app.post('/databases/import-sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -41,7 +48,7 @@ async function databaseRoutes(app) {
         if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string')
             return reply.status(400).send({ error: 'invalid payload' });
         const result = await databaseService.importExistingSqlite(body.projectId, body);
-        return reply.status(201).send(result);
+        return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
     });
     app.post('/databases/import-upload', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -78,7 +85,7 @@ async function databaseRoutes(app) {
                 sourcePath: uploadedPath,
                 subdomain: fields.subdomain || undefined,
             });
-            return reply.status(201).send(result);
+            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
         }
         finally {
             if (uploadedPath) {
@@ -97,7 +104,7 @@ async function databaseRoutes(app) {
         const database = await databaseService.getDatabase(id);
         if (!database)
             return reply.status(404).send({ error: 'database not found' });
-        return reply.send({ database });
+        return reply.send({ database: withConnectionUrl(database) });
     });
     app.patch('/databases/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -109,7 +116,7 @@ async function databaseRoutes(app) {
             return;
         try {
             const database = await databaseService.updateDatabase(id, body);
-            return reply.send({ database });
+            return reply.send({ database: withConnectionUrl(database) });
         }
         catch (err) {
             return reply.status(404).send({ error: err.message });
@@ -138,7 +145,7 @@ async function databaseRoutes(app) {
         if (!access)
             return;
         const result = await databaseService.rotateToken(id);
-        return reply.send({ database: result.database, token: result.token });
+        return reply.send({ database: withConnectionUrl(result.database), token: result.token });
     });
     app.post('/databases/:id/test-connection', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))

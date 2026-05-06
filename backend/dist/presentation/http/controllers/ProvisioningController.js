@@ -2,7 +2,14 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = provisioningRoutes;
 const ProvisioningService_1 = require("../../../application/provisioning/ProvisioningService");
+const connection_url_1 = require("../../../application/databases/connection-url");
 const guards_1 = require("../guards");
+function withConnectionUrl(database) {
+    return {
+        ...database,
+        connectionUrl: (0, connection_url_1.buildDatabaseConnectionUrl)(database),
+    };
+}
 async function provisioningRoutes(app) {
     const provisioningService = new ProvisioningService_1.ProvisioningService();
     app.post('/provisioning/sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -15,7 +22,7 @@ async function provisioningRoutes(app) {
         if (!access)
             return;
         const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
-        return reply.status(201).send(result);
+        return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
     });
     app.post('/provisioning/libsql', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -27,6 +34,6 @@ async function provisioningRoutes(app) {
         if (!access)
             return;
         const result = await provisioningService.provisionLibsql(body.projectId, body);
-        return reply.status(201).send(result);
+        return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
     });
 }

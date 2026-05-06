@@ -1,6 +1,14 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ProvisioningService } from '../../../application/provisioning/ProvisioningService';
+import { buildDatabaseConnectionUrl } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureProjectAccess } from '../guards';
+
+function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
+  return {
+    ...database,
+    connectionUrl: buildDatabaseConnectionUrl(database),
+  };
+}
 
 export default async function provisioningRoutes(app: FastifyInstance) {
   const provisioningService = new ProvisioningService();
@@ -12,7 +20,7 @@ export default async function provisioningRoutes(app: FastifyInstance) {
     const access = await ensureProjectAccess(request, reply, body.projectId);
     if (!access) return;
     const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
-    return reply.status(201).send(result);
+    return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
   });
 
   app.post('/provisioning/libsql', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -22,6 +30,6 @@ export default async function provisioningRoutes(app: FastifyInstance) {
     const access = await ensureProjectAccess(request, reply, body.projectId);
     if (!access) return;
     const result = await provisioningService.provisionLibsql(body.projectId, body);
-    return reply.status(201).send(result);
+    return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
   });
 }

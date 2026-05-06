@@ -4,7 +4,15 @@ import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
+import { buildDatabaseConnectionUrl } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
+
+function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
+  return {
+    ...database,
+    connectionUrl: buildDatabaseConnectionUrl(database),
+  };
+}
 
 export default async function databaseRoutes(app: FastifyInstance) {
   const databaseService = new DatabaseService();
@@ -13,7 +21,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(_request, reply, 'databases.read'))) return;
     const query = (_request.query as any) || {};
     const databases = await databaseService.listDatabases(query.projectId);
-    return reply.send({ databases });
+    return reply.send({ databases: databases.map((database) => withConnectionUrl(database)) });
   });
 
   app.post('/databases', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -23,7 +31,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.type !== 'string') return reply.status(400).send({ error: 'invalid payload' });
     if (!['sqlite', 'libsql', 'remote'].includes(body.type)) return reply.status(400).send({ error: 'invalid database type' });
     const result = await databaseService.createDatabase(body.projectId, body);
-    return reply.status(201).send({ database: result.database, token: result.token });
+    return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
   });
 
   app.post('/databases/import-sqlite', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -32,7 +40,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!body.projectId || !body.sourcePath) return reply.status(400).send({ error: 'projectId and sourcePath required' });
     if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string') return reply.status(400).send({ error: 'invalid payload' });
     const result = await databaseService.importExistingSqlite(body.projectId, body);
-    return reply.status(201).send(result);
+    return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
   });
 
   app.post('/databases/import-upload', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -75,7 +83,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
         sourcePath: uploadedPath,
         subdomain: fields.subdomain || undefined,
       });
-      return reply.status(201).send(result);
+      return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
     } finally {
       if (uploadedPath) {
         const tempDir = path.dirname(uploadedPath);
@@ -91,7 +99,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!access) return;
     const database = await databaseService.getDatabase(id);
     if (!database) return reply.status(404).send({ error: 'database not found' });
-    return reply.send({ database });
+    return reply.send({ database: withConnectionUrl(database) });
   });
 
   app.patch('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -102,7 +110,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!access) return;
     try {
       const database = await databaseService.updateDatabase(id, body);
-      return reply.send({ database });
+      return reply.send({ database: withConnectionUrl(database) });
     } catch (err: any) {
       return reply.status(404).send({ error: err.message });
     }
@@ -127,7 +135,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const access = await ensureDatabaseAccess(request, reply, id);
     if (!access) return;
     const result = await databaseService.rotateToken(id);
-    return reply.send({ database: result.database, token: result.token });
+    return reply.send({ database: withConnectionUrl(result.database), token: result.token });
   });
 
   app.post('/databases/:id/test-connection', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {

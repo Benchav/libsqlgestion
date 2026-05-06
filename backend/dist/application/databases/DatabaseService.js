@@ -13,6 +13,7 @@ const crypto_1 = require("../../infrastructure/crypto");
 const tokens_1 = require("../../infrastructure/security/tokens");
 const AuditService_1 = require("../audit/AuditService");
 const LibsqlClient_1 = require("../../infrastructure/libsql/LibsqlClient");
+const SqliteClient_1 = require("../../infrastructure/sqlite/SqliteClient");
 const slug_1 = require("../../infrastructure/security/slug");
 const SqliteStorageService_1 = require("../../infrastructure/storage/SqliteStorageService");
 class DatabaseService {
@@ -106,22 +107,43 @@ class DatabaseService {
             throw new Error('database not found');
         if (database.type === 'sqlite') {
             const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
-            const ok = fs_1.default.existsSync(url);
-            return { ok, details: ok ? 'sqlite file exists' : 'sqlite file missing' };
+            if (!fs_1.default.existsSync(url)) {
+                return { ok: false, details: 'sqlite file missing', code: 'SQLITE_CANTOPEN' };
+            }
+            let client;
+            try {
+                client = new SqliteClient_1.SqliteClient(url);
+            }
+            catch (error) {
+                return { ok: false, details: error.message || 'failed to open database', code: error.code || 'SQLITE_CANTOPEN' };
+            }
+            try {
+                const integrity = await client.checkIntegrity();
+                if (!integrity.ok) {
+                    return { ok: false, details: `Integrity check failed: ${integrity.details}`, code: 'SQLITE_CORRUPT' };
+                }
+                return { ok: true, details: 'sqlite connection ok - integrity check passed' };
+            }
+            catch (error) {
+                return { ok: false, details: error.message || 'failed to verify database', code: error.code || 'SQLITE_ERROR' };
+            }
+            finally {
+                client.close();
+            }
         }
         if (!database.url || !database.encryptedToken)
             return { ok: false, details: 'missing url or token' };
         const token = (0, crypto_1.decrypt)(database.encryptedToken);
-        const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, token);
+        const libClient = (0, LibsqlClient_1.createLibsqlClient)(database.url, token);
         try {
-            await client.execute('SELECT 1');
+            await libClient.execute('SELECT 1');
             return { ok: true, details: 'connection ok' };
         }
         catch (error) {
             return { ok: false, details: error.message };
         }
         finally {
-            client.close();
+            libClient.close();
         }
     }
     async deleteDatabase(id) {

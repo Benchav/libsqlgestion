@@ -6,7 +6,7 @@ const Database_1 = require("../../domain/entities/Database");
 const SqliteClient_1 = require("../../infrastructure/sqlite/SqliteClient");
 const LibsqlClient_1 = require("../../infrastructure/libsql/LibsqlClient");
 const crypto_1 = require("../../infrastructure/crypto");
-const READ_ONLY_REGEX = /^\s*(select|pragma|with)\b/i;
+const READ_ONLY_REGEX = /^\s*(select|pragma|with|explain)\b/i;
 class QueryService {
     constructor() {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
@@ -22,11 +22,21 @@ class QueryService {
                 const result = await client.execute(sql, params);
                 return { ok: true, rows: result.rows, rowsAffected: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
             }
+            catch (error) {
+                throw new SqliteClient_1.DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
+            }
             finally {
                 client.close();
             }
         }
-        const client = new SqliteClient_1.SqliteClient(database.url || '');
+        let client;
+        try {
+            client = new SqliteClient_1.SqliteClient(database.url || '');
+        }
+        catch (error) {
+            // File validation errors from the constructor
+            throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
+        }
         try {
             if (READ_ONLY_REGEX.test(sql)) {
                 const rows = await client.all(sql, params);

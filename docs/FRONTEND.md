@@ -54,3 +54,12 @@ The UI uses:
 - strong hierarchy for operational dashboards
 - readable cards and tables
 - responsive layout for laptop and desktop first
+
+## Loading States & Animations
+
+To provide a premium and fluid user experience, the frontend implements extensive micro-interactions and complex loading states:
+
+- **Skeleton Loaders**: Detailed shimmer-effect skeletons mirror actual table structures in the DataGrid, SQL Runner, and Database detail views during asynchronous data fetches.
+- **Modals**: Animated with `scaleIn` and `fadeIn` backdrops to avoid jarring entry/exit behavior.
+- **Error Handling**: Graceful, auto-dismissible error banners using `slideDown` animations instead of static text blocks.
+- **CSS Utility Classes**: A robust suite of keyframes (`fadeIn`, `slideUp`, `shimmer`, `spin`) is defined globally for immediate reuse across components.

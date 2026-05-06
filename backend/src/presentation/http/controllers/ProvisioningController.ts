@@ -1,12 +1,15 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ProvisioningService } from '../../../application/provisioning/ProvisioningService';
-import { buildDatabaseConnectionUrl } from '../../../application/databases/connection-url';
+import { buildDatabaseConnectionUrls } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureProjectAccess } from '../guards';
 
 function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
+  const urls = buildDatabaseConnectionUrls(database);
   return {
     ...database,
-    connectionUrl: buildDatabaseConnectionUrl(database),
+    connectionUrl: urls.publicUrl,
+    publicConnectionUrl: urls.publicUrl,
+    internalConnectionUrl: urls.internalUrl,
   };
 }
 

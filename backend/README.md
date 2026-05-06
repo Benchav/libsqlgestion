@@ -39,6 +39,7 @@ Operational notes:
 - Managed SQLite files are stored in a structured folder tree like `data/sqlite/projects/<projectId>/databases/<databaseId>.db`.
 - Set `SQLITE_DISCOVERY_ADOPT=true` if you want mounted SQLite files to be copied into the managed storage tree during discovery.
 - Set `DATABASE_PUBLIC_URL_TEMPLATE` if you want the panel to generate a user-facing connection URL for each managed database. Example: `http://192.168.100.100:8081/{subdomain}` or `libsql://{subdomain}.your-domain.com`.
+- If you prefer a simpler path-based setup, set `DATABASE_PUBLIC_BASE_URL` and the panel will generate URLs like `http://192.168.100.100:8081/ibarrera`.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
 - Authorization is enforced both by permission and by project/database ownership membership checks.
 

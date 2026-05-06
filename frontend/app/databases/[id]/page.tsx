@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -15,6 +15,8 @@ type DatabaseDetail = {
   subdomain?: string;
   url?: string;
   connectionUrl?: string;
+  publicConnectionUrl?: string;
+  internalConnectionUrl?: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
   project?: { id: string; name: string };
@@ -32,6 +34,7 @@ export default function DatabaseDetailPage() {
   const [revealedToken, setRevealedToken] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copiedKey, setCopiedKey] = useState('');
 
   async function loadDatabase() {
     try {
@@ -89,6 +92,19 @@ export default function DatabaseDetailPage() {
       setIsDeleting(false);
     }
   }
+
+  async function copyText(value: string, key: string) {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    setCopiedKey(key);
+    window.setTimeout(() => setCopiedKey(''), 1500);
+  }
+
+  const publicUrl = database?.publicConnectionUrl || database?.connectionUrl || database?.url || '';
+  const internalUrl = database?.internalConnectionUrl || database?.url || '';
+  const envSnippet = publicUrl && revealedToken
+    ? `TURSO_DATABASE_URL=${publicUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
+    : '';
 
   if (!database && !error) {
     return (
@@ -237,9 +253,34 @@ export default function DatabaseDetailPage() {
 
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Connection URL</label>
-                  <div className="flex items-center border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
-                    {database?.connectionUrl || database?.url || 'Managed SQLite file'}
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Public URL</label>
+                  <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                    <code className="flex-1 break-all whitespace-normal">{publicUrl || 'Configure DATABASE_PUBLIC_BASE_URL or DATABASE_PUBLIC_URL_TEMPLATE'}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyText(publicUrl, 'public-url')}
+                      disabled={!publicUrl}
+                      className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {copiedKey === 'public-url' ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedKey === 'public-url' ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Internal URL</label>
+                  <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                    <code className="flex-1 break-all whitespace-normal">{internalUrl || 'Managed SQLite file'}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyText(internalUrl, 'internal-url')}
+                      disabled={!internalUrl}
+                      className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {copiedKey === 'internal-url' ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedKey === 'internal-url' ? 'Copied' : 'Copy'}
+                    </button>
                   </div>
                 </div>
 
@@ -263,6 +304,24 @@ export default function DatabaseDetailPage() {
                       </button>
                     </div>
                   )}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">Turso-style env snippet</label>
+                    <button
+                      type="button"
+                      onClick={() => copyText(envSnippet, 'env-snippet')}
+                      disabled={!envSnippet}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {copiedKey === 'env-snippet' ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedKey === 'env-snippet' ? 'Copied' : 'Copy snippet'}
+                    </button>
+                  </div>
+                  <pre className="bg-[#050505] border border-zinc-800 rounded-lg p-4 overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar whitespace-pre-wrap">
+{envSnippet || 'Reveal the token and configure a public URL template to generate a copy-ready snippet.'}
+                  </pre>
                 </div>
               </div>
             </div>

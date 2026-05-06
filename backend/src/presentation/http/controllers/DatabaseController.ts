@@ -4,13 +4,16 @@ import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
-import { buildDatabaseConnectionUrl } from '../../../application/databases/connection-url';
+import { buildDatabaseConnectionUrls } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
 
 function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
+  const urls = buildDatabaseConnectionUrls(database);
   return {
     ...database,
-    connectionUrl: buildDatabaseConnectionUrl(database),
+    connectionUrl: urls.publicUrl,
+    publicConnectionUrl: urls.publicUrl,
+    internalConnectionUrl: urls.internalUrl,
   };
 }
 

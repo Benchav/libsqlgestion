@@ -12,9 +12,12 @@ const DatabaseService_1 = require("../../../application/databases/DatabaseServic
 const connection_url_1 = require("../../../application/databases/connection-url");
 const guards_1 = require("../guards");
 function withConnectionUrl(database) {
+    const urls = (0, connection_url_1.buildDatabaseConnectionUrls)(database);
     return {
         ...database,
-        connectionUrl: (0, connection_url_1.buildDatabaseConnectionUrl)(database),
+        connectionUrl: urls.publicUrl,
+        publicConnectionUrl: urls.publicUrl,
+        internalConnectionUrl: urls.internalUrl,
     };
 }
 async function databaseRoutes(app) {

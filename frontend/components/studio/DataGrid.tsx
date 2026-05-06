@@ -230,15 +230,26 @@ export function DataGrid({
           </thead>
           <tbody className="font-mono text-xs">
             {loading ? (
-              <tr>
-                <td colSpan={columns.length + 2} className="py-8 text-center text-zinc-500 font-sans">
-                  Loading data...
-                </td>
-              </tr>
+              Array.from({ length: 8 }).map((_, i) => (
+                <tr key={`skel-${i}`} className="border-b border-zinc-800/40" style={{ animationDelay: `${i * 40}ms` }}>
+                  <td className="w-10 border-r border-zinc-800/40 py-2 px-2 text-center">
+                    <div className="skeleton skeleton-text-sm w-4 mx-auto"></div>
+                  </td>
+                  {columns.map((col) => (
+                    <td key={col.name} className="border-r border-zinc-800/40 px-3 py-2">
+                      <div className={`skeleton skeleton-text`} style={{ width: `${45 + Math.random() * 40}%` }}></div>
+                    </td>
+                  ))}
+                  <td className="w-10 py-2 px-2"></td>
+                </tr>
+              ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + 2} className="py-8 text-center text-zinc-500 font-sans">
-                  No data. Click "+ Add row" to insert.
+                <td colSpan={columns.length + 2} className="py-12 text-center font-sans animate-fadeIn">
+                  <div className="flex flex-col items-center gap-2">
+                    <Database size={24} className="text-zinc-700" />
+                    <span className="text-zinc-500 text-sm">No data. Click &quot;+ Quick add&quot; or &quot;+ Insert row&quot; to insert.</span>
+                  </div>
                 </td>
               </tr>
             ) : (

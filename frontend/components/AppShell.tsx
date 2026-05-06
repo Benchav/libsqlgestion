@@ -182,7 +182,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#0a0a0a]">
-        <div className="text-zinc-400 text-sm">Loading control plane…</div>
+        <div className="flex flex-col items-center gap-4 animate-fadeIn">
+          <div className="relative">
+            <div className="w-12 h-12 rounded-xl bg-zinc-800/50 flex items-center justify-center">
+              <Database className="text-zinc-400 pulse-glow" size={24} />
+            </div>
+            <div className="absolute -bottom-1 -right-1 spinner spinner-sm border-top-color-emerald" style={{ borderTopColor: '#34d399' }}></div>
+          </div>
+          <div className="flex flex-col items-center gap-1.5">
+            <span className="text-sm font-medium text-zinc-300">Loading control plane</span>
+            <span className="text-xs text-zinc-600">Initializing session…</span>
+          </div>
+        </div>
       </div>
     );
   }

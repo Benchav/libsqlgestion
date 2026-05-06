@@ -19,9 +19,10 @@ type Props = {
   onSelectKind: (kind: 'table' | 'view') => void;
   onSelectTab: (tab: 'data' | 'sql') => void;
   onRefresh: () => void;
+  loading?: boolean;
 };
 
-export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh }: Props) {
+export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh, loading = false }: Props) {
   const [query, setQuery] = useState('');
 
   const visibleTables = useMemo(
@@ -91,19 +92,32 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 pb-4 custom-scrollbar">
-        {visibleTables.length === 0 && (
-          <div className="px-3 py-2 text-zinc-500 text-xs text-center">No {activeKind === 'table' ? 'tables' : 'views'} found</div>
-        )}
-        <div className="flex flex-col gap-0.5">
-          {visibleTables.map((t) => (
+        {loading ? (
+          <div className="flex flex-col gap-1.5 px-1">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-2.5 rounded-md" style={{ animationDelay: `${i * 50}ms` }}>
+                <div className="flex items-center gap-2">
+                  <div className="skeleton w-4 h-4 rounded"></div>
+                  <div className="skeleton skeleton-text" style={{ width: `${60 + Math.random() * 60}px` }}></div>
+                </div>
+                <div className="skeleton skeleton-text-sm w-5"></div>
+              </div>
+            ))}
+          </div>
+        ) : visibleTables.length === 0 ? (
+          <div className="px-3 py-2 text-zinc-500 text-xs text-center animate-fadeIn">No {activeKind === 'table' ? 'tables' : 'views'} found</div>
+        ) : null}
+        {!loading && <div className="flex flex-col gap-0.5">
+          {visibleTables.map((t, i) => (
             <button
               type="button"
               key={t.table}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-colors text-left ${
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-all text-left stagger-item ${
                 activeTab === 'data' && activeTable === t.table 
                   ? 'bg-zinc-800/80 text-zinc-100' 
                   : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
               }`}
+              style={{ animationDelay: `${i * 30}ms` }}
               onClick={() => {
                 onSelectTable(t.table);
                 onSelectTab('data');
@@ -118,7 +132,7 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
               </span>
             </button>
           ))}
-        </div>
+        </div>}
       </nav>
     </div>
   );

@@ -92,7 +92,47 @@ export default function DatabaseDetailPage() {
   if (!database && !error) {
     return (
       <AppShell>
-        <div className="flex items-center justify-center h-full text-zinc-500">Loading database details...</div>
+        <div className="p-6 max-w-7xl mx-auto w-full animate-fadeIn">
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="skeleton w-16 skeleton-text"></div>
+              <div className="skeleton w-4 skeleton-text-sm"></div>
+              <div className="skeleton w-24 skeleton-text"></div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="skeleton w-12 h-12 rounded-xl"></div>
+              <div className="flex flex-col gap-2">
+                <div className="skeleton w-48 h-6 rounded"></div>
+                <div className="skeleton w-32 skeleton-text"></div>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+                <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30">
+                  <div className="skeleton w-40 skeleton-text"></div>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div className="skeleton w-full h-10 rounded-lg"></div>
+                  <div className="skeleton w-full h-10 rounded-lg"></div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+                <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30">
+                  <div className="skeleton w-36 skeleton-text"></div>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div className="skeleton w-full h-8 rounded"></div>
+                  <div className="skeleton w-full h-8 rounded"></div>
+                  <div className="skeleton w-full h-8 rounded"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </AppShell>
     );
   }

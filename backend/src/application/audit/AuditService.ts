@@ -16,7 +16,6 @@ export class AuditService {
     return this.auditRepo.save(log);
   }
 
-  list() {
   async list(input: { page?: number; limit?: number; search?: string } = {}) {
     const page = Math.max(1, Math.floor(input.page || 1));
     const limit = Math.min(100, Math.max(1, Math.floor(input.limit || 50)));
@@ -46,4 +45,5 @@ export class AuditService {
       limit,
       hasMore: skip + logs.length < total,
     };
+  }
 }

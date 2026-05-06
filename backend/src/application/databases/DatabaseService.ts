@@ -7,6 +7,7 @@ import { encrypt, decrypt } from '../../infrastructure/crypto';
 import { randomToken } from '../../infrastructure/security/tokens';
 import { AuditService } from '../audit/AuditService';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
+import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
 import { ensureSubdomain } from '../../infrastructure/security/slug';
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 

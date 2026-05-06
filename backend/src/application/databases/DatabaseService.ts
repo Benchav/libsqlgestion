@@ -111,20 +111,40 @@ export class DatabaseService {
     if (!database) throw new Error('database not found');
     if (database.type === 'sqlite') {
       const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
-      const ok = fs.existsSync(url);
-      return { ok, details: ok ? 'sqlite file exists' : 'sqlite file missing' };
+      if (!fs.existsSync(url)) {
+        return { ok: false, details: 'sqlite file missing', code: 'SQLITE_CANTOPEN' };
+      }
+
+      let client: SqliteClient;
+      try {
+        client = new SqliteClient(url);
+      } catch (error: any) {
+        return { ok: false, details: error.message || 'failed to open database', code: error.code || 'SQLITE_CANTOPEN' };
+      }
+
+      try {
+        const integrity = await client.checkIntegrity();
+        if (!integrity.ok) {
+          return { ok: false, details: `Integrity check failed: ${integrity.details}`, code: 'SQLITE_CORRUPT' };
+        }
+        return { ok: true, details: 'sqlite connection ok - integrity check passed' };
+      } catch (error: any) {
+        return { ok: false, details: error.message || 'failed to verify database', code: error.code || 'SQLITE_ERROR' };
+      } finally {
+        client.close();
+      }
     }
 
     if (!database.url || !database.encryptedToken) return { ok: false, details: 'missing url or token' };
     const token = decrypt(database.encryptedToken);
-    const client = createLibsqlClient(database.url, token);
+    const libClient = createLibsqlClient(database.url, token);
     try {
-      await client.execute('SELECT 1');
+      await libClient.execute('SELECT 1');
       return { ok: true, details: 'connection ok' };
     } catch (error: any) {
       return { ok: false, details: error.message };
     } finally {
-      client.close();
+      libClient.close();
     }
   }
 

@@ -1,6 +1,6 @@
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
-import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
+import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { decrypt } from '../../infrastructure/crypto';
 

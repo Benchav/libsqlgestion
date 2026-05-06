@@ -17,15 +17,29 @@ type AuditLog = {
 
 export default function AuditPage() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(25);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
-    apiRequest<{ logs: AuditLog[] }>('/audit')
-      .then((r) => setLogs(r.logs || []))
+    setExpandedId(null);
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('limit', String(limit));
+    if (search.trim()) {
+      params.set('search', search.trim());
+    }
+
+    apiRequest<{ logs: AuditLog[]; total?: number; page?: number; limit?: number }>(`/audit?${params.toString()}`)
+      .then((r) => {
+        setLogs(r.logs || []);
+        setTotal(r.total || 0);
+      })
       .catch((err: any) => setError(err.message));
-  }, []);
+  }, [page, limit, search]);
 
   const filteredLogs = logs.filter((log) => {
     const term = search.toLowerCase();
@@ -37,6 +51,10 @@ export default function AuditPage() {
       actorEmail.toLowerCase().includes(term)
     );
   });
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const canGoPrevious = page > 1;
+  const canGoNext = page < totalPages;
 
   return (
     <AppShell>
@@ -53,7 +71,10 @@ export default function AuditPage() {
                 type="text" 
                 placeholder="Search logs..." 
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setPage(1);
+                  setSearch(e.target.value);
+                }}
                 className="pl-9 pr-4 py-2 bg-[#0f0f0f] border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 transition-colors w-64"
               />
             </div>
@@ -67,7 +88,7 @@ export default function AuditPage() {
         )}
 
         <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
-          {filteredLogs.length === 0 ? (
+          {logs.length === 0 ? (
             <div className="p-12 text-center flex flex-col items-center justify-center">
               <div className="w-12 h-12 bg-zinc-800/50 rounded-full flex items-center justify-center mb-4">
                 <History className="text-zinc-500" size={24} />
@@ -140,6 +161,31 @@ export default function AuditPage() {
               </table>
             </div>
           )}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-4 text-sm text-zinc-400">
+          <div>
+            Showing {logs.length === 0 ? 0 : (page - 1) * limit + 1} to {(page - 1) * limit + logs.length} of {total} logs
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="px-3 py-1.5 rounded-md border border-zinc-800 bg-zinc-900 text-zinc-300 disabled:opacity-40"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={!canGoPrevious}
+            >
+              Previous
+            </button>
+            <span className="px-3 py-1.5 rounded-md border border-zinc-800 bg-[#0f0f0f] text-zinc-300">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              className="px-3 py-1.5 rounded-md border border-zinc-800 bg-zinc-900 text-zinc-300 disabled:opacity-40"
+              onClick={() => setPage((current) => current + 1)}
+              disabled={!canGoNext}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </AppShell>

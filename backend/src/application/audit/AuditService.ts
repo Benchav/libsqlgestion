@@ -17,6 +17,33 @@ export class AuditService {
   }
 
   list() {
-    return this.auditRepo.find({ relations: ['actor'], order: { createdAt: 'DESC' } });
-  }
+  async list(input: { page?: number; limit?: number; search?: string } = {}) {
+    const page = Math.max(1, Math.floor(input.page || 1));
+    const limit = Math.min(100, Math.max(1, Math.floor(input.limit || 50)));
+    const skip = (page - 1) * limit;
+    const search = input.search?.trim();
+
+    const query = this.auditRepo
+      .createQueryBuilder('audit')
+      .leftJoinAndSelect('audit.actor', 'actor')
+      .orderBy('audit.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit);
+
+    if (search) {
+      const term = `%${search.toLowerCase()}%`;
+      query.andWhere(
+        '(LOWER(audit.action) LIKE :term OR LOWER(COALESCE(audit.resourceType, \'\')) LIKE :term OR LOWER(COALESCE(audit.resourceId, \'\')) LIKE :term OR LOWER(COALESCE(actor.email, \'\')) LIKE :term)',
+        { term },
+      );
+    }
+
+    const [logs, total] = await query.getManyAndCount();
+    return {
+      logs,
+      total,
+      page,
+      limit,
+      hasMore: skip + logs.length < total,
+    };
 }

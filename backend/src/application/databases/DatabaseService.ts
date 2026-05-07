@@ -22,6 +22,8 @@ export class DatabaseService {
   async createDatabase(projectId: string, input: { name: string; type: 'sqlite' | 'libsql' | 'remote'; url?: string; token?: string; subdomain?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
+    let managedPath: string | undefined;
+    let managedRuntime: { metadata: Record<string, unknown> } | null = null;
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
@@ -35,23 +37,23 @@ export class DatabaseService {
 
     try {
       if (this.isManagedRuntimeRequest(input)) {
-        const filePath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
-        const runtime = await this.runtimeService.provisionDatabase(database, filePath);
+        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
+        managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
 
-        database.url = filePath;
+        database.url = managedPath;
         database.status = 'active';
-        database.encryptedToken = encrypt(runtime.token);
-        database.metadata = mergeRuntimeMetadata(database.metadata, runtime.metadata);
+        database.encryptedToken = encrypt(managedRuntime.token);
+        database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
         await this.databaseRepo.save(database);
 
         await this.auditService.record({
           action: 'database.create',
           resourceType: 'database',
           resourceId: database.id,
-          metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: runtime.metadata.provider },
+          metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
         });
 
-        return { database, token: runtime.token };
+        return { database, token: managedRuntime.token };
       }
 
       const token = input.token ?? randomToken();
@@ -72,7 +74,7 @@ export class DatabaseService {
 
       return { database, token };
     } catch (error) {
-      await this.cleanupCreatedDatabase(database.id);
+      await this.cleanupCreatedDatabase(database.id, managedPath ? [managedPath] : [], managedRuntime?.metadata);
       throw error;
     }
   }
@@ -96,26 +98,27 @@ export class DatabaseService {
     }));
 
     const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
+    let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
 
     try {
-      const runtime = await this.runtimeService.provisionDatabase(database, managedPath);
+      managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
 
       database.url = managedPath;
       database.status = 'active';
-      database.encryptedToken = encrypt(runtime.token);
-      database.metadata = mergeRuntimeMetadata(database.metadata, runtime.metadata);
+      database.encryptedToken = encrypt(managedRuntime.token);
+      database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
       await this.databaseRepo.save(database);
 
       await this.auditService.record({
         action: 'database.import',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: runtime.metadata.provider },
+        metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
       });
 
-      return { database, token: runtime.token };
+      return { database, token: managedRuntime.token };
     } catch (error) {
-      await this.cleanupCreatedDatabase(database.id, [managedPath]);
+      await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
       throw error;
     }
   }
@@ -249,11 +252,14 @@ export class DatabaseService {
     return getManagedRuntimeUrl(database) !== null;
   }
 
-  private async cleanupCreatedDatabase(databaseId: string, extraPaths: string[] = []) {
+  private async cleanupCreatedDatabase(databaseId: string, extraPaths: string[] = [], runtimeMetadata?: Record<string, unknown>) {
     const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
     if (database) {
       try {
-        await this.runtimeService.removeDatabase(database);
+        await this.runtimeService.removeDatabase({
+          ...database,
+          metadata: runtimeMetadata ? { ...(database.metadata ?? {}), runtime: runtimeMetadata } : database.metadata,
+        });
       } catch {
         // Best-effort cleanup after a failed create/import flow.
       }

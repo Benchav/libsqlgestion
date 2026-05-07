@@ -65,7 +65,7 @@ class LibsqlRuntimeService {
             const publicPort = await this.waitForPublishedPort(containerId, 8080);
             const internalUrl = `http://${paths.containerName}:8080`;
             const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
-            const connectionUrl = (await this.waitForReady([publicUrl, internalUrl], authBundle.token)) || publicUrl;
+            const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
             return {
                 token: authBundle.token,
                 metadata: {
@@ -97,7 +97,7 @@ class LibsqlRuntimeService {
         await fs_1.default.promises.writeFile(runtime.authKeyPath, authBundle.publicKeyPem, 'utf8');
         await this.restartContainer(runtime.containerId);
         const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
-        const connectionUrl = (await this.waitForReady([runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
+        const connectionUrl = (await this.waitForReady(runtime.containerId, [runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
         return {
             token: authBundle.token,
             metadata: {
@@ -254,9 +254,14 @@ class LibsqlRuntimeService {
         }
         throw new Error('Timed out waiting for the libSQL server port to become available');
     }
-    async waitForReady(urls, token) {
+    async waitForReady(containerId, urls, token) {
         const timeoutAt = Date.now() + 20000;
         while (Date.now() < timeoutAt) {
+            const state = await this.inspectContainerState(containerId);
+            if (state && state.running === false) {
+                const logs = await this.fetchContainerLogs(containerId);
+                throw new Error(`libSQL container stopped unexpectedly with exit code ${state.exitCode ?? 'unknown'}${logs ? `: ${logs}` : ''}`);
+            }
             for (const url of urls) {
                 try {
                     const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
@@ -294,6 +299,27 @@ class LibsqlRuntimeService {
         }
         catch {
             return undefined;
+        }
+    }
+    async inspectContainerState(containerId) {
+        try {
+            const inspect = await this.requestJson('GET', `/containers/${containerId}/json`);
+            return {
+                running: Boolean(inspect?.State?.Running),
+                exitCode: typeof inspect?.State?.ExitCode === 'number' ? inspect.State.ExitCode : undefined,
+            };
+        }
+        catch {
+            return null;
+        }
+    }
+    async fetchContainerLogs(containerId) {
+        try {
+            const response = await this.request('GET', `/containers/${containerId}/logs?stdout=true&stderr=true&tail=80`);
+            return response.body.trim();
+        }
+        catch {
+            return '';
         }
     }
     async cleanupPaths(paths, ignoreMissing) {

@@ -57,7 +57,7 @@ export class LibsqlRuntimeService {
       const publicPort = await this.waitForPublishedPort(containerId, 8080);
       const internalUrl = `http://${paths.containerName}:8080`;
       const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
-      const connectionUrl = (await this.waitForReady([publicUrl, internalUrl], authBundle.token)) || publicUrl;
+      const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
 
       return {
         token: authBundle.token,
@@ -92,7 +92,7 @@ export class LibsqlRuntimeService {
     await this.restartContainer(runtime.containerId);
 
     const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
-    const connectionUrl = (await this.waitForReady([runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
+    const connectionUrl = (await this.waitForReady(runtime.containerId, [runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
     return {
       token: authBundle.token,
       metadata: {
@@ -276,10 +276,16 @@ export class LibsqlRuntimeService {
     throw new Error('Timed out waiting for the libSQL server port to become available');
   }
 
-  private async waitForReady(urls: string[], token: string) {
+  private async waitForReady(containerId: string, urls: string[], token: string) {
     const timeoutAt = Date.now() + 20000;
 
     while (Date.now() < timeoutAt) {
+      const state = await this.inspectContainerState(containerId);
+      if (state && state.running === false) {
+        const logs = await this.fetchContainerLogs(containerId);
+        throw new Error(`libSQL container stopped unexpectedly with exit code ${state.exitCode ?? 'unknown'}${logs ? `: ${logs}` : ''}`);
+      }
+
       for (const url of urls) {
         try {
           const client = await import('@libsql/client').then(({ createClient }) =>
@@ -322,6 +328,27 @@ export class LibsqlRuntimeService {
       return networkNames[0];
     } catch {
       return undefined;
+    }
+  }
+
+  private async inspectContainerState(containerId: string) {
+    try {
+      const inspect = await this.requestJson('GET', `/containers/${containerId}/json`);
+      return {
+        running: Boolean(inspect?.State?.Running),
+        exitCode: typeof inspect?.State?.ExitCode === 'number' ? inspect.State.ExitCode : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async fetchContainerLogs(containerId: string) {
+    try {
+      const response = await this.request('GET', `/containers/${containerId}/logs?stdout=true&stderr=true&tail=80`);
+      return response.body.trim();
+    } catch {
+      return '';
     }
   }
 

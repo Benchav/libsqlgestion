@@ -45,13 +45,13 @@ export function buildDatabaseConnectionUrl(database: ConnectionUrlDatabase) {
 export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): ConnectionUrls {
   const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
   const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
-  const runtimeUrl = getRuntimeUrl(database);
+  const runtimeUrls = getRuntimeUrls(database);
   const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
 
-  if (runtimeUrl) {
+  if (runtimeUrls) {
     return {
-      publicUrl: runtimeUrl,
-      internalUrl: runtimeUrl,
+      publicUrl: runtimeUrls.publicUrl,
+      internalUrl: runtimeUrls.internalUrl,
     };
   }
 
@@ -107,19 +107,31 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   };
 }
 
-function getRuntimeUrl(database: ConnectionUrlDatabase) {
+function getRuntimeUrls(database: ConnectionUrlDatabase) {
   const runtime = database.metadata?.runtime as { connectionUrl?: unknown; internalUrl?: unknown; publicUrl?: unknown } | undefined;
-  if (runtime && typeof runtime.connectionUrl === 'string') {
-    return runtime.connectionUrl;
+  if (!runtime) {
+    return null;
   }
 
-  if (runtime && typeof runtime.internalUrl === 'string') {
-    return runtime.internalUrl;
+  const publicUrl = typeof runtime.connectionUrl === 'string'
+    ? runtime.connectionUrl
+    : typeof runtime.publicUrl === 'string'
+      ? runtime.publicUrl
+      : typeof runtime.internalUrl === 'string'
+        ? runtime.internalUrl
+        : null;
+
+  const internalUrl = typeof runtime.internalUrl === 'string'
+    ? runtime.internalUrl
+    : typeof runtime.publicUrl === 'string'
+      ? runtime.publicUrl
+      : typeof runtime.connectionUrl === 'string'
+        ? runtime.connectionUrl
+        : null;
+
+  if (!publicUrl || !internalUrl) {
+    return null;
   }
 
-  if (runtime && typeof runtime.publicUrl === 'string') {
-    return runtime.publicUrl;
-  }
-
-  return null;
+  return { publicUrl, internalUrl };
 }

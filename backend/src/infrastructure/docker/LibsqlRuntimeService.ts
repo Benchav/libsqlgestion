@@ -52,7 +52,7 @@ export class LibsqlRuntimeService {
       const networkName = await this.resolveBackendNetworkName();
       const containerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
       const publicPort = await this.waitForPublishedPort(containerId, 8080);
-      const internalUrl = `http://${paths.containerName}:8080`;
+      const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
       const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
       const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
 
@@ -88,7 +88,7 @@ export class LibsqlRuntimeService {
     const networkName = await this.resolveBackendNetworkName();
     const containerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
     const publicPort = await this.waitForPublishedPort(containerId, 8080);
-    const internalUrl = `http://${paths.containerName}:8080`;
+    const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
     const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
     const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
     return {
@@ -146,6 +146,14 @@ export class LibsqlRuntimeService {
     }
 
     return value;
+  }
+
+  private buildInternalUrl(containerName: string, publicPort: string) {
+    if (containerName) {
+      return `http://${containerName}:8080`;
+    }
+
+    return `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
   }
 
   private resolvePaths(database: Database, databasePath: string): RuntimePaths {

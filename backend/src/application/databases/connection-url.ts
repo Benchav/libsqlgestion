@@ -108,7 +108,11 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
 }
 
 function getRuntimeUrl(database: ConnectionUrlDatabase) {
-  const runtime = database.metadata?.runtime as { publicUrl?: unknown } | undefined;
+  const runtime = database.metadata?.runtime as { internalUrl?: unknown; publicUrl?: unknown } | undefined;
+  if (runtime && typeof runtime.internalUrl === 'string') {
+    return runtime.internalUrl;
+  }
+
   if (runtime && typeof runtime.publicUrl === 'string') {
     return runtime.publicUrl;
   }

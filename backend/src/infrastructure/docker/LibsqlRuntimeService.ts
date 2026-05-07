@@ -13,6 +13,7 @@ type RuntimeMetadata = {
   containerName: string;
   databasePath: string;
   authKeyPath: string;
+  internalUrl: string;
   publicHost: string;
   publicPort: string;
   publicUrl: string;
@@ -34,6 +35,7 @@ export class LibsqlRuntimeService {
   private readonly image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
   private readonly publicHost = process.env.DATABASE_PUBLIC_HOST?.trim() || this.detectPublicHost();
   private readonly publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
+  private readonly backendContainerId = process.env.HOSTNAME?.trim() || '';
 
   isEnabled() {
     return fs.existsSync(this.socketPath);
@@ -49,8 +51,11 @@ export class LibsqlRuntimeService {
 
     try {
       await this.ensureImage();
-      const containerId = await this.createAndStartContainer(paths, databasePath);
+      const networkName = await this.resolveBackendNetworkName();
+      const containerId = await this.createAndStartContainer(paths, databasePath, networkName);
       const publicPort = await this.waitForPublishedPort(containerId, 8080);
+      const internalUrl = `http://${paths.containerName}:8080`;
+      await this.waitForReady(internalUrl, authBundle.token);
 
       return {
         token: authBundle.token,
@@ -61,6 +66,7 @@ export class LibsqlRuntimeService {
           containerName: paths.containerName,
           databasePath,
           authKeyPath: paths.authKeyPath,
+          internalUrl,
           publicHost: this.publicHost,
           publicPort,
           publicUrl: `${this.publicProtocol}://${this.publicHost}:${publicPort}`,
@@ -83,6 +89,7 @@ export class LibsqlRuntimeService {
     await this.restartContainer(runtime.containerId);
 
     const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
+    await this.waitForReady(runtime.internalUrl, authBundle.token);
     return {
       token: authBundle.token,
       metadata: {
@@ -149,6 +156,7 @@ export class LibsqlRuntimeService {
       typeof runtime.containerName !== 'string' ||
       typeof runtime.databasePath !== 'string' ||
       typeof runtime.authKeyPath !== 'string' ||
+      typeof runtime.internalUrl !== 'string' ||
       typeof runtime.publicHost !== 'string' ||
       typeof runtime.publicPort !== 'string' ||
       typeof runtime.publicUrl !== 'string'
@@ -185,7 +193,7 @@ export class LibsqlRuntimeService {
     await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
   }
 
-  private async createAndStartContainer(paths: RuntimePaths, databasePath: string) {
+  private async createAndStartContainer(paths: RuntimePaths, databasePath: string, networkName?: string) {
     const dbFileName = path.basename(databasePath);
     const authFileName = path.basename(paths.authKeyPath);
 
@@ -204,11 +212,19 @@ export class LibsqlRuntimeService {
         AutoRemove: false,
         PublishAllPorts: true,
         RestartPolicy: { Name: 'unless-stopped' },
+        NetworkMode: networkName || undefined,
         Binds: [
           `${databasePath}:/var/lib/sqld/${dbFileName}:rw`,
           `${paths.authKeyPath}:/var/lib/sqld/${authFileName}:ro`,
         ],
       },
+      NetworkingConfig: networkName
+        ? {
+            EndpointsConfig: {
+              [networkName]: {},
+            },
+          }
+        : undefined,
       Labels: {
         'libsqlite.managed': 'true',
         'libsqlite.container-name': paths.containerName,
@@ -254,6 +270,43 @@ export class LibsqlRuntimeService {
     }
 
     throw new Error('Timed out waiting for the libSQL server port to become available');
+  }
+
+  private async waitForReady(url: string, token: string) {
+    const timeoutAt = Date.now() + 20000;
+
+    while (Date.now() < timeoutAt) {
+      try {
+        const client = await import('@libsql/client').then(({ createClient }) =>
+          createClient({ url, authToken: token }),
+        );
+        try {
+          await client.execute('SELECT 1');
+          return;
+        } finally {
+          client.close();
+        }
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    throw new Error('Timed out waiting for libSQL to accept connections');
+  }
+
+  private async resolveBackendNetworkName() {
+    if (!this.backendContainerId) {
+      return undefined;
+    }
+
+    try {
+      const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
+      const networks = inspect?.NetworkSettings?.Networks;
+      const networkNames = networks ? Object.keys(networks) : [];
+      return networkNames[0];
+    } catch {
+      return undefined;
+    }
   }
 
   private async cleanupPaths(paths: string[], ignoreMissing: boolean) {

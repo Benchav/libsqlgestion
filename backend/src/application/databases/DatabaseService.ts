@@ -292,7 +292,11 @@ function mergeRuntimeMetadata(existing: Record<string, unknown> | undefined, run
 }
 
 function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
-  const runtime = database.metadata?.runtime as { publicUrl?: unknown } | undefined;
+  const runtime = database.metadata?.runtime as { internalUrl?: unknown; publicUrl?: unknown } | undefined;
+  if (runtime && typeof runtime.internalUrl === 'string') {
+    return runtime.internalUrl;
+  }
+
   if (runtime && typeof runtime.publicUrl === 'string') {
     return runtime.publicUrl;
   }

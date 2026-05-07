@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -14,6 +47,7 @@ class LibsqlRuntimeService {
         this.image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
         this.publicHost = process.env.DATABASE_PUBLIC_HOST?.trim() || this.detectPublicHost();
         this.publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
+        this.backendContainerId = process.env.HOSTNAME?.trim() || '';
     }
     isEnabled() {
         return fs_1.default.existsSync(this.socketPath);
@@ -26,8 +60,11 @@ class LibsqlRuntimeService {
         await fs_1.default.promises.writeFile(paths.authKeyPath, authBundle.publicKeyPem, 'utf8');
         try {
             await this.ensureImage();
-            const containerId = await this.createAndStartContainer(paths, databasePath);
+            const networkName = await this.resolveBackendNetworkName();
+            const containerId = await this.createAndStartContainer(paths, databasePath, networkName);
             const publicPort = await this.waitForPublishedPort(containerId, 8080);
+            const internalUrl = `http://${paths.containerName}:8080`;
+            await this.waitForReady(internalUrl, authBundle.token);
             return {
                 token: authBundle.token,
                 metadata: {
@@ -37,6 +74,7 @@ class LibsqlRuntimeService {
                     containerName: paths.containerName,
                     databasePath,
                     authKeyPath: paths.authKeyPath,
+                    internalUrl,
                     publicHost: this.publicHost,
                     publicPort,
                     publicUrl: `${this.publicProtocol}://${this.publicHost}:${publicPort}`,
@@ -57,6 +95,7 @@ class LibsqlRuntimeService {
         await fs_1.default.promises.writeFile(runtime.authKeyPath, authBundle.publicKeyPem, 'utf8');
         await this.restartContainer(runtime.containerId);
         const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
+        await this.waitForReady(runtime.internalUrl, authBundle.token);
         return {
             token: authBundle.token,
             metadata: {
@@ -112,6 +151,7 @@ class LibsqlRuntimeService {
             typeof runtime.containerName !== 'string' ||
             typeof runtime.databasePath !== 'string' ||
             typeof runtime.authKeyPath !== 'string' ||
+            typeof runtime.internalUrl !== 'string' ||
             typeof runtime.publicHost !== 'string' ||
             typeof runtime.publicPort !== 'string' ||
             typeof runtime.publicUrl !== 'string') {
@@ -141,7 +181,7 @@ class LibsqlRuntimeService {
     async ensureImage() {
         await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
     }
-    async createAndStartContainer(paths, databasePath) {
+    async createAndStartContainer(paths, databasePath, networkName) {
         const dbFileName = path_1.default.basename(databasePath);
         const authFileName = path_1.default.basename(paths.authKeyPath);
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
@@ -159,11 +199,19 @@ class LibsqlRuntimeService {
                 AutoRemove: false,
                 PublishAllPorts: true,
                 RestartPolicy: { Name: 'unless-stopped' },
+                NetworkMode: networkName || undefined,
                 Binds: [
                     `${databasePath}:/var/lib/sqld/${dbFileName}:rw`,
                     `${paths.authKeyPath}:/var/lib/sqld/${authFileName}:ro`,
                 ],
             },
+            NetworkingConfig: networkName
+                ? {
+                    EndpointsConfig: {
+                        [networkName]: {},
+                    },
+                }
+                : undefined,
             Labels: {
                 'libsqlite.managed': 'true',
                 'libsqlite.container-name': paths.containerName,
@@ -202,6 +250,39 @@ class LibsqlRuntimeService {
             await new Promise((resolve) => setTimeout(resolve, 250));
         }
         throw new Error('Timed out waiting for the libSQL server port to become available');
+    }
+    async waitForReady(url, token) {
+        const timeoutAt = Date.now() + 20000;
+        while (Date.now() < timeoutAt) {
+            try {
+                const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
+                try {
+                    await client.execute('SELECT 1');
+                    return;
+                }
+                finally {
+                    client.close();
+                }
+            }
+            catch {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+        }
+        throw new Error('Timed out waiting for libSQL to accept connections');
+    }
+    async resolveBackendNetworkName() {
+        if (!this.backendContainerId) {
+            return undefined;
+        }
+        try {
+            const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
+            const networks = inspect?.NetworkSettings?.Networks;
+            const networkNames = networks ? Object.keys(networks) : [];
+            return networkNames[0];
+        }
+        catch {
+            return undefined;
+        }
     }
     async cleanupPaths(paths, ignoreMissing) {
         for (const filePath of paths) {

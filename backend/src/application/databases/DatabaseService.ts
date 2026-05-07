@@ -10,48 +10,71 @@ import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
 import { ensureSubdomain } from '../../infrastructure/security/slug';
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
+import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
   private projectRepo = AppDataSource.getRepository(Project);
   private auditService = new AuditService();
   private storageService = new SqliteStorageService();
+  private runtimeService = new LibsqlRuntimeService();
 
   async createDatabase(projectId: string, input: { name: string; type: 'sqlite' | 'libsql' | 'remote'; url?: string; token?: string; subdomain?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
-    const token = input.token ?? randomToken();
-    const encryptedToken = encrypt(token);
     const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
       type: input.type,
       url: input.url,
-      encryptedToken,
       subdomain,
       status: 'inactive',
       metadata: input.metadata,
       project,
     }));
 
-    if (input.type === 'sqlite') {
-      const filePath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
-      database.url = filePath;
-      database.status = 'active';
+    try {
+      if (this.isManagedRuntimeRequest(input)) {
+        const filePath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
+        const runtime = await this.runtimeService.provisionDatabase(database, filePath);
+
+        database.url = filePath;
+        database.status = 'active';
+        database.encryptedToken = encrypt(runtime.token);
+        database.metadata = mergeRuntimeMetadata(database.metadata, runtime.metadata);
+        await this.databaseRepo.save(database);
+
+        await this.auditService.record({
+          action: 'database.create',
+          resourceType: 'database',
+          resourceId: database.id,
+          metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: runtime.metadata.provider },
+        });
+
+        return { database, token: runtime.token };
+      }
+
+      const token = input.token ?? randomToken();
+      database.encryptedToken = encrypt(token);
+
+      if (input.url) {
+        database.status = 'active';
+      }
+
       await this.databaseRepo.save(database);
-    } else if (input.url) {
-      database.status = 'active';
-      await this.databaseRepo.save(database);
+
+      await this.auditService.record({
+        action: 'database.create',
+        resourceType: 'database',
+        resourceId: database.id,
+        metadata: { projectId, type: input.type, subdomain: input.subdomain },
+      });
+
+      return { database, token };
+    } catch (error) {
+      await this.cleanupCreatedDatabase(database.id);
+      throw error;
     }
-
-    await this.auditService.record({
-      action: 'database.create',
-      resourceType: 'database',
-      resourceId: database.id,
-      metadata: { projectId, type: input.type, subdomain: input.subdomain },
-    });
-
-    return { database, token };
   }
 
   async importExistingSqlite(projectId: string, input: { name?: string; sourceName?: string; sourcePath: string; subdomain?: string; token?: string; metadata?: Record<string, unknown> }) {
@@ -74,19 +97,27 @@ export class DatabaseService {
 
     const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
 
-    database.url = managedPath;
-    database.status = 'active';
-  database.encryptedToken = encrypt(token);
-    await this.databaseRepo.save(database);
+    try {
+      const runtime = await this.runtimeService.provisionDatabase(database, managedPath);
 
-    await this.auditService.record({
-      action: 'database.import',
-      resourceType: 'database',
-      resourceId: database.id,
-      metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain },
-    });
+      database.url = managedPath;
+      database.status = 'active';
+      database.encryptedToken = encrypt(runtime.token);
+      database.metadata = mergeRuntimeMetadata(database.metadata, runtime.metadata);
+      await this.databaseRepo.save(database);
 
-    return { database, token };
+      await this.auditService.record({
+        action: 'database.import',
+        resourceType: 'database',
+        resourceId: database.id,
+        metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: runtime.metadata.provider },
+      });
+
+      return { database, token: runtime.token };
+    } catch (error) {
+      await this.cleanupCreatedDatabase(database.id, [managedPath]);
+      throw error;
+    }
   }
 
   async listDatabases(projectId?: string) {
@@ -99,7 +130,22 @@ export class DatabaseService {
   }
 
   async rotateToken(id: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id });
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) throw new Error('database not found');
+
+    if (this.isManagedRuntime(database)) {
+      const runtime = await this.runtimeService.rotateDatabase(database);
+      if (!runtime) {
+        throw new Error('database runtime is missing');
+      }
+
+      database.encryptedToken = encrypt(runtime.token);
+      database.metadata = mergeRuntimeMetadata(database.metadata, runtime.metadata);
+      await this.databaseRepo.save(database);
+      await this.auditService.record({ action: 'database.rotate-token', resourceType: 'database', resourceId: database.id });
+      return { database, token: runtime.token };
+    }
+
     const newToken = randomToken();
     database.encryptedToken = encrypt(newToken);
     await this.databaseRepo.save(database);
@@ -110,6 +156,21 @@ export class DatabaseService {
   async testConnection(id: string) {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
+    const runtimeUrl = getManagedRuntimeUrl(database);
+
+    if (runtimeUrl && database.encryptedToken) {
+      const token = decrypt(database.encryptedToken);
+      const libClient = createLibsqlClient(runtimeUrl, token);
+      try {
+        await libClient.execute('SELECT 1');
+        return { ok: true, details: 'connection ok' };
+      } catch (error: any) {
+        return { ok: false, details: error.message };
+      } finally {
+        libClient.close();
+      }
+    }
+
     if (database.type === 'sqlite') {
       const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
       if (!fs.existsSync(url)) {
@@ -153,6 +214,7 @@ export class DatabaseService {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
 
+    await this.runtimeService.removeDatabase(database);
     await this.databaseRepo.remove(database);
 
     await this.auditService.record({
@@ -186,4 +248,30 @@ function deriveDatabaseName(name?: string, sourceName?: string, sourcePath?: str
 
   const candidate = sourceName || (sourcePath ? path.basename(sourcePath) : '');
   return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
+}
+
+function mergeRuntimeMetadata(existing: Record<string, unknown> | undefined, runtime: Record<string, unknown>) {
+  return {
+    ...(existing ?? {}),
+    runtime,
+  };
+}
+
+function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
+  const runtime = database.metadata?.runtime as { publicUrl?: unknown } | undefined;
+  if (runtime && typeof runtime.publicUrl === 'string') {
+    return runtime.publicUrl;
+  }
+
+  if (database.type === 'sqlite' && database.url && database.url.startsWith('http')) {
+    return database.url;
+  }
+
+  return null;
+}
+
+function isManagedRuntimeType(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {
+  if (input.type === 'sqlite') return true;
+  if (input.type === 'libsql' && !input.url) return true;
+  return false;
 }

@@ -23,7 +23,7 @@ export class DatabaseService {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     const subdomain = input.subdomain ?? ensureSubdomain(input.name, randomToken());
     let managedPath: string | undefined;
-    let managedRuntime: { metadata: Record<string, unknown> } | null = null;
+    let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,

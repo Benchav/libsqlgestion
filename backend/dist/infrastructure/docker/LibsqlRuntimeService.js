@@ -45,7 +45,7 @@ class LibsqlRuntimeService {
     constructor() {
         this.socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
         this.image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
-        this.publicHost = process.env.DATABASE_PUBLIC_HOST?.trim() || this.detectPublicHost();
+        this.publicHost = this.normalizePublicHost(process.env.DATABASE_PUBLIC_HOST?.trim());
         this.publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
         this.backendContainerId = process.env.HOSTNAME?.trim() || '';
     }
@@ -131,10 +131,16 @@ class LibsqlRuntimeService {
         }
     }
     detectPublicHost() {
-        if (process.platform === 'linux') {
-            return 'host.docker.internal';
+        return 'host.docker.internal';
+    }
+    normalizePublicHost(value) {
+        if (!value) {
+            return this.detectPublicHost();
         }
-        return '127.0.0.1';
+        if (value === '127.0.0.1' || value === 'localhost') {
+            return this.detectPublicHost();
+        }
+        return value;
     }
     resolvePaths(database, databasePath) {
         const directory = path_1.default.dirname(databasePath);
@@ -255,14 +261,15 @@ class LibsqlRuntimeService {
         throw new Error('Timed out waiting for the libSQL server port to become available');
     }
     async waitForReady(containerId, urls, token) {
-        const timeoutAt = Date.now() + 20000;
+        const timeoutAt = Date.now() + 30000;
+        let lastErrorMessage = '';
         while (Date.now() < timeoutAt) {
             const state = await this.inspectContainerState(containerId);
             if (state && state.running === false) {
                 const logs = await this.fetchContainerLogs(containerId);
                 throw new Error(`libSQL container stopped unexpectedly with exit code ${state.exitCode ?? 'unknown'}${logs ? `: ${logs}` : ''}`);
             }
-            for (const url of urls) {
+            for (const url of [...urls].sort((a, b) => (a.includes('host.docker.internal') ? 1 : 0) - (b.includes('host.docker.internal') ? 1 : 0))) {
                 try {
                     const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
                     try {
@@ -273,13 +280,19 @@ class LibsqlRuntimeService {
                         client.close();
                     }
                 }
-                catch {
+                catch (error) {
+                    lastErrorMessage = error?.message || String(error);
                     continue;
                 }
             }
             await new Promise((resolve) => setTimeout(resolve, 500));
         }
-        throw new Error('Timed out waiting for libSQL to accept connections');
+        const state = await this.inspectContainerState(containerId);
+        const logs = await this.fetchContainerLogs(containerId);
+        const suffix = [lastErrorMessage, state ? `running=${state.running} exitCode=${state.exitCode ?? 'unknown'}` : '', logs ? `logs=${logs}` : '']
+            .filter(Boolean)
+            .join(' | ');
+        throw new Error(`Timed out waiting for libSQL to accept connections${suffix ? `: ${suffix}` : ''}`);
     }
     getRuntimeErrorMessage(error) {
         if (error instanceof Error) {

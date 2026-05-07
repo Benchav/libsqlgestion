@@ -17,6 +17,7 @@ type DatabaseDetail = {
   connectionUrl?: string;
   publicConnectionUrl?: string;
   internalConnectionUrl?: string;
+  backendConnectionUrl?: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
   project?: { id: string; name: string };
@@ -102,6 +103,7 @@ export default function DatabaseDetailPage() {
 
   const publicUrl = database?.publicConnectionUrl || database?.connectionUrl || database?.url || '';
   const internalUrl = database?.internalConnectionUrl || database?.url || '';
+  const backendUrl = database?.backendConnectionUrl || internalUrl || database?.url || '';
   const envSnippet = publicUrl && revealedToken
     ? `TURSO_DATABASE_URL=${publicUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
     : '';
@@ -280,6 +282,22 @@ export default function DatabaseDetailPage() {
                     >
                       {copiedKey === 'internal-url' ? <Check size={14} /> : <Copy size={14} />}
                       {copiedKey === 'internal-url' ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Backend URL</label>
+                  <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                    <code className="flex-1 break-all whitespace-normal">{backendUrl || 'Use internal URL'}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyText(backendUrl, 'backend-url')}
+                      disabled={!backendUrl}
+                      className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {copiedKey === 'backend-url' ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedKey === 'backend-url' ? 'Copied' : 'Copy'}
                     </button>
                   </div>
                 </div>

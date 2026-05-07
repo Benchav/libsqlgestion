@@ -18,6 +18,7 @@ function withConnectionUrl(database) {
         connectionUrl: urls.publicUrl,
         publicConnectionUrl: urls.publicUrl,
         internalConnectionUrl: urls.internalUrl,
+        backendConnectionUrl: urls.backendUrl,
     };
 }
 async function databaseRoutes(app) {

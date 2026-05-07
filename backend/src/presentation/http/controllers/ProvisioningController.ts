@@ -10,6 +10,7 @@ function withConnectionUrl<T extends { id: string; name: string; type: string; u
     connectionUrl: urls.publicUrl,
     publicConnectionUrl: urls.publicUrl,
     internalConnectionUrl: urls.internalUrl,
+    backendConnectionUrl: urls.backendUrl,
   };
 }
 

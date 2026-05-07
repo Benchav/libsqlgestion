@@ -10,6 +10,7 @@ type ConnectionUrlDatabase = {
 type ConnectionUrls = {
   publicUrl: string;
   internalUrl: string;
+  backendUrl: string;
 };
 
 function slugify(value: string) {
@@ -49,9 +50,16 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
 
   if (runtimeUrls) {
+    const publicUrl = template
+      ? applyTemplate(template, database)
+      : baseUrl
+        ? `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`
+        : runtimeUrls.publicUrl;
+
     return {
-      publicUrl: runtimeUrls.publicUrl,
+      publicUrl,
       internalUrl: runtimeUrls.internalUrl,
+      backendUrl: runtimeUrls.backendUrl,
     };
   }
 
@@ -60,17 +68,20 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
       return {
         publicUrl: applyTemplate(template, database),
         internalUrl,
+        backendUrl: internalUrl,
       };
     }
     if (baseUrl) {
       return {
         publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
         internalUrl,
+        backendUrl: internalUrl,
       };
     }
     return {
       publicUrl: internalUrl,
       internalUrl,
+      backendUrl: internalUrl,
     };
   }
 
@@ -79,11 +90,13 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
       return {
         publicUrl: database.url,
         internalUrl: database.url,
+        backendUrl: database.url,
       };
     }
     return {
       publicUrl: database.url,
       internalUrl: database.url,
+      backendUrl: database.url,
     };
   }
 
@@ -91,6 +104,7 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     return {
       publicUrl: applyTemplate(template, database),
       internalUrl,
+      backendUrl: internalUrl,
     };
   }
 
@@ -98,12 +112,14 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     return {
       publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
       internalUrl,
+      backendUrl: internalUrl,
     };
   }
 
   return {
     publicUrl: internalUrl,
     internalUrl,
+    backendUrl: internalUrl,
   };
 }
 
@@ -113,13 +129,22 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
     return null;
   }
 
-  const publicUrl = typeof runtime.connectionUrl === 'string'
+  const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
+  const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+
+  const backendUrl = typeof runtime.connectionUrl === 'string'
     ? runtime.connectionUrl
     : typeof runtime.publicUrl === 'string'
       ? runtime.publicUrl
       : typeof runtime.internalUrl === 'string'
         ? runtime.internalUrl
         : null;
+
+  const publicUrl = template || baseUrl
+    ? (template ? applyTemplate(template, database) : `${baseUrl!.replace(/\/$/, '')}/${slugify(database.name)}`)
+    : typeof runtime.publicUrl === 'string'
+      ? runtime.publicUrl
+      : backendUrl;
 
   const internalUrl = typeof runtime.internalUrl === 'string'
     ? runtime.internalUrl
@@ -129,9 +154,9 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
         ? runtime.connectionUrl
         : null;
 
-  if (!publicUrl || !internalUrl) {
+  if (!publicUrl || !internalUrl || !backendUrl) {
     return null;
   }
 
-  return { publicUrl, internalUrl };
+  return { publicUrl, internalUrl, backendUrl };
 }

@@ -354,6 +354,45 @@ export class LibsqlRuntimeService {
     }
   }
 
+  private async resolveHostPath(containerPath: string) {
+    if (!this.backendContainerId) {
+      return containerPath;
+    }
+
+    try {
+      const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
+      const mounts = inspect?.Mounts || [];
+
+      let bestMatch: any = null;
+      for (const mount of mounts) {
+        if (containerPath.startsWith(mount.Destination)) {
+          if (!bestMatch || mount.Destination.length > bestMatch.Destination.length) {
+            bestMatch = mount;
+          }
+        }
+      }
+
+      if (bestMatch) {
+        let relativePath = containerPath.substring(bestMatch.Destination.length);
+        if (relativePath.startsWith('/') || relativePath.startsWith('\\')) {
+          relativePath = relativePath.substring(1);
+        }
+
+        if (!relativePath) {
+          return bestMatch.Source;
+        }
+
+        const separator = bestMatch.Source.includes('\\') ? '\\' : '/';
+        const sourceWithSlash = bestMatch.Source.endsWith(separator) ? bestMatch.Source : `${bestMatch.Source}${separator}`;
+        return `${sourceWithSlash}${relativePath.replace(/[\\/]/g, separator)}`;
+      }
+    } catch {
+      // Ignored
+    }
+
+    return containerPath;
+  }
+
   private async inspectContainerState(containerId: string) {
     try {
       const inspect = await this.requestJson('GET', `/containers/${containerId}/json`);

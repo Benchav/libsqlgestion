@@ -202,12 +202,15 @@ class LibsqlRuntimeService {
     }
     async createAndStartContainer(paths, databasePath, authKeyPem, networkName) {
         const dbFileName = path_1.default.basename(databasePath);
+        const dbDirName = path_1.default.dirname(databasePath);
+        const hostDirName = await this.resolveHostPath(dbDirName);
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
             Image: this.image,
             Env: [
                 'SQLD_NODE=primary',
                 `SQLD_DB_PATH=/var/lib/sqld/${dbFileName}`,
                 `SQLD_AUTH_JWT_KEY=${authKeyPem}`,
+                'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
             ],
             ExposedPorts: {
                 '8080/tcp': {},
@@ -218,7 +221,7 @@ class LibsqlRuntimeService {
                 PublishAllPorts: true,
                 RestartPolicy: { Name: 'unless-stopped' },
                 Binds: [
-                    `${path_1.default.dirname(databasePath)}:/var/lib/sqld:rw`,
+                    `${hostDirName}:/var/lib/sqld:rw`,
                 ],
             },
             NetworkingConfig: networkName
@@ -320,6 +323,39 @@ class LibsqlRuntimeService {
         catch {
             return undefined;
         }
+    }
+    async resolveHostPath(containerPath) {
+        if (!this.backendContainerId) {
+            return containerPath;
+        }
+        try {
+            const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
+            const mounts = inspect?.Mounts || [];
+            let bestMatch = null;
+            for (const mount of mounts) {
+                if (containerPath.startsWith(mount.Destination)) {
+                    if (!bestMatch || mount.Destination.length > bestMatch.Destination.length) {
+                        bestMatch = mount;
+                    }
+                }
+            }
+            if (bestMatch) {
+                let relativePath = containerPath.substring(bestMatch.Destination.length);
+                if (relativePath.startsWith('/') || relativePath.startsWith('\\')) {
+                    relativePath = relativePath.substring(1);
+                }
+                if (!relativePath) {
+                    return bestMatch.Source;
+                }
+                const separator = bestMatch.Source.includes('\\') ? '\\' : '/';
+                const sourceWithSlash = bestMatch.Source.endsWith(separator) ? bestMatch.Source : `${bestMatch.Source}${separator}`;
+                return `${sourceWithSlash}${relativePath.replace(/[\\/]/g, separator)}`;
+            }
+        }
+        catch {
+            // Ignored
+        }
+        return containerPath;
     }
     async inspectContainerState(containerId) {
         try {

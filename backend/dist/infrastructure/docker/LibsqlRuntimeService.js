@@ -56,12 +56,10 @@ class LibsqlRuntimeService {
         this.assertAvailable();
         const paths = this.resolvePaths(database, databasePath);
         const authBundle = this.generateAuthBundle();
-        await fs_1.default.promises.mkdir(path_1.default.dirname(paths.authKeyPath), { recursive: true });
-        await fs_1.default.promises.writeFile(paths.authKeyPath, authBundle.publicKeyPem, 'utf8');
         try {
             await this.ensureImage();
             const networkName = await this.resolveBackendNetworkName();
-            const containerId = await this.createAndStartContainer(paths, databasePath, networkName);
+            const containerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(containerId, 8080);
             const internalUrl = `http://${paths.containerName}:8080`;
             const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
@@ -74,7 +72,7 @@ class LibsqlRuntimeService {
                     containerId,
                     containerName: paths.containerName,
                     databasePath,
-                    authKeyPath: paths.authKeyPath,
+                    authKeyPem: authBundle.publicKeyPem,
                     internalUrl,
                     connectionUrl,
                     publicHost: this.publicHost,
@@ -84,7 +82,6 @@ class LibsqlRuntimeService {
             };
         }
         catch (error) {
-            await this.cleanupPaths([paths.authKeyPath], true);
             throw error;
         }
     }
@@ -93,8 +90,6 @@ class LibsqlRuntimeService {
         if (!runtime)
             return null;
         const authBundle = this.generateAuthBundle();
-        await fs_1.default.promises.mkdir(path_1.default.dirname(runtime.authKeyPath), { recursive: true });
-        await fs_1.default.promises.writeFile(runtime.authKeyPath, authBundle.publicKeyPem, 'utf8');
         await this.restartContainer(runtime.containerId);
         const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
         const connectionUrl = (await this.waitForReady(runtime.containerId, [runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
@@ -102,6 +97,7 @@ class LibsqlRuntimeService {
             token: authBundle.token,
             metadata: {
                 ...runtime,
+                authKeyPem: authBundle.publicKeyPem,
                 publicPort,
                 connectionUrl,
                 publicUrl: `${this.publicProtocol}://${runtime.publicHost}:${publicPort}`,
@@ -116,9 +112,6 @@ class LibsqlRuntimeService {
         const fileCandidates = new Set();
         if (database.url && database.type === 'sqlite') {
             fileCandidates.add(database.url);
-        }
-        if (runtime?.authKeyPath) {
-            fileCandidates.add(runtime.authKeyPath);
         }
         if (runtime?.databasePath) {
             fileCandidates.add(runtime.databasePath);
@@ -147,7 +140,6 @@ class LibsqlRuntimeService {
         const containerName = `libsqlite-${database.id}`;
         return {
             databasePath,
-            authKeyPath: path_1.default.join(directory, `${database.id}.auth.pem`),
             containerName,
         };
     }
@@ -159,7 +151,7 @@ class LibsqlRuntimeService {
         if (typeof runtime.containerId !== 'string' ||
             typeof runtime.containerName !== 'string' ||
             typeof runtime.databasePath !== 'string' ||
-            typeof runtime.authKeyPath !== 'string' ||
+            typeof runtime.authKeyPem !== 'string' ||
             typeof runtime.internalUrl !== 'string' ||
             typeof runtime.connectionUrl !== 'string' ||
             typeof runtime.publicHost !== 'string' ||
@@ -191,16 +183,14 @@ class LibsqlRuntimeService {
     async ensureImage() {
         await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
     }
-    async createAndStartContainer(paths, databasePath, networkName) {
+    async createAndStartContainer(paths, databasePath, authKeyPem, networkName) {
         const dbFileName = path_1.default.basename(databasePath);
-        const authFileName = path_1.default.basename(paths.authKeyPath);
-        const mountDir = path_1.default.dirname(databasePath);
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
             Image: this.image,
             Env: [
                 'SQLD_NODE=primary',
                 `SQLD_DB_PATH=/var/lib/sqld/${dbFileName}`,
-                `SQLD_AUTH_JWT_KEY_FILE=/var/lib/sqld/${authFileName}`,
+                `SQLD_AUTH_JWT_KEY=${authKeyPem}`,
             ],
             ExposedPorts: {
                 '8080/tcp': {},
@@ -211,7 +201,7 @@ class LibsqlRuntimeService {
                 PublishAllPorts: true,
                 RestartPolicy: { Name: 'unless-stopped' },
                 Binds: [
-                    `${mountDir}:/var/lib/sqld:rw`,
+                    `${path_1.default.dirname(databasePath)}:/var/lib/sqld:rw`,
                 ],
             },
             NetworkingConfig: networkName

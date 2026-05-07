@@ -90,6 +90,12 @@ class LibsqlRuntimeService {
                 }
                 catch { /* best-effort */ }
             }
+            else {
+                try {
+                    await this.requestVoid('DELETE', `/containers/${paths.containerName}?force=true&v=true`);
+                }
+                catch { /* best-effort */ }
+            }
             throw error;
         }
     }
@@ -101,27 +107,45 @@ class LibsqlRuntimeService {
         await this.removeContainer(runtime.containerId);
         const paths = this.resolvePaths(database, runtime.databasePath);
         const networkName = await this.resolveBackendNetworkName();
-        const containerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
-        const publicPort = await this.waitForPublishedPort(containerId, 8080);
-        const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-        const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
-        const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
-        return {
-            token: authBundle.token,
-            metadata: {
-                provider: 'docker-libsql',
-                image: this.image,
-                containerId,
-                containerName: paths.containerName,
-                databasePath: runtime.databasePath,
-                authKeyPem: authBundle.publicKeyPem,
-                publicPort,
-                connectionUrl,
-                publicHost: this.publicHost,
-                publicUrl,
-                internalUrl,
-            },
-        };
+        let createdContainerId;
+        try {
+            createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
+            const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
+            const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
+            const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+            const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
+            return {
+                token: authBundle.token,
+                metadata: {
+                    provider: 'docker-libsql',
+                    image: this.image,
+                    containerId: createdContainerId,
+                    containerName: paths.containerName,
+                    databasePath: runtime.databasePath,
+                    authKeyPem: authBundle.publicKeyPem,
+                    publicPort,
+                    connectionUrl,
+                    publicHost: this.publicHost,
+                    publicUrl,
+                    internalUrl,
+                },
+            };
+        }
+        catch (error) {
+            if (createdContainerId) {
+                try {
+                    await this.removeContainer(createdContainerId);
+                }
+                catch { /* best-effort */ }
+            }
+            else {
+                try {
+                    await this.requestVoid('DELETE', `/containers/${paths.containerName}?force=true&v=true`);
+                }
+                catch { /* best-effort */ }
+            }
+            throw error;
+        }
     }
     async removeDatabase(database) {
         const runtime = this.readRuntimeMetadata(database);
@@ -341,7 +365,8 @@ class LibsqlRuntimeService {
             const mounts = inspect?.Mounts || [];
             let bestMatch = null;
             for (const mount of mounts) {
-                if (containerPath.startsWith(mount.Destination)) {
+                const destinationWithSlash = mount.Destination.endsWith('/') ? mount.Destination : `${mount.Destination}/`;
+                if (containerPath === mount.Destination || containerPath.startsWith(destinationWithSlash)) {
                     if (!bestMatch || mount.Destination.length > bestMatch.Destination.length) {
                         bestMatch = mount;
                     }

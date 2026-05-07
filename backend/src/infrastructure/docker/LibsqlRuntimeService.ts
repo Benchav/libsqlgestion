@@ -77,6 +77,8 @@ export class LibsqlRuntimeService {
       // Cleanup the orphaned container on failure to avoid leftovers
       if (createdContainerId) {
         try { await this.removeContainer(createdContainerId); } catch { /* best-effort */ }
+      } else {
+        try { await this.requestVoid('DELETE', `/containers/${paths.containerName}?force=true&v=true`); } catch { /* best-effort */ }
       }
       throw error;
     }
@@ -91,27 +93,38 @@ export class LibsqlRuntimeService {
 
     const paths = this.resolvePaths(database, runtime.databasePath);
     const networkName = await this.resolveBackendNetworkName();
-    const containerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
-    const publicPort = await this.waitForPublishedPort(containerId, 8080);
-    const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-    const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
-    const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
-    return {
-      token: authBundle.token,
-      metadata: {
-        provider: 'docker-libsql',
-        image: this.image,
-        containerId,
-        containerName: paths.containerName,
-        databasePath: runtime.databasePath,
-        authKeyPem: authBundle.publicKeyPem,
-        publicPort,
-        connectionUrl,
-        publicHost: this.publicHost,
-        publicUrl,
-        internalUrl,
-      },
-    };
+    let createdContainerId: string | undefined;
+
+    try {
+      createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
+      const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
+      const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
+      const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+      const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
+      return {
+        token: authBundle.token,
+        metadata: {
+          provider: 'docker-libsql',
+          image: this.image,
+          containerId: createdContainerId,
+          containerName: paths.containerName,
+          databasePath: runtime.databasePath,
+          authKeyPem: authBundle.publicKeyPem,
+          publicPort,
+          connectionUrl,
+          publicHost: this.publicHost,
+          publicUrl,
+          internalUrl,
+        },
+      };
+    } catch (error) {
+      if (createdContainerId) {
+        try { await this.removeContainer(createdContainerId); } catch { /* best-effort */ }
+      } else {
+        try { await this.requestVoid('DELETE', `/containers/${paths.containerName}?force=true&v=true`); } catch { /* best-effort */ }
+      }
+      throw error;
+    }
   }
 
   async removeDatabase(database: Database) {
@@ -373,7 +386,8 @@ export class LibsqlRuntimeService {
 
       let bestMatch: any = null;
       for (const mount of mounts) {
-        if (containerPath.startsWith(mount.Destination)) {
+        const destinationWithSlash = mount.Destination.endsWith('/') ? mount.Destination : `${mount.Destination}/`;
+        if (containerPath === mount.Destination || containerPath.startsWith(destinationWithSlash)) {
           if (!bestMatch || mount.Destination.length > bestMatch.Destination.length) {
             bestMatch = mount;
           }

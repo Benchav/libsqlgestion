@@ -8,7 +8,7 @@
   "/databases/page": "app/databases/page.js",
   "/login/page": "app/login/page.js",
   "/page": "app/page.js",
-  "/projects/page": "app/projects/page.js",
   "/projects/[id]/page": "app/projects/[id]/page.js",
+  "/projects/page": "app/projects/page.js",
   "/settings/page": "app/settings/page.js"
 }

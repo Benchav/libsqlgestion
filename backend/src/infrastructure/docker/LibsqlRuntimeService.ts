@@ -82,18 +82,29 @@ export class LibsqlRuntimeService {
     if (!runtime) return null;
 
     const authBundle = this.generateAuthBundle();
-    await this.restartContainer(runtime.containerId);
+    await this.removeContainer(runtime.containerId);
 
-    const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
-    const connectionUrl = (await this.waitForReady(runtime.containerId, [runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
+    const paths = this.resolvePaths(database, runtime.databasePath);
+    const networkName = await this.resolveBackendNetworkName();
+    const containerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
+    const publicPort = await this.waitForPublishedPort(containerId, 8080);
+    const internalUrl = `http://${paths.containerName}:8080`;
+    const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+    const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
     return {
       token: authBundle.token,
       metadata: {
-        ...runtime,
+        provider: 'docker-libsql',
+        image: this.image,
+        containerId,
+        containerName: paths.containerName,
+        databasePath: runtime.databasePath,
         authKeyPem: authBundle.publicKeyPem,
         publicPort,
         connectionUrl,
-        publicUrl: `${this.publicProtocol}://${runtime.publicHost}:${publicPort}`,
+        publicHost: this.publicHost,
+        publicUrl,
+        internalUrl,
       },
     };
   }

@@ -73,7 +73,7 @@ export default function DatabaseDetailPage() {
         window.sessionStorage.setItem(`libsqlite.databaseToken.${id}`, result.token);
       }
       setRevealedToken(result.token);
-      await loadDatabase();
+      setDatabase(result.database);
     } catch (err: any) {
       setError(err.message);
     }

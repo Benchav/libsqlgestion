@@ -31,7 +31,14 @@ function buildDatabaseConnectionUrl(database) {
 function buildDatabaseConnectionUrls(database) {
     const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
     const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+    const runtimeUrl = getRuntimeUrl(database);
     const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
+    if (runtimeUrl) {
+        return {
+            publicUrl: runtimeUrl,
+            internalUrl: runtimeUrl,
+        };
+    }
     if (database.type === 'sqlite' && database.subdomain) {
         if (template) {
             return {
@@ -78,4 +85,11 @@ function buildDatabaseConnectionUrls(database) {
         publicUrl: internalUrl,
         internalUrl,
     };
+}
+function getRuntimeUrl(database) {
+    const runtime = database.metadata?.runtime;
+    if (runtime && typeof runtime.publicUrl === 'string') {
+        return runtime.publicUrl;
+    }
+    return null;
 }

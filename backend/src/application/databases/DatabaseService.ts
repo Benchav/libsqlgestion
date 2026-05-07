@@ -240,6 +240,35 @@ export class DatabaseService {
     });
     return database;
   }
+
+  private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {
+    return isManagedRuntimeType(input);
+  }
+
+  private isManagedRuntime(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
+    return getManagedRuntimeUrl(database) !== null;
+  }
+
+  private async cleanupCreatedDatabase(databaseId: string, extraPaths: string[] = []) {
+    const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
+    if (database) {
+      try {
+        await this.runtimeService.removeDatabase(database);
+      } catch {
+        // Best-effort cleanup after a failed create/import flow.
+      }
+
+      await this.databaseRepo.remove(database);
+    }
+
+    for (const filePath of extraPaths) {
+      try {
+        await fs.promises.rm(filePath, { force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  }
 }
 
 function deriveDatabaseName(name?: string, sourceName?: string, sourcePath?: string) {

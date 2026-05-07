@@ -88,6 +88,9 @@ function buildDatabaseConnectionUrls(database) {
 }
 function getRuntimeUrl(database) {
     const runtime = database.metadata?.runtime;
+    if (runtime && typeof runtime.connectionUrl === 'string') {
+        return runtime.connectionUrl;
+    }
     if (runtime && typeof runtime.internalUrl === 'string') {
         return runtime.internalUrl;
     }

@@ -64,7 +64,8 @@ class LibsqlRuntimeService {
             const containerId = await this.createAndStartContainer(paths, databasePath, networkName);
             const publicPort = await this.waitForPublishedPort(containerId, 8080);
             const internalUrl = `http://${paths.containerName}:8080`;
-            await this.waitForReady(internalUrl, authBundle.token);
+            const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+            const connectionUrl = (await this.waitForReady([publicUrl, internalUrl], authBundle.token)) || publicUrl;
             return {
                 token: authBundle.token,
                 metadata: {
@@ -75,9 +76,10 @@ class LibsqlRuntimeService {
                     databasePath,
                     authKeyPath: paths.authKeyPath,
                     internalUrl,
+                    connectionUrl,
                     publicHost: this.publicHost,
                     publicPort,
-                    publicUrl: `${this.publicProtocol}://${this.publicHost}:${publicPort}`,
+                    publicUrl,
                 },
             };
         }
@@ -95,12 +97,13 @@ class LibsqlRuntimeService {
         await fs_1.default.promises.writeFile(runtime.authKeyPath, authBundle.publicKeyPem, 'utf8');
         await this.restartContainer(runtime.containerId);
         const publicPort = await this.waitForPublishedPort(runtime.containerId, 8080);
-        await this.waitForReady(runtime.internalUrl, authBundle.token);
+        const connectionUrl = (await this.waitForReady([runtime.publicUrl, runtime.internalUrl], authBundle.token)) || runtime.publicUrl;
         return {
             token: authBundle.token,
             metadata: {
                 ...runtime,
                 publicPort,
+                connectionUrl,
                 publicUrl: `${this.publicProtocol}://${runtime.publicHost}:${publicPort}`,
             },
         };
@@ -152,6 +155,7 @@ class LibsqlRuntimeService {
             typeof runtime.databasePath !== 'string' ||
             typeof runtime.authKeyPath !== 'string' ||
             typeof runtime.internalUrl !== 'string' ||
+            typeof runtime.connectionUrl !== 'string' ||
             typeof runtime.publicHost !== 'string' ||
             typeof runtime.publicPort !== 'string' ||
             typeof runtime.publicUrl !== 'string') {
@@ -250,22 +254,25 @@ class LibsqlRuntimeService {
         }
         throw new Error('Timed out waiting for the libSQL server port to become available');
     }
-    async waitForReady(url, token) {
+    async waitForReady(urls, token) {
         const timeoutAt = Date.now() + 20000;
         while (Date.now() < timeoutAt) {
-            try {
-                const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
+            for (const url of urls) {
                 try {
-                    await client.execute('SELECT 1');
-                    return;
+                    const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
+                    try {
+                        await client.execute('SELECT 1');
+                        return url;
+                    }
+                    finally {
+                        client.close();
+                    }
                 }
-                finally {
-                    client.close();
+                catch {
+                    continue;
                 }
             }
-            catch {
-                await new Promise((resolve) => setTimeout(resolve, 500));
-            }
+            await new Promise((resolve) => setTimeout(resolve, 500));
         }
         throw new Error('Timed out waiting for libSQL to accept connections');
     }

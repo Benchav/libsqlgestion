@@ -82,7 +82,6 @@ class DatabaseService {
         }
         const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
         const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(databaseName, (0, tokens_1.randomToken)());
-        const token = input.token ?? (0, tokens_1.randomToken)();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: databaseName,
             type: 'sqlite',

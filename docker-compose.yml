@@ -14,8 +14,12 @@ services:
       SQLITE_STORAGE_ROOT: /app/data/sqlite
       SQLITE_DISCOVERY_PATH: /app/data/sqlite
       SQLITE_DISCOVERY_ADOPT: 'false'
+      DATABASE_PUBLIC_HOST: 127.0.0.1
+      DATABASE_PUBLIC_PROTOCOL: http
+      LIBSQL_SERVER_IMAGE: ghcr.io/tursodatabase/libsql-server:latest
     volumes:
       - ./backend/data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:5000/api/v1/health']

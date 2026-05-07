@@ -86,7 +86,6 @@ export class DatabaseService {
     }
     const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
     const subdomain = input.subdomain ?? ensureSubdomain(databaseName, randomToken());
-    const token = input.token ?? randomToken();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: databaseName,

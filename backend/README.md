@@ -40,6 +40,9 @@ Operational notes:
 - Set `SQLITE_DISCOVERY_ADOPT=true` if you want mounted SQLite files to be copied into the managed storage tree during discovery.
 - Set `DATABASE_PUBLIC_URL_TEMPLATE` if you want the panel to generate a user-facing connection URL for each managed database. Example: `http://192.168.100.100:8081/{subdomain}` or `libsql://{subdomain}.your-domain.com`.
 - If you prefer a simpler path-based setup, set `DATABASE_PUBLIC_BASE_URL` and the panel will generate URLs like `http://192.168.100.100:8081/ibarrera`.
+- For managed SQLite/libSQL databases, the backend can now provision a real `ghcr.io/tursodatabase/libsql-server` container per database, generate a JWT auth token, and remove that container when the database is deleted.
+- That runtime needs access to the Docker socket and a public host name or IP via `DATABASE_PUBLIC_HOST`, because the generated URL is the host-published container port.
+- In Coolify, make sure the backend service can reach the Docker daemon and that `DATABASE_PUBLIC_HOST` points to something your other projects can resolve.
 - Security middleware includes CORS, Helmet, rate limiting, and request timing logs.
 - Authorization is enforced both by permission and by project/database ownership membership checks.
 

@@ -56,20 +56,21 @@ class LibsqlRuntimeService {
         this.assertAvailable();
         const paths = this.resolvePaths(database, databasePath);
         const authBundle = this.generateAuthBundle();
+        let createdContainerId;
         try {
             await this.ensureImage();
             const networkName = await this.resolveBackendNetworkName();
-            const containerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
-            const publicPort = await this.waitForPublishedPort(containerId, 8080);
+            createdContainerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
+            const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
             const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
             const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
-            const connectionUrl = (await this.waitForReady(containerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
+            const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
             return {
                 token: authBundle.token,
                 metadata: {
                     provider: 'docker-libsql',
                     image: this.image,
-                    containerId,
+                    containerId: createdContainerId,
                     containerName: paths.containerName,
                     databasePath,
                     authKeyPem: authBundle.publicKeyPem,
@@ -82,6 +83,13 @@ class LibsqlRuntimeService {
             };
         }
         catch (error) {
+            // Cleanup the orphaned container on failure to avoid leftovers
+            if (createdContainerId) {
+                try {
+                    await this.removeContainer(createdContainerId);
+                }
+                catch { /* best-effort */ }
+            }
             throw error;
         }
     }

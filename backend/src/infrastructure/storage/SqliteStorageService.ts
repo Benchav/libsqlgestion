@@ -20,9 +20,9 @@ export class SqliteStorageService {
   async ensureManagedDatabaseFile(projectId: string, databaseId: string) {
     const filePath = this.managedDatabasePath(projectId, databaseId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, Buffer.from(''));
-    }
+    // Do NOT create an empty file — sqld will create a valid SQLite database
+    // on first start if the file doesn't exist. A 0-byte file would be treated
+    // as corrupt and cause the container to crash.
     return filePath;
   }
 

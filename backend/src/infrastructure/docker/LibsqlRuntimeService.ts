@@ -209,6 +209,7 @@ export class LibsqlRuntimeService {
   private async createAndStartContainer(paths: RuntimePaths, databasePath: string, networkName?: string) {
     const dbFileName = path.basename(databasePath);
     const authFileName = path.basename(paths.authKeyPath);
+    const mountDir = path.dirname(databasePath);
 
     const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
       Image: this.image,
@@ -226,8 +227,7 @@ export class LibsqlRuntimeService {
         PublishAllPorts: true,
         RestartPolicy: { Name: 'unless-stopped' },
         Binds: [
-          `${databasePath}:/var/lib/sqld/${dbFileName}:rw`,
-          `${paths.authKeyPath}:/var/lib/sqld/${authFileName}:ro`,
+          `${mountDir}:/var/lib/sqld:rw`,
         ],
       },
       NetworkingConfig: networkName

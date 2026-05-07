@@ -12,7 +12,7 @@ class LibsqlRuntimeService {
     constructor() {
         this.socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
         this.image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
-        this.publicHost = process.env.DATABASE_PUBLIC_HOST?.trim() || '127.0.0.1';
+        this.publicHost = process.env.DATABASE_PUBLIC_HOST?.trim() || this.detectPublicHost();
         this.publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
     }
     isEnabled() {
@@ -87,6 +87,12 @@ class LibsqlRuntimeService {
         if (!this.isEnabled()) {
             throw new Error(`Docker socket not found at ${this.socketPath}`);
         }
+    }
+    detectPublicHost() {
+        if (process.platform === 'linux') {
+            return 'host.docker.internal';
+        }
+        return '127.0.0.1';
     }
     resolvePaths(database, databasePath) {
         const directory = path_1.default.dirname(databasePath);

@@ -24,8 +24,13 @@ async function provisioningRoutes(app) {
         const access = await (0, guards_1.ensureProjectAccess)(request, reply, body.projectId);
         if (!access)
             return;
-        const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
-        return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        try {
+            const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
+            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to provision sqlite database' });
+        }
     });
     app.post('/provisioning/libsql', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -36,7 +41,12 @@ async function provisioningRoutes(app) {
         const access = await (0, guards_1.ensureProjectAccess)(request, reply, body.projectId);
         if (!access)
             return;
-        const result = await provisioningService.provisionLibsql(body.projectId, body);
-        return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        try {
+            const result = await provisioningService.provisionLibsql(body.projectId, body);
+            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to provision libsql database' });
+        }
     });
 }

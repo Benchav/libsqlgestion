@@ -39,8 +39,13 @@ async function databaseRoutes(app) {
             return reply.status(400).send({ error: 'invalid payload' });
         if (!['sqlite', 'libsql', 'remote'].includes(body.type))
             return reply.status(400).send({ error: 'invalid database type' });
-        const result = await databaseService.createDatabase(body.projectId, body);
-        return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+        try {
+            const result = await databaseService.createDatabase(body.projectId, body);
+            return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to create database' });
+        }
     });
     app.post('/databases/import-sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -50,8 +55,13 @@ async function databaseRoutes(app) {
             return reply.status(400).send({ error: 'projectId and sourcePath required' });
         if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string')
             return reply.status(400).send({ error: 'invalid payload' });
-        const result = await databaseService.importExistingSqlite(body.projectId, body);
-        return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        try {
+            const result = await databaseService.importExistingSqlite(body.projectId, body);
+            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to import database' });
+        }
     });
     app.post('/databases/import-upload', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -89,6 +99,9 @@ async function databaseRoutes(app) {
                 subdomain: fields.subdomain || undefined,
             });
             return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to import uploaded database' });
         }
         finally {
             if (uploadedPath) {

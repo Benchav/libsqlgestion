@@ -212,7 +212,6 @@ export class LibsqlRuntimeService {
         AutoRemove: false,
         PublishAllPorts: true,
         RestartPolicy: { Name: 'unless-stopped' },
-        NetworkMode: networkName || undefined,
         Binds: [
           `${databasePath}:/var/lib/sqld/${dbFileName}:rw`,
           `${paths.authKeyPath}:/var/lib/sqld/${authFileName}:ro`,
@@ -292,6 +291,14 @@ export class LibsqlRuntimeService {
     }
 
     throw new Error('Timed out waiting for libSQL to accept connections');
+  }
+
+  getRuntimeErrorMessage(error: unknown) {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return 'Unknown libSQL runtime error';
   }
 
   private async resolveBackendNetworkName() {

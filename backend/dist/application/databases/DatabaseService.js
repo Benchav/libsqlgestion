@@ -30,6 +30,7 @@ class DatabaseService {
         const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
         let managedPath;
         let managedRuntime = null;
+        const canProvisionRuntime = this.isManagedRuntimeRequest(input) && this.runtimeService.isEnabled();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: input.name,
             type: input.type,
@@ -40,7 +41,7 @@ class DatabaseService {
             project,
         }));
         try {
-            if (this.isManagedRuntimeRequest(input)) {
+            if (canProvisionRuntime) {
                 managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
                 managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
                 database.url = managedPath;
@@ -55,6 +56,29 @@ class DatabaseService {
                     metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
                 });
                 return { database, token: managedRuntime.token };
+            }
+            if (input.type === 'sqlite') {
+                managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
+                await fs_1.default.promises.writeFile(managedPath, '');
+                const token = input.token ?? (0, tokens_1.randomToken)();
+                database.url = managedPath;
+                database.status = 'active';
+                database.encryptedToken = (0, crypto_1.encrypt)(token);
+                database.metadata = mergeRuntimeMetadata(database.metadata, {
+                    provider: 'local-file',
+                    databasePath: managedPath,
+                    connectionUrl: managedPath,
+                    internalUrl: managedPath,
+                    publicUrl: managedPath,
+                });
+                await this.databaseRepo.save(database);
+                await this.auditService.record({
+                    action: 'database.create',
+                    resourceType: 'database',
+                    resourceId: database.id,
+                    metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: 'local-file' },
+                });
+                return { database, token };
             }
             const token = input.token ?? (0, tokens_1.randomToken)();
             database.encryptedToken = (0, crypto_1.encrypt)(token);
@@ -92,20 +116,42 @@ class DatabaseService {
         }));
         const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
         let managedRuntime = null;
+        const canProvisionRuntime = this.runtimeService.isEnabled();
         try {
-            managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+            if (canProvisionRuntime) {
+                managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                database.url = managedPath;
+                database.status = 'active';
+                database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
+                database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+                await this.databaseRepo.save(database);
+                await this.auditService.record({
+                    action: 'database.import',
+                    resourceType: 'database',
+                    resourceId: database.id,
+                    metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
+                });
+                return { database, token: managedRuntime.token };
+            }
+            const token = input.token ?? (0, tokens_1.randomToken)();
             database.url = managedPath;
             database.status = 'active';
-            database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
-            database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+            database.encryptedToken = (0, crypto_1.encrypt)(token);
+            database.metadata = mergeRuntimeMetadata(database.metadata, {
+                provider: 'local-file',
+                databasePath: managedPath,
+                connectionUrl: managedPath,
+                internalUrl: managedPath,
+                publicUrl: managedPath,
+            });
             await this.databaseRepo.save(database);
             await this.auditService.record({
                 action: 'database.import',
                 resourceType: 'database',
                 resourceId: database.id,
-                metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
+                metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: 'local-file' },
             });
-            return { database, token: managedRuntime.token };
+            return { database, token };
         }
         catch (error) {
             await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);

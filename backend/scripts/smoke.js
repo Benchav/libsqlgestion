@@ -46,15 +46,14 @@ async function main() {
     if (!authResponse.ok) throw new Error(`auth failed: ${authResponse.status}`);
 
     const cookieHeader = parseSetCookies(authResponse);
-    const csrfToken = authResponse.headers.get('set-cookie')?.includes('libsqlite.csrfToken') ? null : null;
-
     const me = await fetch(`${baseUrl}/me`, { headers: { cookie: cookieHeader } });
     if (!me.ok) throw new Error(`me failed: ${me.status}`);
 
     const projects = await fetch(`${baseUrl}/projects`, { headers: { cookie: cookieHeader } });
     if (!projects.ok) throw new Error(`projects failed: ${projects.status}`);
 
-    const csrf = /libsqlite\.csrfToken=([^;]+)/.exec(authResponse.headers.get('set-cookie') || '')?.[1];
+    const setCookieHeader = authResponse.headers.get('set-cookie') || '';
+    const csrf = /libsqlite\.csrfToken\.v2=([^;]+)/.exec(setCookieHeader)?.[1] || /libsqlite\.csrfToken=([^;]+)/.exec(setCookieHeader)?.[1];
     const createProject = await fetch(`${baseUrl}/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrf ? decodeURIComponent(csrf) : '' },

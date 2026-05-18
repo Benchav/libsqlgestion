@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildDatabaseConnectionUrl = buildDatabaseConnectionUrl;
 exports.buildDatabaseConnectionUrls = buildDatabaseConnectionUrls;
+const PlatformSettingsService_1 = require("../settings/PlatformSettingsService");
 function slugify(value) {
     return value
         .toLowerCase()
@@ -29,21 +30,27 @@ function buildDatabaseConnectionUrl(database) {
     return buildDatabaseConnectionUrls(database).publicUrl;
 }
 function buildDatabaseConnectionUrls(database) {
-    const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
-    const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
-    const publicDomain = process.env.DATABASE_PUBLIC_DOMAIN?.trim();
-    const publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
+    const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
+    const template = settings.template || process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
+    const baseUrl = settings.baseUrl || process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+    const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim();
+    const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
     const runtimeUrls = getRuntimeUrls(database);
     const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
     const domainUrl = publicDomain && database.subdomain
         ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
         : '';
     if (runtimeUrls) {
-        const publicUrl = template
-            ? applyTemplate(template, database)
-            : baseUrl
-                ? `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`
-                : domainUrl || runtimeUrls.publicUrl;
+        let publicUrl = runtimeUrls.publicUrl;
+        if (template) {
+            publicUrl = applyTemplate(template, database);
+        }
+        else if (domainUrl) {
+            publicUrl = domainUrl;
+        }
+        else if (baseUrl) {
+            publicUrl = `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`;
+        }
         return {
             publicUrl,
             internalUrl: runtimeUrls.internalUrl,
@@ -58,16 +65,16 @@ function buildDatabaseConnectionUrls(database) {
                 backendUrl: internalUrl,
             };
         }
-        if (baseUrl) {
+        if (domainUrl) {
             return {
-                publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+                publicUrl: domainUrl,
                 internalUrl,
                 backendUrl: internalUrl,
             };
         }
-        if (domainUrl) {
+        if (baseUrl) {
             return {
-                publicUrl: domainUrl,
+                publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
                 internalUrl,
                 backendUrl: internalUrl,
             };
@@ -99,16 +106,16 @@ function buildDatabaseConnectionUrls(database) {
             backendUrl: internalUrl,
         };
     }
-    if (baseUrl && database.subdomain) {
+    if (domainUrl) {
         return {
-            publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+            publicUrl: domainUrl,
             internalUrl,
             backendUrl: internalUrl,
         };
     }
-    if (domainUrl) {
+    if (baseUrl && database.subdomain) {
         return {
-            publicUrl: domainUrl,
+            publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
             internalUrl,
             backendUrl: internalUrl,
         };
@@ -124,8 +131,11 @@ function getRuntimeUrls(database) {
     if (!runtime) {
         return null;
     }
-    const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
-    const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+    const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
+    const template = settings.template || process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
+    const baseUrl = settings.baseUrl || process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+    const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim();
+    const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
     const backendUrl = typeof runtime.connectionUrl === 'string'
         ? runtime.connectionUrl
         : typeof runtime.publicUrl === 'string'
@@ -133,11 +143,6 @@ function getRuntimeUrls(database) {
             : typeof runtime.internalUrl === 'string'
                 ? runtime.internalUrl
                 : null;
-    const publicUrl = template || baseUrl
-        ? (template ? applyTemplate(template, database) : `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`)
-        : typeof runtime.publicUrl === 'string'
-            ? runtime.publicUrl
-            : backendUrl;
     const internalUrl = typeof runtime.internalUrl === 'string'
         ? runtime.internalUrl
         : typeof runtime.publicUrl === 'string'
@@ -145,8 +150,27 @@ function getRuntimeUrls(database) {
             : typeof runtime.connectionUrl === 'string'
                 ? runtime.connectionUrl
                 : null;
-    if (!publicUrl || !internalUrl || !backendUrl) {
+    const domainUrl = publicDomain && database.subdomain
+        ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
+        : null;
+    let effectivePublicUrl = null;
+    if (template) {
+        effectivePublicUrl = applyTemplate(template, database);
+    }
+    else if (domainUrl) {
+        effectivePublicUrl = domainUrl;
+    }
+    else if (baseUrl) {
+        effectivePublicUrl = `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`;
+    }
+    else if (typeof runtime.publicUrl === 'string') {
+        effectivePublicUrl = runtime.publicUrl;
+    }
+    else {
+        effectivePublicUrl = backendUrl;
+    }
+    if (!effectivePublicUrl || !internalUrl || !backendUrl) {
         return null;
     }
-    return { publicUrl, internalUrl, backendUrl };
+    return { publicUrl: effectivePublicUrl, internalUrl, backendUrl };
 }

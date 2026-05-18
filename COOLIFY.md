@@ -3,6 +3,7 @@
 This project is designed to run as a Docker app in Coolify. The backend manages SQLite files and libsql connections, and it can also discover or adopt `.db` files mounted from the server.
 
 For the full end-to-end setup, including Cloudflare DNS, wildcard subdomains, and API integration examples, see [docs/PUBLIC_DATABASES.md](docs/PUBLIC_DATABASES.md).
+The panel also manages public database routing directly, so the Coolify env vars act as bootstrap defaults and fallback values.
 
 ## 1. Recommended topology
 

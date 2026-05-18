@@ -9,6 +9,7 @@ const ProjectController_1 = __importDefault(require("./controllers/ProjectContro
 const DatabaseController_1 = __importDefault(require("./controllers/DatabaseController"));
 const AuditController_1 = __importDefault(require("./controllers/AuditController"));
 const UserController_1 = __importDefault(require("./controllers/UserController"));
+const SettingsController_1 = __importDefault(require("./controllers/SettingsController"));
 const SchemaController_1 = __importDefault(require("./controllers/SchemaController"));
 const QueryController_1 = __importDefault(require("./controllers/QueryController"));
 const ProvisioningController_1 = __importDefault(require("./controllers/ProvisioningController"));
@@ -22,6 +23,7 @@ async function routes(app) {
     app.register(DatabaseController_1.default);
     app.register(AuditController_1.default);
     app.register(UserController_1.default);
+    app.register(SettingsController_1.default);
     app.register(SchemaController_1.default);
     app.register(QueryController_1.default);
     app.register(ProvisioningController_1.default);

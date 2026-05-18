@@ -6,6 +6,7 @@ The goal is simple:
 
 - create or import databases in the panel
 - publish each database with a public URL
+- manage wildcard subdomains from the panel UI
 - keep tokens and real domains out of the repository
 - consume the database from another backend such as `api.example.com`
 - keep control of the whole stack inside your own server, Coolify, and Cloudflare
@@ -33,6 +34,8 @@ You still need:
 - a Coolify app or reverse proxy that receives traffic
 - Docker socket access if you want per-database libSQL runtimes
 - persistent storage for the control plane and database files
+
+The panel now stores the public database routing settings itself. Coolify environment variables are still supported as bootstrap defaults and fallback values.
 
 If you want a public URL such as `https://db-1.db.example.com`, that hostname must resolve to something reachable from your backend and from any external client that uses the database.
 
@@ -115,6 +118,22 @@ LIBSQL_SERVER_IMAGE=ghcr.io/tursodatabase/libsql-server:latest
 - `DATABASE_PUBLIC_BASE_URL` enables path-based URLs.
 - `DATABASE_PUBLIC_HOST` is the hostname that the runtime uses when publishing a database.
 - `DATABASE_PUBLIC_PROTOCOL` is usually `https` in production and `http` for local-only testing.
+
+## 4.1. Panel-managed routing settings
+
+After the backend starts, open the Settings page in the panel and configure **Public Database Routing**.
+
+You can edit there:
+
+- wildcard domain
+- path-based base URL
+- custom URL template
+- public host
+- protocol
+
+The panel stores those values in the control plane, and the backend uses them when it generates public URLs and when it provisions managed libSQL runtimes.
+
+If a field is left blank in the panel, the backend falls back to the Coolify environment variable.
 
 ## 5. Cloudflare setup
 
@@ -218,6 +237,7 @@ Suggested layout:
 3. Create a new SQLite database.
 4. Leave the subdomain field blank if you want auto-generation.
 5. Copy the URL and token from the detail page.
+6. If needed, first configure wildcard routing in **Settings -> Public Database Routing**.
 
 ### Import a database
 
@@ -225,6 +245,7 @@ Suggested layout:
 2. Upload a `.db`, `.sqlite`, or `.sqlite3` file, or use a server path.
 3. Leave the subdomain field blank if you want auto-generation.
 4. After import, copy the URL and token.
+5. If needed, first configure wildcard routing in **Settings -> Public Database Routing**.
 
 ### What to expect
 

@@ -41,12 +41,11 @@ const crypto_1 = __importDefault(require("crypto"));
 const fs_1 = __importDefault(require("fs"));
 const http_1 = __importDefault(require("http"));
 const path_1 = __importDefault(require("path"));
+const PlatformSettingsService_1 = require("../../application/settings/PlatformSettingsService");
 class LibsqlRuntimeService {
     constructor() {
         this.socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
         this.image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
-        this.publicHost = this.normalizePublicHost(process.env.DATABASE_PUBLIC_HOST?.trim());
-        this.publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
         this.backendContainerId = process.env.HOSTNAME?.trim() || '';
     }
     isEnabled() {
@@ -63,7 +62,7 @@ class LibsqlRuntimeService {
             createdContainerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
             const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-            const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+            const publicUrl = this.buildPublicUrl(publicPort);
             const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
             return {
                 token: authBundle.token,
@@ -76,7 +75,7 @@ class LibsqlRuntimeService {
                     authKeyPem: authBundle.publicKeyPem,
                     internalUrl,
                     connectionUrl,
-                    publicHost: this.publicHost,
+                    publicHost: this.getPublicHost(),
                     publicPort,
                     publicUrl,
                 },
@@ -112,7 +111,7 @@ class LibsqlRuntimeService {
             createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
             const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-            const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+            const publicUrl = this.buildPublicUrl(publicPort);
             const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
             return {
                 token: authBundle.token,
@@ -125,7 +124,7 @@ class LibsqlRuntimeService {
                     authKeyPem: authBundle.publicKeyPem,
                     publicPort,
                     connectionUrl,
-                    publicHost: this.publicHost,
+                    publicHost: this.getPublicHost(),
                     publicUrl,
                     internalUrl,
                 },
@@ -178,11 +177,22 @@ class LibsqlRuntimeService {
         }
         return value;
     }
+    getPublicHost() {
+        const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
+        return this.normalizePublicHost(settings.host || process.env.DATABASE_PUBLIC_HOST?.trim());
+    }
+    getPublicProtocol() {
+        const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
+        return settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
+    }
+    buildPublicUrl(publicPort) {
+        return `${this.getPublicProtocol()}://${this.getPublicHost()}:${publicPort}`;
+    }
     buildInternalUrl(containerName, publicPort) {
         if (containerName) {
             return `http://${containerName}:8080`;
         }
-        return `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+        return this.buildPublicUrl(publicPort);
     }
     resolvePaths(database, databasePath) {
         const directory = path_1.default.dirname(databasePath);

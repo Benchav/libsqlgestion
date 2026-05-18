@@ -1,5 +1,6 @@
 import sqlite3 from 'sqlite3';
 import fs from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 
 /**
@@ -69,7 +70,7 @@ export class SqliteClient {
       throw new DatabaseError('SQLITE_CANTOPEN', 'No database file path provided.', false);
     }
 
-    const directory = require('path').dirname(filePath);
+    const directory = path.dirname(filePath);
     fs.mkdirSync(directory, { recursive: true });
 
     if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {

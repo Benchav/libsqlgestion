@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SqliteClient = exports.DatabaseError = void 0;
 const sqlite3_1 = __importDefault(require("sqlite3"));
 const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 /**
  * Classifies SQLite error codes into user-friendly categories.
  */
@@ -60,15 +61,14 @@ class SqliteClient {
         if (!filePath) {
             throw new DatabaseError('SQLITE_CANTOPEN', 'No database file path provided.', false);
         }
-        if (!fs_1.default.existsSync(filePath)) {
-            throw new DatabaseError('SQLITE_CANTOPEN', `Database file not found: ${filePath}`, false);
-        }
-        const stat = fs_1.default.statSync(filePath);
-        if (stat.isDirectory()) {
+        const directory = path_1.default.dirname(filePath);
+        fs_1.default.mkdirSync(directory, { recursive: true });
+        if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isDirectory()) {
             throw new DatabaseError('SQLITE_CANTOPEN', `Path is a directory, not a database file: ${filePath}`, false);
         }
+        const stat = fs_1.default.existsSync(filePath) ? fs_1.default.statSync(filePath) : null;
         // Validate that the file starts with a valid SQLite header (first 16 bytes)
-        if (stat.size > 0) {
+        if (stat && stat.size > 0) {
             const fd = fs_1.default.openSync(filePath, 'r');
             const header = Buffer.alloc(16);
             fs_1.default.readSync(fd, header, 0, 16, 0);

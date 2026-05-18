@@ -345,16 +345,20 @@ function mergeRuntimeMetadata(existing: Record<string, unknown> | undefined, run
 }
 
 function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
-  const runtime = database.metadata?.runtime as { connectionUrl?: unknown; internalUrl?: unknown; publicUrl?: unknown } | undefined;
-  if (runtime && typeof runtime.connectionUrl === 'string') {
+  const runtime = database.metadata?.runtime as { provider?: unknown; connectionUrl?: unknown; internalUrl?: unknown; publicUrl?: unknown } | undefined;
+  if (!runtime || runtime.provider !== 'docker-libsql') {
+    return null;
+  }
+
+  if (typeof runtime.connectionUrl === 'string') {
     return runtime.connectionUrl;
   }
 
-  if (runtime && typeof runtime.internalUrl === 'string') {
+  if (typeof runtime.internalUrl === 'string') {
     return runtime.internalUrl;
   }
 
-  if (runtime && typeof runtime.publicUrl === 'string') {
+  if (typeof runtime.publicUrl === 'string') {
     return runtime.publicUrl;
   }
 

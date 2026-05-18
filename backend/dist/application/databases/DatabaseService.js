@@ -322,13 +322,16 @@ function mergeRuntimeMetadata(existing, runtime) {
 }
 function getManagedRuntimeUrl(database) {
     const runtime = database.metadata?.runtime;
-    if (runtime && typeof runtime.connectionUrl === 'string') {
+    if (!runtime || runtime.provider !== 'docker-libsql') {
+        return null;
+    }
+    if (typeof runtime.connectionUrl === 'string') {
         return runtime.connectionUrl;
     }
-    if (runtime && typeof runtime.internalUrl === 'string') {
+    if (typeof runtime.internalUrl === 'string') {
         return runtime.internalUrl;
     }
-    if (runtime && typeof runtime.publicUrl === 'string') {
+    if (typeof runtime.publicUrl === 'string') {
         return runtime.publicUrl;
     }
     if (database.type === 'sqlite' && database.url && database.url.startsWith('http')) {

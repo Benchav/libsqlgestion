@@ -43,19 +43,24 @@ class DatabaseService {
         try {
             if (canProvisionRuntime) {
                 managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
-                managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
-                database.url = managedPath;
-                database.status = 'active';
-                database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
-                database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
-                await this.databaseRepo.save(database);
-                await this.auditService.record({
-                    action: 'database.create',
-                    resourceType: 'database',
-                    resourceId: database.id,
-                    metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
-                });
-                return { database, token: managedRuntime.token };
+                try {
+                    managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                    database.url = managedPath;
+                    database.status = 'active';
+                    database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
+                    database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+                    await this.databaseRepo.save(database);
+                    await this.auditService.record({
+                        action: 'database.create',
+                        resourceType: 'database',
+                        resourceId: database.id,
+                        metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
+                    });
+                    return { database, token: managedRuntime.token };
+                }
+                catch {
+                    // Fall through to local-file mode when the Docker libSQL runtime cannot start.
+                }
             }
             if (input.type === 'sqlite') {
                 managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
@@ -119,19 +124,24 @@ class DatabaseService {
         const canProvisionRuntime = this.runtimeService.isEnabled();
         try {
             if (canProvisionRuntime) {
-                managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
-                database.url = managedPath;
-                database.status = 'active';
-                database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
-                database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
-                await this.databaseRepo.save(database);
-                await this.auditService.record({
-                    action: 'database.import',
-                    resourceType: 'database',
-                    resourceId: database.id,
-                    metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
-                });
-                return { database, token: managedRuntime.token };
+                try {
+                    managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                    database.url = managedPath;
+                    database.status = 'active';
+                    database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
+                    database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+                    await this.databaseRepo.save(database);
+                    await this.auditService.record({
+                        action: 'database.import',
+                        resourceType: 'database',
+                        resourceId: database.id,
+                        metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
+                    });
+                    return { database, token: managedRuntime.token };
+                }
+                catch {
+                    // Fall through to local-file mode when the Docker libSQL runtime cannot start.
+                }
             }
             const token = input.token ?? (0, tokens_1.randomToken)();
             database.url = managedPath;

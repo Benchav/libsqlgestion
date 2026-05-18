@@ -43,6 +43,33 @@
   50% { opacity: 1; }
 }
 
+@keyframes floatSlow {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(0, -18px, 0) scale(1.04); }
+}
+
+@keyframes floatSlower {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(0, 14px, 0) scale(1.03); }
+}
+
+@keyframes gridDrift {
+  0% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(-24px, -12px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes fadeInUpSoft {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shineSlow {
+  0% { box-shadow: 0 0 0 rgba(16,185,129,0); }
+  50% { box-shadow: 0 0 28px rgba(16,185,129,0.14); }
+  100% { box-shadow: 0 0 0 rgba(16,185,129,0); }
+}
+
 @keyframes slideInRight {
   from { opacity: 0; transform: translateX(-8px); }
   to { opacity: 1; transform: translateX(0); }
@@ -135,6 +162,26 @@
     animation: pulseGlow 2s ease-in-out infinite;
   }
 
+  .animate-float-slow {
+    animation: floatSlow 12s ease-in-out infinite;
+  }
+
+  .animate-float-slower {
+    animation: floatSlower 16s ease-in-out infinite;
+  }
+
+  .animate-grid-drift {
+    animation: gridDrift 18s ease-in-out infinite;
+  }
+
+  .animate-fadeInUp {
+    animation: fadeInUpSoft 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-shine-slow {
+    animation: shineSlow 3.5s ease-in-out infinite;
+  }
+
   /* Stagger list items */
   .stagger-item {
     animation: slideUp 0.2s ease-out both;
@@ -142,6 +189,7 @@
 }
 
 body {
-  background-color: #0a0a0a;
+  background-color: #030507;
   color: #d4d4d8; /* zinc-300 */
+  overflow-x: hidden;
 }

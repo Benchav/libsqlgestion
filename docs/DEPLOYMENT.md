@@ -25,7 +25,7 @@ Use it when you want:
 
 ## Coolify
 
-See [COOLIFY.md](../COOLIFY.md) for the detailed Coolify setup.
+See [COOLIFY.md](../COOLIFY.md) for the detailed Coolify setup and [Public Database Guide](PUBLIC_DATABASES.md) for the full Cloudflare + subdomain workflow.
 
 In summary:
 

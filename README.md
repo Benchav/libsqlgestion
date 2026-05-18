@@ -107,7 +107,7 @@ Deep-dive into our extensive guides to master your self-hosted infrastructure:
 | :--- | :--- | :--- |
 | [Usage Guide](docs/USAGE.md) | [Production Guide](docs/PRODUCTION.md) | [Architecture](docs/ARCHITECTURE.md) |
 | [Development Guide](docs/DEVELOPMENT.md) | [Security Guide](docs/SECURITY.md) | [API Reference](docs/API.md) |
-| [Deployment Guide](docs/DEPLOYMENT.md) | [Coolify Guide](COOLIFY.md) | [Operations Manual](docs/OPERATIONS.md) |
+| [Deployment Guide](docs/DEPLOYMENT.md) | [Coolify Guide](COOLIFY.md) | [Public Database Guide](docs/PUBLIC_DATABASES.md) |
 | [Deploy Checklist](DEPLOYMENT_CHECKLIST.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | |
 
 <br>

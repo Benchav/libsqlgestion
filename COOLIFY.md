@@ -8,6 +8,8 @@ This project is designed to run as a Docker app in Coolify. The backend manages 
 - Optional `frontend` service later: admin panel.
 - Persistent volume for SQLite control data and managed database files.
 - Wildcard subdomain through your reverse proxy or Coolify routing.
+- If you want to replace Turso completely, publish the managed libSQL runtime through a public hostname that you configure in Coolify, such as `db.example.com` or `*.db.example.com`.
+- Keep real domains and tokens out of the repository; set them only in Coolify environment variables or the panel.
 
 ## 2. Coolify service setup
 
@@ -19,6 +21,7 @@ Use these settings:
 - Dockerfile: `backend/Dockerfile`
 - Exposed port: `3000`
 - Health check path: `/health`
+- If you are using Cloudflare Tunnel, make sure the hostname you expose for database traffic is reachable from your ERP and from the machine where you run migrations.
 
 ## 3. Environment variables
 
@@ -33,6 +36,9 @@ SQLITE_STORAGE_ROOT=/app/data/sqlite
 SQLITE_DISCOVERY_PATH=/app/data/sqlite
 SQLITE_DISCOVERY_PROJECT_ID=<project-id>
 SQLITE_DISCOVERY_ADOPT=true
+DATABASE_PUBLIC_URL_TEMPLATE=https://db.example.com/{subdomain}
+DATABASE_PUBLIC_BASE_URL=https://db.example.com
+DATABASE_PUBLIC_HOST=db.example.com
 ```
 
 Notes:
@@ -41,6 +47,9 @@ Notes:
 - `SQLITE_STORAGE_ROOT` is where managed SQLite files are written.
 - `SQLITE_DISCOVERY_PATH` is the directory the backend scans for existing `.db` files.
 - `SQLITE_DISCOVERY_ADOPT=true` copies discovered databases into the managed storage tree so everything stays unified.
+- `DATABASE_PUBLIC_URL_TEMPLATE` and `DATABASE_PUBLIC_BASE_URL` are what let the panel generate a copyable public URL for each database, similar to Turso.
+- `DATABASE_PUBLIC_HOST` must resolve to the same host your ERP or editor will use when opening the database connection.
+- The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.
 
 ## 4. Volumes
 
@@ -91,6 +100,8 @@ Use your reverse proxy or Coolify routing to map:
 - `api.tudominio.com` -> backend API
 - `*.tudominio.com` -> optional per-database routing if you want database-specific hostnames
 
+For a Turso-like experience, dedicate a separate database hostname such as `db.example.com` and route the per-database URLs there.
+
 The database subdomain is metadata in the control plane; routing is handled by Coolify or your proxy layer.
 
 ## 7. Migraciones desde código
@@ -119,6 +130,14 @@ This works for:
 5. Create a new SQLite database or import/adopt existing `.db` files.
 6. Register libsql remote databases with URL + token.
 7. Run migrations from your code or CI pipeline.
+8. Copy the public URL and token from the database detail page and use them in your ERP or editor env vars.
+
+Example app env:
+
+```env
+DATABASE_URL=https://db.example.com/mi-db
+DATABASE_AUTH_TOKEN=xxxxx
+```
 
 ## 9. What Coolify gives you here
 

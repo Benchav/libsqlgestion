@@ -48,9 +48,11 @@ Use this structure:
 - `db.example.com` -> database entry point or wildcard parent domain
 - `*.db.example.com` -> optional wildcard subdomains if you want one host per database
 
-The intended setup for this project is subdomain-based public URLs.
+The intended setup for this project is subdomain-based public URLs with a dedicated database domain.
 
 Use this if you want a Turso-like experience.
+
+In practice, you keep your main app on `panel.example.com` or `api.example.com`, and you give databases their own parent host such as `db.example.com`.
 
 Example:
 
@@ -221,7 +223,7 @@ Use this order if you want the same experience Coolify gives you for apps, but a
   - Mount the Docker socket if you want managed libSQL runtimes per database.
   - Expose the backend on port `3000`.
 3. Open the panel and go to `Settings -> Public Database Routing`.
-  - Set only `Wildcard domain` to your main domain, such as `db.example.com`.
+  - Set only `Wildcard domain` to your dedicated database domain, such as `db.example.com`.
   - The panel will generate `http://<database>.db.example.com` for each database.
 4. Create or import a database.
   - Leave the `Subdomain` field blank if you want the backend to auto-generate it.

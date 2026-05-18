@@ -123,7 +123,7 @@ export default function SettingsPage() {
             </div>
             <div className="p-6 space-y-5">
               <p className="text-sm text-zinc-400">
-                Add only your main domain. The panel will auto-generate subdomains for each database and use HTTP internally; Cloudflare will handle HTTPS publicly.
+                Add only the dedicated database domain, for example `db.example.com`. The panel will auto-generate subdomains for each database and use HTTP internally; Cloudflare will handle HTTPS publicly.
               </p>
 
               {loadingPublicDatabaseSettings ? (
@@ -150,7 +150,7 @@ export default function SettingsPage() {
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <p className="text-xs text-zinc-500">
-                      Save only the main domain. Example: `db.example.com` becomes a URL like `http://subdomain.db.example.com`.
+                      Save only the dedicated database domain. Example: `db.example.com` becomes a URL like `http://subdomain.db.example.com`.
                     </p>
                     <button
                       type="button"

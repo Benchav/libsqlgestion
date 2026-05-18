@@ -233,14 +233,13 @@ class LibsqlRuntimeService {
         await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
     }
     async createAndStartContainer(paths, databasePath, authKeyPem, networkName) {
-        const dbFileName = path_1.default.basename(databasePath);
         const dbDirName = path_1.default.dirname(databasePath);
         const hostDirName = await this.resolveHostPath(dbDirName);
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
             Image: this.image,
             Env: [
                 'SQLD_NODE=primary',
-                `SQLD_DB_PATH=/var/lib/sqld/${dbFileName}`,
+                'SQLD_DB_PATH=/var/lib/sqld',
                 `SQLD_AUTH_JWT_KEY=${authKeyPem}`,
                 'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
             ],

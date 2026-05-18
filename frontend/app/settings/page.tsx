@@ -28,18 +28,12 @@ type UserRecord = {
 
 type PublicDatabaseSettings = {
   domain: string;
-  template: string;
-  baseUrl: string;
-  host: string;
   protocol: string;
 };
 
 const DEFAULT_PUBLIC_DATABASE_SETTINGS: PublicDatabaseSettings = {
   domain: '',
-  template: '',
-  baseUrl: '',
-  host: '',
-  protocol: 'https',
+  protocol: 'http',
 };
 
 export default function SettingsPage() {
@@ -90,7 +84,13 @@ export default function SettingsPage() {
       setError('');
       const result = await apiRequest<{ settings: PublicDatabaseSettings }>('/settings/public-database', {
         method: 'PUT',
-        body: JSON.stringify(publicDatabaseSettings),
+        body: JSON.stringify({
+          domain: publicDatabaseSettings.domain,
+          protocol: 'http',
+          template: '',
+          baseUrl: '',
+          host: '',
+        }),
       });
       setPublicDatabaseSettings({ ...DEFAULT_PUBLIC_DATABASE_SETTINGS, ...result.settings });
     } catch (err: any) {
@@ -123,34 +123,14 @@ export default function SettingsPage() {
             </div>
             <div className="p-6 space-y-5">
               <p className="text-sm text-zinc-400">
-                Configure how the panel generates public URLs for each database. Leave a field blank to fall back to the environment value.
+                Add only your main domain. The panel will auto-generate subdomains for each database and use HTTP internally; Cloudflare will handle HTTPS publicly.
               </p>
 
               {loadingPublicDatabaseSettings ? (
                 <div className="text-sm text-zinc-500">Loading routing settings...</div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2 flex items-center gap-3">
-                    <label className="w-40 text-sm font-medium text-zinc-300">Mode</label>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPublicDatabaseSettings((current) => ({ ...current, domain: '', baseUrl: current.baseUrl || '', template: '' }))}
-                        className={`px-3 py-2 rounded-md text-sm border transition-colors ${publicDatabaseSettings.domain ? 'border-zinc-700 text-zinc-300 bg-zinc-800/50' : 'border-zinc-500 bg-zinc-100 text-zinc-900'}`}
-                      >
-                        Path-based
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPublicDatabaseSettings((current) => ({ ...current, baseUrl: '', template: '', domain: current.domain || '' }))}
-                        className={`px-3 py-2 rounded-md text-sm border transition-colors ${publicDatabaseSettings.domain ? 'border-zinc-500 bg-zinc-100 text-zinc-900' : 'border-zinc-700 text-zinc-300 bg-zinc-800/50'}`}
-                      >
-                        Wildcard subdomain
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4 md:col-span-2">
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="flex items-center gap-4">
                     <label className="w-40 text-sm font-medium text-zinc-300">Wildcard domain</label>
                     <input
                       type="text"
@@ -161,54 +141,16 @@ export default function SettingsPage() {
                     />
                   </div>
 
-                  <div className="flex items-center gap-4 md:col-span-2">
-                    <label className="w-40 text-sm font-medium text-zinc-300">Public base URL</label>
-                    <input
-                      type="text"
-                      placeholder="https://db.example.com"
-                      value={publicDatabaseSettings.baseUrl}
-                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, baseUrl: e.target.value }))}
-                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-4 md:col-span-2">
-                    <label className="w-40 text-sm font-medium text-zinc-300">URL template</label>
-                    <input
-                      type="text"
-                      placeholder="https://db.example.com/{subdomain}"
-                      value={publicDatabaseSettings.template}
-                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, template: e.target.value }))}
-                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <label className="w-40 text-sm font-medium text-zinc-300">Public host</label>
-                    <input
-                      type="text"
-                      placeholder="db.example.com"
-                      value={publicDatabaseSettings.host}
-                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, host: e.target.value }))}
-                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
-                    />
-                  </div>
-
                   <div className="flex items-center gap-4">
                     <label className="w-40 text-sm font-medium text-zinc-300">Protocol</label>
-                    <select
-                      value={publicDatabaseSettings.protocol}
-                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, protocol: e.target.value }))}
-                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
-                    >
-                      <option value="https">https</option>
-                      <option value="http">http</option>
-                    </select>
+                    <div className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-400">
+                      http
+                    </div>
                   </div>
 
-                  <div className="md:col-span-2 flex items-center justify-between gap-3 pt-2">
+                  <div className="flex items-center justify-between gap-3 pt-2">
                     <p className="text-xs text-zinc-500">
-                      Wildcard subdomains are the closest match to Coolify's public hostname behavior.
+                      Save only the main domain. Example: `db.example.com` becomes a URL like `http://subdomain.db.example.com`.
                     </p>
                     <button
                       type="button"

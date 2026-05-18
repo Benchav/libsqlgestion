@@ -26,7 +26,7 @@ function loadEnvDefaults(): PublicDatabaseSettings {
     template: (process.env.DATABASE_PUBLIC_URL_TEMPLATE || '').trim(),
     baseUrl: (process.env.DATABASE_PUBLIC_BASE_URL || '').trim(),
     host: (process.env.DATABASE_PUBLIC_HOST || '').trim(),
-    protocol: (process.env.DATABASE_PUBLIC_PROTOCOL || 'https').trim() || 'https',
+    protocol: (process.env.DATABASE_PUBLIC_PROTOCOL || 'http').trim() || 'http',
   };
 }
 
@@ -36,7 +36,7 @@ function normalizeSettings(settings: Partial<PublicDatabaseSettings>): PublicDat
     template: (settings.template || '').trim(),
     baseUrl: (settings.baseUrl || '').trim(),
     host: (settings.host || '').trim(),
-    protocol: (settings.protocol || 'https').trim() || 'https',
+    protocol: (settings.protocol || 'http').trim() || 'http',
   };
 }
 

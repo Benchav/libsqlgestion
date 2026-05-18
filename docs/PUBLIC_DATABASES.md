@@ -48,23 +48,7 @@ Use this structure:
 - `db.example.com` -> database entry point or wildcard parent domain
 - `*.db.example.com` -> optional wildcard subdomains if you want one host per database
 
-Two deployment styles are supported:
-
-### A. Path-based public URLs
-
-Use this if you want the simplest setup.
-
-Example:
-
-- `https://db.example.com/legacy-orders`
-- `https://db.example.com/inventory-main`
-
-Configure:
-
-- `DATABASE_PUBLIC_BASE_URL=https://db.example.com`
-- `DATABASE_PUBLIC_URL_TEMPLATE=`
-
-### B. Subdomain-based public URLs
+The intended setup for this project is subdomain-based public URLs.
 
 Use this if you want a Turso-like experience.
 
@@ -76,8 +60,7 @@ Example:
 Configure:
 
 - `DATABASE_PUBLIC_DOMAIN=db.example.com`
-- `DATABASE_PUBLIC_URL_TEMPLATE=`
-- `DATABASE_PUBLIC_BASE_URL=`
+- `DATABASE_PUBLIC_PROTOCOL=http`
 
 This mode is the most similar to Turso, but it requires your proxy/DNS layer to route wildcard hostnames correctly.
 
@@ -102,7 +85,7 @@ DATABASE_PUBLIC_BASE_URL=
 
 # Docker runtime networking
 DATABASE_PUBLIC_HOST=db.example.com
-DATABASE_PUBLIC_PROTOCOL=https
+DATABASE_PUBLIC_PROTOCOL=http
 DOCKER_SOCKET_PATH=/var/run/docker.sock
 LIBSQL_SERVER_IMAGE=ghcr.io/tursodatabase/libsql-server:latest
 ```
@@ -114,10 +97,9 @@ LIBSQL_SERVER_IMAGE=ghcr.io/tursodatabase/libsql-server:latest
 - `SQLITE_DISCOVERY_PATH` scans existing files for import/discovery.
 - `SQLITE_DISCOVERY_ADOPT=true` copies discovered files into managed storage.
 - `DATABASE_PUBLIC_DOMAIN` enables wildcard subdomain-style URLs.
-- `DATABASE_PUBLIC_URL_TEMPLATE` enables custom URL patterns.
-- `DATABASE_PUBLIC_BASE_URL` enables path-based URLs.
+- `DATABASE_PUBLIC_URL_TEMPLATE` and `DATABASE_PUBLIC_BASE_URL` remain available as advanced fallbacks, but the main flow is wildcard subdomains.
 - `DATABASE_PUBLIC_HOST` is the hostname that the runtime uses when publishing a database.
-- `DATABASE_PUBLIC_PROTOCOL` is usually `https` in production and `http` for local-only testing.
+- `DATABASE_PUBLIC_PROTOCOL` is `http` because Cloudflare handles TLS externally.
 
 ## 4.1. Panel-managed routing settings
 
@@ -126,10 +108,8 @@ After the backend starts, open the Settings page in the panel and configure **Pu
 You can edit there:
 
 - wildcard domain
-- path-based base URL
-- custom URL template
-- public host
-- protocol
+
+The panel keeps the rest of the behavior implicit so you only manage your main domain.
 
 The panel stores those values in the control plane, and the backend uses them when it generates public URLs and when it provisions managed libSQL runtimes.
 
@@ -241,11 +221,8 @@ Use this order if you want the same experience Coolify gives you for apps, but a
   - Mount the Docker socket if you want managed libSQL runtimes per database.
   - Expose the backend on port `3000`.
 3. Open the panel and go to `Settings -> Public Database Routing`.
-  - Set `Wildcard domain` if you want `subdomain.db.example.com`.
-  - Or set `Public base URL` if you want `db.example.com/<database>`.
-  - Or set `URL template` if you need a custom route pattern.
-  - Set `Public host` to the hostname that your ERP backend can resolve.
-  - Set `Protocol` to `https` for production.
+  - Set only `Wildcard domain` to your main domain, such as `db.example.com`.
+  - The panel will generate `http://<database>.db.example.com` for each database.
 4. Create or import a database.
   - Leave the `Subdomain` field blank if you want the backend to auto-generate it.
   - The backend will build the public URL using the panel settings.
@@ -283,6 +260,7 @@ If you want the shortest path to production, use the wildcard domain approach an
 - If Docker is unavailable, the backend falls back to `local-file` mode.
 - `local-file` is functional inside this project, but it is not the same as a remotely consumable libSQL endpoint.
 - The public URL is always derived from the panel routing settings, not manually typed into each database record.
+- The public URL is derived from the wildcard domain in the panel and defaults to HTTP internally.
 
 ## 8. Integration examples
 

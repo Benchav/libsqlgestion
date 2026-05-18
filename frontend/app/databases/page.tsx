@@ -320,12 +320,15 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
             <label className="w-20 text-sm font-medium text-zinc-300">Subdomain</label>
             <input
               type="text"
-              placeholder="optional"
+              placeholder="leave blank to auto-generate"
               value={subdomain}
               onChange={(e) => setSubdomain(e.target.value)}
               className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
             />
           </div>
+          <p className="-mt-2 ml-24 text-xs text-zinc-500">
+            Leave this empty and the backend will generate a public subdomain automatically.
+          </p>
 
           <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 rounded-lg p-1">
             <button type="button" onClick={() => setMode('file')} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${mode === 'file' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
@@ -455,6 +458,9 @@ function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               <option value="remote">Remote Connection</option>
             </select>
           </div>
+          <p className="-mt-2 ml-24 text-xs text-zinc-500">
+            The backend will auto-generate a public subdomain for the new database.
+          </p>
 
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>

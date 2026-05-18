@@ -31,14 +31,19 @@ function buildDatabaseConnectionUrl(database) {
 function buildDatabaseConnectionUrls(database) {
     const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
     const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+    const publicDomain = process.env.DATABASE_PUBLIC_DOMAIN?.trim();
+    const publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
     const runtimeUrls = getRuntimeUrls(database);
     const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
+    const domainUrl = publicDomain && database.subdomain
+        ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
+        : '';
     if (runtimeUrls) {
         const publicUrl = template
             ? applyTemplate(template, database)
             : baseUrl
                 ? `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`
-                : runtimeUrls.publicUrl;
+                : domainUrl || runtimeUrls.publicUrl;
         return {
             publicUrl,
             internalUrl: runtimeUrls.internalUrl,
@@ -56,6 +61,13 @@ function buildDatabaseConnectionUrls(database) {
         if (baseUrl) {
             return {
                 publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+                internalUrl,
+                backendUrl: internalUrl,
+            };
+        }
+        if (domainUrl) {
+            return {
+                publicUrl: domainUrl,
                 internalUrl,
                 backendUrl: internalUrl,
             };
@@ -90,6 +102,13 @@ function buildDatabaseConnectionUrls(database) {
     if (baseUrl && database.subdomain) {
         return {
             publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+            internalUrl,
+            backendUrl: internalUrl,
+        };
+    }
+    if (domainUrl) {
+        return {
+            publicUrl: domainUrl,
             internalUrl,
             backendUrl: internalUrl,
         };

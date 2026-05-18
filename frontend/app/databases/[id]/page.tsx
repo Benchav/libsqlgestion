@@ -269,7 +269,7 @@ export default function DatabaseDetailPage() {
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Public URL</label>
                   <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
-                    <code className="flex-1 break-all whitespace-normal">{publicUrl || 'Configure DATABASE_PUBLIC_BASE_URL or DATABASE_PUBLIC_URL_TEMPLATE'}</code>
+                    <code className="flex-1 break-all whitespace-normal">{publicUrl || 'Configure DATABASE_PUBLIC_DOMAIN, DATABASE_PUBLIC_BASE_URL, or DATABASE_PUBLIC_URL_TEMPLATE'}</code>
                     <button
                       type="button"
                       onClick={() => copyText(publicUrl, 'public-url')}

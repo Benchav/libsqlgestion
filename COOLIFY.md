@@ -36,8 +36,9 @@ SQLITE_STORAGE_ROOT=/app/data/sqlite
 SQLITE_DISCOVERY_PATH=/app/data/sqlite
 SQLITE_DISCOVERY_PROJECT_ID=<project-id>
 SQLITE_DISCOVERY_ADOPT=true
-DATABASE_PUBLIC_URL_TEMPLATE=https://db.example.com/{subdomain}
-DATABASE_PUBLIC_BASE_URL=https://db.example.com
+DATABASE_PUBLIC_DOMAIN=db.example.com
+DATABASE_PUBLIC_URL_TEMPLATE=
+DATABASE_PUBLIC_BASE_URL=
 DATABASE_PUBLIC_HOST=db.example.com
 ```
 
@@ -47,7 +48,9 @@ Notes:
 - `SQLITE_STORAGE_ROOT` is where managed SQLite files are written.
 - `SQLITE_DISCOVERY_PATH` is the directory the backend scans for existing `.db` files.
 - `SQLITE_DISCOVERY_ADOPT=true` copies discovered databases into the managed storage tree so everything stays unified.
-- `DATABASE_PUBLIC_URL_TEMPLATE` and `DATABASE_PUBLIC_BASE_URL` are what let the panel generate a copyable public URL for each database, similar to Turso.
+- `DATABASE_PUBLIC_DOMAIN` is the simplest option for wildcard subdomains such as `db.example.com`, which becomes `https://<subdomain>.db.example.com`.
+- `DATABASE_PUBLIC_URL_TEMPLATE` is still available if you need a custom URL pattern.
+- `DATABASE_PUBLIC_BASE_URL` is optional if you prefer path-based URLs.
 - `DATABASE_PUBLIC_HOST` must resolve to the same host your ERP or editor will use when opening the database connection.
 - The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.
 
@@ -104,6 +107,8 @@ For a Turso-like experience, dedicate a separate database hostname such as `db.e
 
 The database subdomain is metadata in the control plane; routing is handled by Coolify or your proxy layer.
 
+In the create/import dialogs, leave the subdomain field blank to let the backend auto-generate a public subdomain.
+
 ## 7. Migraciones desde código
 
 To apply migrations without entering the panel:
@@ -135,7 +140,7 @@ This works for:
 Example app env:
 
 ```env
-DATABASE_URL=https://db.example.com/mi-db
+DATABASE_URL=https://mi-db.db.example.com
 DATABASE_AUTH_TOKEN=xxxxx
 ```
 

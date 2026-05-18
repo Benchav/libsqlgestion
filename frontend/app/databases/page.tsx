@@ -214,6 +214,12 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!projectId && projects[0]?.id) {
+      setProjectId(projects[0].id);
+    }
+  }, [projectId, projects]);
+
   function deriveNameFromFile(fileName: string) {
     return fileName.replace(/\.[^.]+$/, '').trim();
   }

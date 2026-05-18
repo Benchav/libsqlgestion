@@ -1,3 +1,5 @@
+import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
+
 type ConnectionUrlDatabase = {
   id: string;
   name: string;
@@ -12,8 +14,6 @@ type ConnectionUrls = {
   internalUrl: string;
   backendUrl: string;
 };
-
-import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
 
 function slugify(value: string) {
   return value
@@ -61,9 +61,9 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   if (runtimeUrls) {
     const publicUrl = template
       ? applyTemplate(template, database)
-      : baseUrl
-        ? `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`
-        : domainUrl || runtimeUrls.publicUrl;
+      : domainUrl || baseUrl
+        ? domainUrl || `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`
+        : runtimeUrls.publicUrl;
 
     return {
       publicUrl,
@@ -80,16 +80,16 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
         backendUrl: internalUrl,
       };
     }
-    if (baseUrl) {
+    if (domainUrl) {
       return {
-        publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+        publicUrl: domainUrl,
         internalUrl,
         backendUrl: internalUrl,
       };
     }
-    if (domainUrl) {
+    if (baseUrl) {
       return {
-        publicUrl: domainUrl,
+        publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
         internalUrl,
         backendUrl: internalUrl,
       };
@@ -124,17 +124,17 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     };
   }
 
-  if (baseUrl && database.subdomain) {
+  if (domainUrl) {
     return {
-      publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+      publicUrl: domainUrl,
       internalUrl,
       backendUrl: internalUrl,
     };
   }
 
-  if (domainUrl) {
+  if (baseUrl && database.subdomain) {
     return {
-      publicUrl: domainUrl,
+      publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
       internalUrl,
       backendUrl: internalUrl,
     };
@@ -156,6 +156,8 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
   const settings = getPublicDatabaseSettings();
   const template = settings.template || process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
   const baseUrl = settings.baseUrl || process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+  const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim();
+  const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
 
   const backendUrl = typeof runtime.connectionUrl === 'string'
     ? runtime.connectionUrl
@@ -179,9 +181,19 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
         ? runtime.connectionUrl
         : null;
 
-  if (!publicUrl || !internalUrl || !backendUrl) {
+  const domainUrl = publicDomain && database.subdomain
+    ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
+    : null;
+
+  const effectivePublicUrl = template || baseUrl
+    ? (template ? applyTemplate(template, database) : `${baseUrl!.replace(/\/$/, '')}/${slugify(database.name)}`)
+    : domainUrl || typeof runtime.publicUrl === 'string'
+      ? (domainUrl || runtime.publicUrl)
+      : backendUrl;
+
+  if (!effectivePublicUrl || !internalUrl || !backendUrl) {
     return null;
   }
 
-  return { publicUrl, internalUrl, backendUrl };
+  return { publicUrl: effectivePublicUrl, internalUrl, backendUrl };
 }

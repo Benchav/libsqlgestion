@@ -26,16 +26,40 @@ type UserRecord = {
   roles?: Array<{ role: { name: string } }>;
 };
 
+type PublicDatabaseSettings = {
+  domain: string;
+  template: string;
+  baseUrl: string;
+  host: string;
+  protocol: string;
+};
+
+const DEFAULT_PUBLIC_DATABASE_SETTINGS: PublicDatabaseSettings = {
+  domain: '',
+  template: '',
+  baseUrl: '',
+  host: '',
+  protocol: 'https',
+};
+
 export default function SettingsPage() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
+  const [publicDatabaseSettings, setPublicDatabaseSettings] = useState<PublicDatabaseSettings>(DEFAULT_PUBLIC_DATABASE_SETTINGS);
+  const [loadingPublicDatabaseSettings, setLoadingPublicDatabaseSettings] = useState(true);
+  const [savingPublicDatabaseSettings, setSavingPublicDatabaseSettings] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     apiRequest<{ user: UserInfo }>('/me')
       .then((r) => setUser(r.user))
       .catch(() => {});
+
+    apiRequest<{ settings: PublicDatabaseSettings }>('/settings/public-database')
+      .then((r) => setPublicDatabaseSettings({ ...DEFAULT_PUBLIC_DATABASE_SETTINGS, ...r.settings }))
+      .catch((err: any) => setError(err.message))
+      .finally(() => setLoadingPublicDatabaseSettings(false));
 
     fetch('/api/v1/health', { credentials: 'include' })
       .then((r) => r.json())
@@ -60,6 +84,22 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSavePublicDatabaseSettings() {
+    try {
+      setSavingPublicDatabaseSettings(true);
+      setError('');
+      const result = await apiRequest<{ settings: PublicDatabaseSettings }>('/settings/public-database', {
+        method: 'PUT',
+        body: JSON.stringify(publicDatabaseSettings),
+      });
+      setPublicDatabaseSettings({ ...DEFAULT_PUBLIC_DATABASE_SETTINGS, ...result.settings });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingPublicDatabaseSettings(false);
+    }
+  }
+
   return (
     <AppShell>
       <div className="p-6 max-w-5xl mx-auto w-full">
@@ -75,6 +115,115 @@ export default function SettingsPage() {
         )}
 
         <div className="space-y-6">
+          {/* Public Database Routing */}
+          <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+            <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center gap-2">
+              <Globe size={16} className="text-zinc-400" />
+              <h2 className="font-medium text-zinc-200">Public Database Routing</h2>
+            </div>
+            <div className="p-6 space-y-5">
+              <p className="text-sm text-zinc-400">
+                Configure how the panel generates public URLs for each database. Leave a field blank to fall back to the environment value.
+              </p>
+
+              {loadingPublicDatabaseSettings ? (
+                <div className="text-sm text-zinc-500">Loading routing settings...</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2 flex items-center gap-3">
+                    <label className="w-40 text-sm font-medium text-zinc-300">Mode</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPublicDatabaseSettings((current) => ({ ...current, domain: '', baseUrl: current.baseUrl || '', template: '' }))}
+                        className={`px-3 py-2 rounded-md text-sm border transition-colors ${publicDatabaseSettings.domain ? 'border-zinc-700 text-zinc-300 bg-zinc-800/50' : 'border-zinc-500 bg-zinc-100 text-zinc-900'}`}
+                      >
+                        Path-based
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPublicDatabaseSettings((current) => ({ ...current, baseUrl: '', template: '', domain: current.domain || '' }))}
+                        className={`px-3 py-2 rounded-md text-sm border transition-colors ${publicDatabaseSettings.domain ? 'border-zinc-500 bg-zinc-100 text-zinc-900' : 'border-zinc-700 text-zinc-300 bg-zinc-800/50'}`}
+                      >
+                        Wildcard subdomain
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 md:col-span-2">
+                    <label className="w-40 text-sm font-medium text-zinc-300">Wildcard domain</label>
+                    <input
+                      type="text"
+                      placeholder="db.example.com"
+                      value={publicDatabaseSettings.domain}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, domain: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4 md:col-span-2">
+                    <label className="w-40 text-sm font-medium text-zinc-300">Public base URL</label>
+                    <input
+                      type="text"
+                      placeholder="https://db.example.com"
+                      value={publicDatabaseSettings.baseUrl}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, baseUrl: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4 md:col-span-2">
+                    <label className="w-40 text-sm font-medium text-zinc-300">URL template</label>
+                    <input
+                      type="text"
+                      placeholder="https://db.example.com/{subdomain}"
+                      value={publicDatabaseSettings.template}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, template: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="w-40 text-sm font-medium text-zinc-300">Public host</label>
+                    <input
+                      type="text"
+                      placeholder="db.example.com"
+                      value={publicDatabaseSettings.host}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, host: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="w-40 text-sm font-medium text-zinc-300">Protocol</label>
+                    <select
+                      value={publicDatabaseSettings.protocol}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, protocol: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    >
+                      <option value="https">https</option>
+                      <option value="http">http</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2 flex items-center justify-between gap-3 pt-2">
+                    <p className="text-xs text-zinc-500">
+                      Wildcard subdomains are the closest match to Coolify's public hostname behavior.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleSavePublicDatabaseSettings}
+                      disabled={savingPublicDatabaseSettings}
+                      className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
+                    >
+                      {savingPublicDatabaseSettings ? 'Saving...' : 'Save routing'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* System Health */}
           <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
             <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center gap-2">
@@ -217,6 +366,11 @@ export default function SettingsPage() {
                     ['SQLITE_STORAGE_ROOT', 'Root path for managed database files'],
                     ['SQLITE_DISCOVERY_PATH', 'Directory to scan for unmanaged .db files'],
                     ['SQLITE_DISCOVERY_ADOPT', 'Automatically copy discovered files into managed storage'],
+                    ['DATABASE_PUBLIC_DOMAIN', 'Wildcard parent domain for public database subdomains'],
+                    ['DATABASE_PUBLIC_BASE_URL', 'Path-based public URL fallback'],
+                    ['DATABASE_PUBLIC_URL_TEMPLATE', 'Custom URL template for public database links'],
+                    ['DATABASE_PUBLIC_HOST', 'Host used when publishing managed libSQL runtimes'],
+                    ['DATABASE_PUBLIC_PROTOCOL', 'Protocol used for public database URLs'],
                   ].map(([key, desc]) => (
                     <tr key={key} className="border-b border-zinc-800/40 hover:bg-zinc-800/20">
                       <td className="py-2.5 px-6 font-mono text-xs text-blue-400">{key}</td>

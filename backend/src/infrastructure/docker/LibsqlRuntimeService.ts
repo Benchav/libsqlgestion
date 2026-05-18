@@ -3,6 +3,7 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { Database } from '../../domain/entities/Database';
+import { getPublicDatabaseSettings } from '../../application/settings/PlatformSettingsService';
 
 type DockerJson = Record<string, any>;
 
@@ -33,8 +34,6 @@ type RuntimePaths = {
 export class LibsqlRuntimeService {
   private readonly socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
   private readonly image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
-  private readonly publicHost = this.normalizePublicHost(process.env.DATABASE_PUBLIC_HOST?.trim());
-  private readonly publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
   private readonly backendContainerId = process.env.HOSTNAME?.trim() || '';
 
   isEnabled() {
@@ -54,7 +53,7 @@ export class LibsqlRuntimeService {
       createdContainerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
       const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
       const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-      const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+      const publicUrl = this.buildPublicUrl(publicPort);
       const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
 
       return {
@@ -99,7 +98,7 @@ export class LibsqlRuntimeService {
       createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
       const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
       const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-      const publicUrl = `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+      const publicUrl = this.buildPublicUrl(publicPort);
       const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
       return {
         token: authBundle.token,
@@ -166,12 +165,26 @@ export class LibsqlRuntimeService {
     return value;
   }
 
+  private getPublicHost() {
+    const settings = getPublicDatabaseSettings();
+    return this.normalizePublicHost(settings.host || process.env.DATABASE_PUBLIC_HOST?.trim());
+  }
+
+  private getPublicProtocol() {
+    const settings = getPublicDatabaseSettings();
+    return settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
+  }
+
+  private buildPublicUrl(publicPort: string) {
+    return `${this.getPublicProtocol()}://${this.getPublicHost()}:${publicPort}`;
+  }
+
   private buildInternalUrl(containerName: string, publicPort: string) {
     if (containerName) {
       return `http://${containerName}:8080`;
     }
 
-    return `${this.publicProtocol}://${this.publicHost}:${publicPort}`;
+    return this.buildPublicUrl(publicPort);
   }
 
   private resolvePaths(database: Database, databasePath: string): RuntimePaths {

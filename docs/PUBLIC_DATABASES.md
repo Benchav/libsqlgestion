@@ -228,6 +228,36 @@ Suggested layout:
 - confirm the backend can resolve the public host configured in `DATABASE_PUBLIC_HOST`
 - confirm the same host is reachable from your ERP backend
 
+## 6.1. Exact implementation order
+
+Use this order if you want the same experience Coolify gives you for apps, but applied to databases:
+
+1. Configure Cloudflare DNS first.
+  - Create `panel.example.com` for the panel.
+  - Create `db.example.com` for database traffic.
+  - Optionally create a wildcard record for `*.db.example.com` if your routing model supports it.
+2. Deploy the LibSQLite backend in Coolify.
+  - Mount `/app/data`.
+  - Mount the Docker socket if you want managed libSQL runtimes per database.
+  - Expose the backend on port `3000`.
+3. Open the panel and go to `Settings -> Public Database Routing`.
+  - Set `Wildcard domain` if you want `subdomain.db.example.com`.
+  - Or set `Public base URL` if you want `db.example.com/<database>`.
+  - Or set `URL template` if you need a custom route pattern.
+  - Set `Public host` to the hostname that your ERP backend can resolve.
+  - Set `Protocol` to `https` for production.
+4. Create or import a database.
+  - Leave the `Subdomain` field blank if you want the backend to auto-generate it.
+  - The backend will build the public URL using the panel settings.
+5. Copy the URL and token from the database detail page.
+  - Use them in your ERP backend environment variables.
+  - Treat that pair like the Turso connection tuple.
+6. Test the connection from the ERP backend.
+  - Run a simple `SELECT 1`.
+  - Then run your migrations.
+
+If you want the shortest path to production, use the wildcard domain approach and keep the panel routing fields as the source of truth.
+
 ## 7. Database workflow in the panel
 
 ### Create a database
@@ -252,6 +282,7 @@ Suggested layout:
 - If Docker runtime provisioning succeeds, the panel shows a `docker-libsql` runtime.
 - If Docker is unavailable, the backend falls back to `local-file` mode.
 - `local-file` is functional inside this project, but it is not the same as a remotely consumable libSQL endpoint.
+- The public URL is always derived from the panel routing settings, not manually typed into each database record.
 
 ## 8. Integration examples
 

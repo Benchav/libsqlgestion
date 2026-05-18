@@ -104,9 +104,11 @@ export default function DatabaseDetailPage() {
   const publicUrl = database?.publicConnectionUrl || database?.connectionUrl || database?.url || '';
   const internalUrl = database?.internalConnectionUrl || database?.url || '';
   const backendUrl = database?.backendConnectionUrl || internalUrl || database?.url || '';
-  const envSnippet = publicUrl && revealedToken
-    ? `TURSO_DATABASE_URL=${publicUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
+  const serverUrl = backendUrl || publicUrl;
+  const envSnippet = serverUrl && revealedToken
+    ? `# Next.js API / libsql client\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
     : '';
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Server-side env snippet</label>
 
   if (!database && !error) {
     return (
@@ -350,7 +352,7 @@ export default function DatabaseDetailPage() {
                 <Key size={16} className="text-zinc-400" /> Connecting to your database
               </h3>
               <p className="text-sm text-zinc-400 mb-4">
-                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your application to connect securely.
+                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your Next.js API or server actions, and prefer the backend URL shown above.
               </p>
               <pre className="bg-[#050505] border border-zinc-800 p-4 rounded-lg overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar">
 {`import { createClient } from '@libsql/client';

@@ -234,7 +234,6 @@ export class LibsqlRuntimeService {
   }
 
   private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
-    const dbFileName = path.basename(databasePath);
     const dbDirName = path.dirname(databasePath);
     const hostDirName = await this.resolveHostPath(dbDirName);
 
@@ -242,7 +241,7 @@ export class LibsqlRuntimeService {
       Image: this.image,
       Env: [
         'SQLD_NODE=primary',
-        `SQLD_DB_PATH=/var/lib/sqld/${dbFileName}`,
+        'SQLD_DB_PATH=/var/lib/sqld',
         `SQLD_AUTH_JWT_KEY=${authKeyPem}`,
         'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
       ],

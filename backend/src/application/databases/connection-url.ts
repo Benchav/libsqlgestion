@@ -59,11 +59,14 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     : '';
 
   if (runtimeUrls) {
-    const publicUrl = template
-      ? applyTemplate(template, database)
-      : domainUrl || baseUrl
-        ? domainUrl || `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`
-        : runtimeUrls.publicUrl;
+    let publicUrl = runtimeUrls.publicUrl;
+    if (template) {
+      publicUrl = applyTemplate(template, database);
+    } else if (domainUrl) {
+      publicUrl = domainUrl;
+    } else if (baseUrl) {
+      publicUrl = `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`;
+    }
 
     return {
       publicUrl,
@@ -167,12 +170,6 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
         ? runtime.internalUrl
         : null;
 
-  const publicUrl = template || baseUrl
-    ? (template ? applyTemplate(template, database) : `${baseUrl!.replace(/\/$/, '')}/${slugify(database.name)}`)
-    : typeof runtime.publicUrl === 'string'
-      ? runtime.publicUrl
-      : backendUrl;
-
   const internalUrl = typeof runtime.internalUrl === 'string'
     ? runtime.internalUrl
     : typeof runtime.publicUrl === 'string'
@@ -185,11 +182,18 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
     ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
     : null;
 
-  const effectivePublicUrl = template || baseUrl
-    ? (template ? applyTemplate(template, database) : `${baseUrl!.replace(/\/$/, '')}/${slugify(database.name)}`)
-    : domainUrl || typeof runtime.publicUrl === 'string'
-      ? (domainUrl || runtime.publicUrl)
-      : backendUrl;
+  let effectivePublicUrl: string | null = null;
+  if (template) {
+    effectivePublicUrl = applyTemplate(template, database);
+  } else if (domainUrl) {
+    effectivePublicUrl = domainUrl;
+  } else if (baseUrl) {
+    effectivePublicUrl = `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`;
+  } else if (typeof runtime.publicUrl === 'string') {
+    effectivePublicUrl = runtime.publicUrl;
+  } else {
+    effectivePublicUrl = backendUrl;
+  }
 
   if (!effectivePublicUrl || !internalUrl || !backendUrl) {
     return null;

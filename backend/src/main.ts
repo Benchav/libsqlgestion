@@ -5,11 +5,13 @@ import { AppDataSource } from './infrastructure/db/data-source';
 import { buildServer } from './server';
 import { bootstrapSecurityCatalog } from './application/auth/auth.bootstrap';
 import { DiscoveryService } from './application/databases/DiscoveryService';
+import { bootstrapPlatformSettings } from './application/settings/PlatformSettingsService';
 
 const start = async () => {
   await AppDataSource.initialize();
   await AppDataSource.runMigrations();
   await bootstrapSecurityCatalog();
+  await bootstrapPlatformSettings();
 
   const discoveryProjectId = process.env.SQLITE_DISCOVERY_PROJECT_ID;
   const discoveryPath = process.env.SQLITE_DISCOVERY_PATH;

@@ -4,6 +4,7 @@ import projectRoutes from './controllers/ProjectController';
 import databaseRoutes from './controllers/DatabaseController';
 import auditRoutes from './controllers/AuditController';
 import userRoutes from './controllers/UserController';
+import settingsRoutes from './controllers/SettingsController';
 import schemaRoutes from './controllers/SchemaController';
 import queryRoutes from './controllers/QueryController';
 import provisioningRoutes from './controllers/ProvisioningController';
@@ -18,6 +19,7 @@ export default async function routes(app: FastifyInstance) {
   app.register(databaseRoutes);
   app.register(auditRoutes);
   app.register(userRoutes);
+  app.register(settingsRoutes);
   app.register(schemaRoutes);
   app.register(queryRoutes);
   app.register(provisioningRoutes);

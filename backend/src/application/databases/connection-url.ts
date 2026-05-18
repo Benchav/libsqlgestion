@@ -13,6 +13,8 @@ type ConnectionUrls = {
   backendUrl: string;
 };
 
+import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -44,10 +46,11 @@ export function buildDatabaseConnectionUrl(database: ConnectionUrlDatabase) {
 }
 
 export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): ConnectionUrls {
-  const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
-  const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
-  const publicDomain = process.env.DATABASE_PUBLIC_DOMAIN?.trim();
-  const publicProtocol = process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
+  const settings = getPublicDatabaseSettings();
+  const template = settings.template || process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
+  const baseUrl = settings.baseUrl || process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+  const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim();
+  const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
   const runtimeUrls = getRuntimeUrls(database);
   const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
 
@@ -150,8 +153,9 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
     return null;
   }
 
-  const template = process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
-  const baseUrl = process.env.DATABASE_PUBLIC_BASE_URL?.trim();
+  const settings = getPublicDatabaseSettings();
+  const template = settings.template || process.env.DATABASE_PUBLIC_URL_TEMPLATE?.trim();
+  const baseUrl = settings.baseUrl || process.env.DATABASE_PUBLIC_BASE_URL?.trim();
 
   const backendUrl = typeof runtime.connectionUrl === 'string'
     ? runtime.connectionUrl

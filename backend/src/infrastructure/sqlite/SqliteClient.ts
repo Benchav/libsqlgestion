@@ -69,17 +69,17 @@ export class SqliteClient {
       throw new DatabaseError('SQLITE_CANTOPEN', 'No database file path provided.', false);
     }
 
-    if (!fs.existsSync(filePath)) {
-      throw new DatabaseError('SQLITE_CANTOPEN', `Database file not found: ${filePath}`, false);
-    }
+    const directory = require('path').dirname(filePath);
+    fs.mkdirSync(directory, { recursive: true });
 
-    const stat = fs.statSync(filePath);
-    if (stat.isDirectory()) {
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
       throw new DatabaseError('SQLITE_CANTOPEN', `Path is a directory, not a database file: ${filePath}`, false);
     }
 
+    const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+
     // Validate that the file starts with a valid SQLite header (first 16 bytes)
-    if (stat.size > 0) {
+    if (stat && stat.size > 0) {
       const fd = fs.openSync(filePath, 'r');
       const header = Buffer.alloc(16);
       fs.readSync(fd, header, 0, 16, 0);

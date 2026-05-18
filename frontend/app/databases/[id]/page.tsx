@@ -23,6 +23,12 @@ type DatabaseDetail = {
   project?: { id: string; name: string };
 };
 
+function getRuntimeLabel(metadata?: Record<string, unknown>) {
+  const runtime = metadata?.runtime as { provider?: unknown } | undefined;
+  if (!runtime || typeof runtime.provider !== 'string') return 'unknown';
+  return runtime.provider;
+}
+
 export default function DatabaseDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -105,6 +111,7 @@ export default function DatabaseDetailPage() {
   const internalUrl = database?.internalConnectionUrl || database?.url || '';
   const backendUrl = database?.backendConnectionUrl || internalUrl || database?.url || '';
   const serverUrl = backendUrl || publicUrl;
+  const runtimeLabel = getRuntimeLabel(database?.metadata);
   const envSnippet = serverUrl && revealedToken
     ? `# Next.js API / libsql client\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
     : '';
@@ -188,6 +195,9 @@ export default function DatabaseDetailPage() {
                 <div className="text-sm text-zinc-400 mt-1 flex items-center gap-2">
                   <span className="uppercase tracking-wider font-semibold text-[11px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded">
                     {database?.type}
+                  </span>
+                  <span className="uppercase tracking-wider font-semibold text-[11px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded">
+                    runtime: {runtimeLabel}
                   </span>
                   <span>Created {new Date(database?.createdAt || '').toLocaleDateString()}</span>
                   {database?.project && (
@@ -328,7 +338,7 @@ export default function DatabaseDetailPage() {
 
                 <div>
                   <div className="flex items-center justify-between gap-3 mb-2">
-                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">Turso-style env snippet</label>
+                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">API connection snippet</label>
                     <button
                       type="button"
                       onClick={() => copyText(envSnippet, 'env-snippet')}
@@ -340,8 +350,11 @@ export default function DatabaseDetailPage() {
                     </button>
                   </div>
                   <pre className="bg-[#050505] border border-zinc-800 rounded-lg p-4 overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar whitespace-pre-wrap">
-{envSnippet || 'Reveal the token and configure a public URL template to generate a copy-ready snippet.'}
+{envSnippet || 'Reveal the token and configure a public or backend URL to generate a copy-ready snippet.'}
                   </pre>
+                  <p className="mt-2 text-xs text-zinc-500">
+                    For a Next.js API, use the backend URL first. If the runtime shows `local-file`, the base is not exposed as a remote libSQL endpoint.
+                  </p>
                 </div>
               </div>
             </div>

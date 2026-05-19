@@ -66,7 +66,7 @@ export class QueryService {
 
     try {
       if (isScript) {
-        await client.exec(sql);
+        await client.execAtomic(sql);
         return { ok: true, statementsExecuted: statements.length };
       }
 

@@ -64,6 +64,7 @@ export class SqliteClient {
   public get: (sql: string, params?: unknown[]) => Promise<unknown>;
   public run: (sql: string, params?: unknown[]) => Promise<{ changes: number; lastID: number }>;
   public exec: (sql: string) => Promise<void>;
+  public execAtomic: (sql: string) => Promise<void>;
 
   constructor(filePath: string) {
     // Pre-validate the file path before opening
@@ -121,6 +122,26 @@ export class SqliteClient {
           resolve();
         });
       });
+    this.execAtomic = async (sql: string) => {
+      const normalized = sql.trim().toUpperCase();
+      const hasExplicitTransaction = /^BEGIN\b/.test(normalized) || /^START\s+TRANSACTION\b/.test(normalized);
+
+      if (hasExplicitTransaction) {
+        await this.exec(sql);
+        return;
+      }
+
+      try {
+        await this.exec(`BEGIN IMMEDIATE;\n${sql}\nCOMMIT;`);
+      } catch (error) {
+        try {
+          await this.exec('ROLLBACK;');
+        } catch {
+          // Best-effort rollback if the transaction did not start cleanly.
+        }
+        throw error;
+      }
+    };
   }
 
   /**

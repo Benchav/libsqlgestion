@@ -4,6 +4,7 @@ exports.default = queryRoutes;
 const QueryService_1 = require("../../../application/databases/QueryService");
 const guards_1 = require("../guards");
 const SqliteClient_1 = require("../../../infrastructure/sqlite/SqliteClient");
+const sqlScript_1 = require("../../../application/databases/sqlScript");
 async function queryRoutes(app) {
     const queryService = new QueryService_1.QueryService();
     app.post('/databases/:id/query', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -16,6 +17,9 @@ async function queryRoutes(app) {
             return;
         if (!body.sql)
             return reply.status(400).send({ error: 'sql required' });
+        if ((0, sqlScript_1.isMultiStatementSql)(body.sql) && Array.isArray(body.params) && body.params.length > 0) {
+            return reply.status(400).send({ error: 'parameter binding is not supported for multi-statement scripts' });
+        }
         try {
             const result = await queryService.execute(id, body.sql, body.params ?? []);
             return reply.send(result);

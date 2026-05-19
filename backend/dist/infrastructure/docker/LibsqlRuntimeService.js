@@ -185,6 +185,10 @@ class LibsqlRuntimeService {
         const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
         return settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
     }
+    getPublicDomain() {
+        const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
+        return settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim() || 'localhost';
+    }
     buildPublicUrl(publicPort) {
         return `${this.getPublicProtocol()}://${this.getPublicHost()}:${publicPort}`;
     }
@@ -200,6 +204,7 @@ class LibsqlRuntimeService {
         return {
             databasePath,
             containerName,
+            subdomain: database.subdomain || `db-${database.id}`,
         };
     }
     readRuntimeMetadata(database) {
@@ -243,7 +248,10 @@ class LibsqlRuntimeService {
         await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
     }
     async createAndStartContainer(paths, databasePath, authKeyPem, networkName) {
-        const dbDirName = path_1.default.dirname(databasePath);
+        let dbDirName = path_1.default.dirname(databasePath);
+        if (databasePath.replace(/\\/g, '/').endsWith('dbs/default/data')) {
+            dbDirName = path_1.default.dirname(path_1.default.dirname(path_1.default.dirname(databasePath)));
+        }
         const hostDirName = await this.resolveHostPath(dbDirName);
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
             Image: this.image,
@@ -275,6 +283,9 @@ class LibsqlRuntimeService {
             Labels: {
                 'libsqlite.managed': 'true',
                 'libsqlite.container-name': paths.containerName,
+                'traefik.enable': 'true',
+                [`traefik.http.routers.${paths.containerName}.rule`]: `Host(\`${paths.subdomain}.${this.getPublicDomain()}\`)`,
+                [`traefik.http.services.${paths.containerName}.loadbalancer.server.port`]: '8080',
             },
         });
         const containerId = createResponse.Id;
@@ -359,6 +370,9 @@ class LibsqlRuntimeService {
             const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
             const networks = inspect?.NetworkSettings?.Networks;
             const networkNames = networks ? Object.keys(networks) : [];
+            if (networkNames.includes('coolify')) {
+                return 'coolify';
+            }
             return networkNames[0];
         }
         catch {

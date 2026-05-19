@@ -12,7 +12,7 @@ class SqliteStorageService {
         this.storageRoot = storageRoot || process.env.SQLITE_STORAGE_ROOT || path_1.default.join(process.cwd(), 'data', 'sqlite');
     }
     managedDatabasePath(projectId, databaseId) {
-        return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
+        return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'dbs', 'default', 'data');
     }
     managedProjectDirectory(projectId) {
         return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases');

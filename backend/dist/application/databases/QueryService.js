@@ -93,37 +93,13 @@ class QueryService {
         }
         try {
             if (isScript) {
-                const statementResults = [];
-                let rows;
-                let rowsAffected = 0;
-                let lastInsertRowid;
-                await client.exec('BEGIN IMMEDIATE');
-                try {
-                    for (const [index, statement] of statements.entries()) {
-                        if (READ_ONLY_REGEX.test(statement)) {
-                            const resultRows = await client.all(statement, []);
-                            statementResults.push({ index: index + 1, sql: statement, kind: 'read', rows: resultRows });
-                            rows = resultRows;
-                            continue;
-                        }
-                        const result = await client.run(statement, []);
-                        statementResults.push({
-                            index: index + 1,
-                            sql: statement,
-                            kind: 'write',
-                            rowsAffected: result.changes,
-                            lastInsertRowid: result.lastID,
-                        });
-                        rowsAffected += result.changes;
-                        lastInsertRowid = result.lastID;
-                    }
-                    await client.exec('COMMIT');
-                }
-                catch (error) {
-                    await client.exec('ROLLBACK').catch(() => undefined);
-                    throw error;
-                }
-                return { ok: true, statementsExecuted: statements.length, rows, rowsAffected, lastInsertRowid, statementResults };
+                await client.execAtomic(sql);
+                const statementResults = statements.map((statement, index) => ({
+                    index: index + 1,
+                    sql: statement,
+                    kind: READ_ONLY_REGEX.test(statement) ? 'read' : 'write',
+                }));
+                return { ok: true, statementsExecuted: statements.length, statementResults };
             }
             if (READ_ONLY_REGEX.test(sql)) {
                 const rows = await client.all(sql, params);

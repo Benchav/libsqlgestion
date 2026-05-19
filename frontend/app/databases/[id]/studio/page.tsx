@@ -7,7 +7,7 @@ import { AppShell } from '../../../../components/AppShell';
 import { TableSidebar } from '../../../../components/studio/TableSidebar';
 import { DataGrid } from '../../../../components/studio/DataGrid';
 import { SqlRunner } from '../../../../components/studio/SqlRunner';
-import { ChevronRight, X } from 'lucide-react';
+import { ChevronRight, X, AlertTriangle } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
 type TableSchema = { table: string; kind: 'table' | 'view'; rowCount: number; columns: ColumnMeta[]; foreignKeys: unknown[] };
@@ -68,6 +68,9 @@ export default function StudioPage() {
 
   const [error, setError] = useState('');
   const [schemaLoading, setSchemaLoading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deletingTable, setDeletingTable] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const visibleSchemas = tables.filter((schema) => schema.kind === activeKind);
   const currentTableSchema = tables.find((schema) => schema.table === activeTable);
@@ -401,6 +404,34 @@ export default function StudioPage() {
     }
   }
 
+  async function handleDeleteTable(tableName: string) {
+    setDeleteTarget(tableName);
+    setDeleteError('');
+  }
+
+  async function confirmDeleteTable() {
+    if (!deleteTarget || !activeTable) return;
+
+    setDeletingTable(true);
+    setDeleteError('');
+    try {
+      await apiRequest(`/databases/${dbId}/schema/tables/${encodeURIComponent(deleteTarget)}`, {
+        method: 'DELETE',
+      });
+
+      setDeleteTarget(null);
+      await loadSchema();
+      setActiveTable((current) => (current === deleteTarget ? null : current));
+      setPage(0);
+      setRows([]);
+      setTotalRows(0);
+    } catch (err: any) {
+      setDeleteError(err.message);
+    } finally {
+      setDeletingTable(false);
+    }
+  }
+
   return (
     <AppShell>
       <div className="flex flex-col h-full bg-[#0a0a0a] text-zinc-300">
@@ -437,6 +468,7 @@ export default function StudioPage() {
             onSelectKind={handleSelectKind}
             onSelectTab={setActiveTab}
             onRefresh={loadSchema}
+            onDeleteTable={handleDeleteTable}
             loading={schemaLoading}
           />
 
@@ -511,6 +543,59 @@ export default function StudioPage() {
       {activeTab === 'data' && currentTableSchema?.kind === 'view' && (
         <div className="fixed bottom-4 right-4 rounded-lg border border-zinc-800 bg-[#0f0f0f] px-4 py-3 text-sm text-zinc-300 shadow-2xl">
           Views are read-only. Use SQL if you need to modify underlying tables.
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-red-500/30 bg-[#120f10] shadow-2xl">
+            <div className="flex items-start gap-3 border-b border-red-500/20 px-6 py-5">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-zinc-100">Delete table</h3>
+                <p className="mt-1 text-sm text-zinc-400">
+                  This will permanently remove <span className="font-mono text-zinc-200">{deleteTarget}</span> and all of its data.
+                </p>
+              </div>
+            </div>
+
+            {deleteError && (
+              <div className="mx-6 mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="px-6 py-5">
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                Warning: this action cannot be undone. Confirm only if you are sure.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-red-500/20 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!deletingTable) {
+                    setDeleteTarget(null);
+                    setDeleteError('');
+                  }
+                }}
+                className="rounded-lg border border-zinc-800 bg-[#0f0f0f] px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteTable}
+                disabled={deletingTable}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-400 disabled:opacity-60"
+              >
+                {deletingTable ? 'Deleting...' : 'Delete table'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </AppShell>

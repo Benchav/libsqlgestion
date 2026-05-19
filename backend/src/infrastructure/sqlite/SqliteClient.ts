@@ -63,6 +63,7 @@ export class SqliteClient {
   public all: (sql: string, params?: unknown[]) => Promise<unknown[]>;
   public get: (sql: string, params?: unknown[]) => Promise<unknown>;
   public run: (sql: string, params?: unknown[]) => Promise<{ changes: number; lastID: number }>;
+  public exec: (sql: string) => Promise<void>;
 
   constructor(filePath: string) {
     // Pre-validate the file path before opening
@@ -111,6 +112,13 @@ export class SqliteClient {
         this.db.run(sql, params, function (this: sqlite3.RunResult, error: Error | null) {
           if (error) return reject(DatabaseError.from(error));
           resolve({ changes: this.changes ?? 0, lastID: this.lastID ?? 0 });
+        });
+      });
+    this.exec = (sql: string) =>
+      new Promise((resolve, reject) => {
+        this.db.exec(sql, (error: Error | null) => {
+          if (error) return reject(DatabaseError.from(error));
+          resolve();
         });
       });
   }

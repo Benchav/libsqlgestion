@@ -63,7 +63,7 @@ export default function StudioPage() {
   const [editError, setEditError] = useState('');
 
   // SQL runner state
-  const [sqlResult, setSqlResult] = useState<{ ok: boolean; rows?: unknown[]; error?: string; changes?: number } | null>(null);
+  const [sqlResult, setSqlResult] = useState<{ ok: boolean; rows?: unknown[]; error?: string; changes?: number; statementsExecuted?: number } | null>(null);
   const [sqlLoading, setSqlLoading] = useState(false);
 
   const [error, setError] = useState('');
@@ -381,7 +381,7 @@ export default function StudioPage() {
     setSqlLoading(true);
     setSqlResult(null);
     try {
-      const result = await apiRequest<{ ok: boolean; rows?: unknown[]; result?: { changes: number } }>(`/databases/${dbId}/query`, {
+      const result = await apiRequest<{ ok: boolean; rows?: unknown[]; result?: { changes: number }; statementsExecuted?: number }>(`/databases/${dbId}/query`, {
         method: 'POST',
         body: JSON.stringify({ sql }),
       });
@@ -389,6 +389,7 @@ export default function StudioPage() {
         ok: result.ok !== false,
         rows: result.rows,
         changes: result.result?.changes,
+        statementsExecuted: result.statementsExecuted,
       });
       loadSchema();
       if (activeTable) loadTableData();

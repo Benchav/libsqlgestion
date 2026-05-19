@@ -11,6 +11,7 @@ type Props = {
     rows?: unknown[];
     error?: string;
     changes?: number;
+    statementsExecuted?: number;
   } | null;
 };
 
@@ -129,7 +130,12 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
               ) : (
                 <div className="flex items-center gap-2 px-4 py-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm">
                   <CheckCircle2 size={16} />
-                  <span>Query executed successfully{result.changes !== undefined ? ` (${result.changes} rows affected)` : ''}</span>
+                  <span>
+                    {result.statementsExecuted && result.statementsExecuted > 1
+                      ? `Script executed successfully (${result.statementsExecuted} statements)`
+                      : 'Query executed successfully'}
+                    {result.changes !== undefined ? ` (${result.changes} rows affected)` : ''}
+                  </span>
                 </div>
               )}
             </>

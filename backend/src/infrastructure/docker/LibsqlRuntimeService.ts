@@ -29,6 +29,7 @@ type RuntimeBundle = {
 type RuntimePaths = {
   databasePath: string;
   containerName: string;
+  subdomain: string;
 };
 
 export class LibsqlRuntimeService {
@@ -175,6 +176,11 @@ export class LibsqlRuntimeService {
     return settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'http';
   }
 
+  private getPublicDomain() {
+    const settings = getPublicDatabaseSettings();
+    return settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim() || 'localhost';
+  }
+
   private buildPublicUrl(publicPort: string) {
     return `${this.getPublicProtocol()}://${this.getPublicHost()}:${publicPort}`;
   }
@@ -194,6 +200,7 @@ export class LibsqlRuntimeService {
     return {
       databasePath,
       containerName,
+      subdomain: database.subdomain || `db-${database.id}`,
     };
   }
 
@@ -280,6 +287,9 @@ export class LibsqlRuntimeService {
       Labels: {
         'libsqlite.managed': 'true',
         'libsqlite.container-name': paths.containerName,
+        'traefik.enable': 'true',
+        [`traefik.http.routers.${paths.containerName}.rule`]: `Host(\`${paths.subdomain}.${this.getPublicDomain()}\`)`,
+        [`traefik.http.services.${paths.containerName}.loadbalancer.server.port`]: '8080',
       },
     });
 

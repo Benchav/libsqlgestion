@@ -391,6 +391,11 @@ export class LibsqlRuntimeService {
       const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
       const networks = inspect?.NetworkSettings?.Networks;
       const networkNames = networks ? Object.keys(networks) : [];
+      
+      if (networkNames.includes('coolify')) {
+        return 'coolify';
+      }
+      
       return networkNames[0];
     } catch {
       return undefined;

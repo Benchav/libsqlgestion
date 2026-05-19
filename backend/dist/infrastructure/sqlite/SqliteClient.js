@@ -100,6 +100,33 @@ class SqliteClient {
                 resolve({ changes: this.changes ?? 0, lastID: this.lastID ?? 0 });
             });
         });
+        this.exec = (sql) => new Promise((resolve, reject) => {
+            this.db.exec(sql, (error) => {
+                if (error)
+                    return reject(DatabaseError.from(error));
+                resolve();
+            });
+        });
+        this.execAtomic = async (sql) => {
+            const normalized = sql.trim().toUpperCase();
+            const hasExplicitTransaction = /^BEGIN\b/.test(normalized) || /^START\s+TRANSACTION\b/.test(normalized);
+            if (hasExplicitTransaction) {
+                await this.exec(sql);
+                return;
+            }
+            try {
+                await this.exec(`BEGIN IMMEDIATE;\n${sql}\nCOMMIT;`);
+            }
+            catch (error) {
+                try {
+                    await this.exec('ROLLBACK;');
+                }
+                catch {
+                    // Best-effort rollback if the transaction did not start cleanly.
+                }
+                throw error;
+            }
+        };
     }
     /**
      * Validates that the database file is not corrupted by running PRAGMA integrity_check.

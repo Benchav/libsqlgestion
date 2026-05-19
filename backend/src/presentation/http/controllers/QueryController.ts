@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { QueryService } from '../../../application/databases/QueryService';
 import { ensurePermission, ensureDatabaseAccess } from '../guards';
 import { DatabaseError } from '../../../infrastructure/sqlite/SqliteClient';
+import { isMultiStatementSql } from '../../../application/databases/sqlScript';
 
 export default async function queryRoutes(app: FastifyInstance) {
   const queryService = new QueryService();
@@ -13,6 +14,9 @@ export default async function queryRoutes(app: FastifyInstance) {
     const access = await ensureDatabaseAccess(request, reply, id);
     if (!access) return;
     if (!body.sql) return reply.status(400).send({ error: 'sql required' });
+    if (isMultiStatementSql(body.sql) && Array.isArray(body.params) && body.params.length > 0) {
+      return reply.status(400).send({ error: 'parameter binding is not supported for multi-statement scripts' });
+    }
 
     try {
       const result = await queryService.execute(id, body.sql, body.params ?? []);

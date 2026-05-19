@@ -12,6 +12,7 @@ type Props = {
     error?: string;
     changes?: number;
     statementsExecuted?: number;
+    statementResults?: Array<{ index: number; sql: string; kind: 'read' | 'write'; rows?: unknown[]; rowsAffected?: number; lastInsertRowid?: unknown }>;
   } | null;
 };
 
@@ -128,14 +129,40 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 px-4 py-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm">
-                  <CheckCircle2 size={16} />
-                  <span>
-                    {result.statementsExecuted && result.statementsExecuted > 1
-                      ? `Script executed successfully (${result.statementsExecuted} statements)`
-                      : 'Query executed successfully'}
-                    {result.changes !== undefined ? ` (${result.changes} rows affected)` : ''}
-                  </span>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 px-4 py-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm">
+                    <CheckCircle2 size={16} />
+                    <span>
+                      {result.statementsExecuted && result.statementsExecuted > 1
+                        ? `Script executed successfully (${result.statementsExecuted} statements)`
+                        : 'Query executed successfully'}
+                      {result.changes !== undefined ? ` (${result.changes} rows affected)` : ''}
+                    </span>
+                  </div>
+
+                  {result.statementResults && result.statementResults.length > 1 && (
+                    <div className="border border-zinc-800/80 rounded-lg overflow-hidden bg-[#09090b]">
+                      <div className="px-3 py-2 border-b border-zinc-800/80 bg-[#09090b] text-xs font-medium text-zinc-400">
+                        Statement summary
+                      </div>
+                      <div className="max-h-56 overflow-auto custom-scrollbar divide-y divide-zinc-800/60">
+                        {result.statementResults.map((step) => (
+                          <div key={step.index} className="px-3 py-2 text-xs text-zinc-300">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-medium text-zinc-100">#{step.index}</span>
+                              <span className="text-zinc-500 uppercase tracking-wider">{step.kind}</span>
+                            </div>
+                            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-zinc-400">{step.sql}</pre>
+                            <div className="mt-1 text-zinc-500">
+                              {step.kind === 'read'
+                                ? `${Array.isArray(step.rows) ? step.rows.length : 0} row(s)`
+                                : `${step.rowsAffected ?? 0} row(s) affected`}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>

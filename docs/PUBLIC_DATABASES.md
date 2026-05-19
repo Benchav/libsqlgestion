@@ -21,21 +21,21 @@ When you create a database, LibSQLite orchestrates the following:
 
 To expose your local Traefik proxy securely without opening ports on your router or VPS, use **Cloudflare Tunnels**.
 
-###  CRITICAL: The Cloudflare Free Plan "SSL Trap"
+### 🚨 CRITICAL: The Cloudflare Free Plan "SSL Trap"
 If you are on the **Free Plan** of Cloudflare, the provided Universal SSL certificate **only covers one level of subdomains** (e.g., `*.ibarrera.site`). 
--  `https://inventario.ibarrera.site` (Covered)
--  `https://inventario.db.ibarrera.site` (NOT covered. Will throw an SSL Error).
+- ✅ `https://inventario.ibarrera.site` (Covered)
+- ❌ `https://inventario.db.ibarrera.site` (NOT covered. Will throw an SSL Error).
 
-**Solution**: Do not use `db.yourdomain.com` as your routing domain in LibSQLite. Use your root domain (`yourdomain.com`). This ensures generated URLs like `https://my-db.yourdomain.com` are protected by Free SSL.
+**GOLDEN RULE**: Do not use `db.yourdomain.com` as your routing domain in LibSQLite if you are on the Free Plan. Use your root domain (`yourdomain.com`). This ensures generated URLs like `https://my-db.yourdomain.com` are protected by Free SSL natively.
 
-### Tunnel Routing Rules
-In your Cloudflare Zero Trust Dashboard, under **Public Hostnames**, create a wildcard route:
+### Tunnel Routing Rules (The "Secret Sauce")
+In your Cloudflare Zero Trust Dashboard, under **Public Hostnames**, you must route the wildcard domain directly to **Traefik**, NOT to the internal database ports.
 
 | Public Hostname | Service |
 | :--- | :--- |
 | `*.yourdomain.com` | `http://127.0.0.1:80` (or your Traefik host IP) |
 
-*Why port 80?* Because Cloudflare Tunnel must forward the traffic to **Traefik**, not to the individual databases. Traefik listens on port 80, reads the `Host` header (e.g., `my-db.yourdomain.com`), and acts as the smart bridge to the correct random port of the `libsql-server` container.
+*Why port 80?* Cloudflare Tunnel must forward the traffic to **Traefik**. Traefik lives on port 80, reads the `Host` header (e.g., `my-db.yourdomain.com`), and acts as the smart bridge, internally routing the traffic to the dynamically generated port of the correct `libsql-server` container.
 
 ## 3. Coolify Setup
 
@@ -74,15 +74,15 @@ You must mount `/app/data` to a persistent volume in Coolify.
 
 *Note: In previous versions, databases were stored as flat `.sqlite` files. This caused architecture conflicts where the panel read the file, but `libsql-server` served an empty internal database. This has been permanently fixed.*
 
-## 4. LibSQLite Panel Configuration
+## 4. LibSQLite Panel Configuration (Crucial Step)
 
-Once deployed, open your LibSQLite Panel:
+Once deployed, open your LibSQLite Panel to tell the backend how to build your public URLs and Traefik rules:
 
 1. Go to **Settings > Public Database Routing**.
-2. Set the **Wildcard domain** to your root domain (e.g., `yourdomain.com`).
-3. Set the **Protocol** to `https`.
+2. **Wildcard domain**: Set this strictly to your root domain (e.g., `yourdomain.com`) to avoid the Cloudflare Free Plan SSL limit mentioned above.
+3. **Protocol**: Set this to `https` (Cloudflare handles the secure termination).
 
-Now, whenever you create or import a database, the panel will generate a `PUBLIC URL` like `https://[database-name].yourdomain.com`.
+Now, whenever you create or import a database, the panel will dynamically inject Traefik labels into the container using this domain and generate a public `URL` like `https://[database-name].yourdomain.com`.
 
 ## 5. Using the Database in your ERP / API
 

@@ -27,21 +27,21 @@
 
 ## What is LibSQLite?
 
-LibSQLite brings the modern developer experience of serverless databases to your own infrastructure. It is a comprehensive **database management platform** designed to orchestrate and interface with SQLite and libSQL files.
+LibSQLite brings the modern developer experience of serverless databases to your own infrastructure. It is a powerful, **100% self-hosted open-source alternative to Turso**, designed to orchestrate, manage, and scale SQLite and libSQL databases at the edge.
 
-Whether you want to manage local `.db` files or connect to remote libSQL edge nodes, LibSQLite provides a beautiful, secure, and intuitive web panel to govern your entire data plane.
+Instead of paying for managed cloud services or struggling with monolithic setups, LibSQLite provides a zero-configuration control plane that dynamically spins up isolated `libsql-server` containers, automatically routes traffic via Traefik, and exposes them securely through Cloudflare Tunnels using single-level wildcard subdomains.
 
 <br>
 
 ## Key Features
 
-- **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dashboard.
-- **libSQL Remote Ready**: Native support for registering and managing libSQL remote databases via secure tokens.
-- **Auto-Discovery & Import**: Effortlessly discover `.db` files mounted from your server or import existing ones.
-- **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface.
+- **Dynamic Docker Orchestration**: Automatically provisions isolated `libsql-server` containers for every database you create or import.
+- **Zero-Config Edge Routing**: Native integration with **Traefik** and **Cloudflare Tunnels**. Expose databases instantly to the public internet securely (e.g., `https://my-db.yourdomain.com`).
+- **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dark-mode dashboard.
+- **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface (synchronizes perfectly with your active `libsql-server` instances).
 - **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
-- **Enterprise-Grade Security**: Full RBAC, encrypted token storage, comprehensive audit logging, and `HttpOnly` session hardening.
-- **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify** using Docker.
+- **Enterprise-Grade Security**: Full RBAC, encrypted token storage via ED25519 JWT keys, comprehensive audit logging, and `HttpOnly` session hardening.
+- **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify**.
 
 <br>
 
@@ -81,20 +81,22 @@ npm run dev
 
 ## Architecture Overview
 
-At its core, LibSQLite enforces a strict separation between the **Control Plane** (Backend metadata and management) and the **Data Plane** (Actual SQLite/libSQL files).
+At its core, LibSQLite enforces a strict separation between the **Control Plane** (Backend metadata and management) and the **Data Plane** (Actual SQLite/libSQL files and orchestrated containers).
 
 ```mermaid
 graph TD;
-    A[Frontend Panel / Studio] -->|Proxy API over HTTPs| B(Backend Control Plane);
-    B -->|TypeORM| C[(control.db - Metadata)];
-    B -->|@libsql/client| D[(Local SQLite Files)];
-    B -->|@libsql/client| E((Remote libSQL Nodes));
+    A[Cloudflare Tunnel / Edge] -->|Wildcard Subdomains| B(Traefik Proxy);
+    B -->|Dynamic HTTP Routing| C((Isolated libsql-server Containers));
+    B -->|Panel Traffic| D[LibSQLite Control Plane];
+    D -->|Manages| C;
+    D -->|Reads/Writes| E[(Shared sqlite data volume)];
+    C -->|Serves| E;
 ```
 
-**Storage Layout**
-Managed SQLite files are securely structured within your storage root (configurable via `SQLITE_STORAGE_ROOT`):
+**Storage Layout (Optimized for `libsql-server`)**
+Managed SQLite files are securely structured so that the built-in Studio and the orchestrated Docker containers remain in perfect sync:
 ```text
-data/sqlite/projects/<projectId>/databases/<databaseId>.db
+data/sqlite/projects/<projectId>/databases/<databaseId>/dbs/default/data
 ```
 
 <br>

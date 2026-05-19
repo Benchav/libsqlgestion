@@ -155,8 +155,12 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
                             <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-zinc-400">{step.sql}</pre>
                             <div className="mt-1 text-zinc-500">
                               {step.kind === 'read'
-                                ? `${Array.isArray(step.rows) ? step.rows.length : 0} row(s)`
-                                : `${step.rowsAffected ?? 0} row(s) affected`}
+                                ? Array.isArray(step.rows)
+                                  ? `${step.rows.length} row(s)`
+                                  : 'read statement executed'
+                                : typeof step.rowsAffected === 'number'
+                                  ? `${step.rowsAffected} row(s) affected`
+                                  : 'statement executed'}
                             </div>
                           </div>
                         ))}

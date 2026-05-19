@@ -40,6 +40,9 @@ function classifyError(error) {
     if (msg.includes('no such column')) {
         return { code: 'SQLITE_NO_COLUMN', message: error?.message || 'The specified column does not exist.', recoverable: true };
     }
+    if (msg.includes('misuse')) {
+        return { code: 'SQLITE_MISUSE', message: 'SQLite reported an invalid API usage while executing the script. Try running the script in smaller batches.', recoverable: true };
+    }
     return { code: 'SQLITE_ERROR', message: error?.message || 'An unknown database error occurred.', recoverable: false };
 }
 class DatabaseError extends Error {

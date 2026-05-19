@@ -254,7 +254,10 @@ export class LibsqlRuntimeService {
   }
 
   private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
-    const dbDirName = path.dirname(databasePath);
+    let dbDirName = path.dirname(databasePath);
+    if (databasePath.replace(/\\/g, '/').endsWith('dbs/default/data')) {
+      dbDirName = path.dirname(path.dirname(path.dirname(databasePath)));
+    }
     const hostDirName = await this.resolveHostPath(dbDirName);
 
     const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {

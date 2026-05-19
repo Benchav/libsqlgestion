@@ -10,7 +10,7 @@ export class SqliteStorageService {
   }
 
   managedDatabasePath(projectId: string, databaseId: string) {
-    return path.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
+    return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'dbs', 'default', 'data');
   }
 
   managedProjectDirectory(projectId: string) {

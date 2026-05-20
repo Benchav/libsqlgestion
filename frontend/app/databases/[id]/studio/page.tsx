@@ -491,9 +491,13 @@ export default function StudioPage() {
     const target = contextMenu.target;
 
     if (target.type === 'table') {
+      const schema = tables.find((entry) => entry.table === target.table);
+      if (!schema) return [];
       return [
         { label: 'Rename table', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameTable(target.table) },
-        { label: 'Delete table', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteTable(target.table) },
+        ...(schema.kind === 'table'
+          ? [{ label: 'Delete table', icon: <Trash2 size={14} />, danger: true, separatorBefore: true, onClick: () => handleDeleteTable(target.table) }]
+          : []),
       ];
     }
 
@@ -502,7 +506,7 @@ export default function StudioPage() {
       return [
         { label: 'Rename column', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameColumn(target.column) },
         { label: 'Change type', icon: <Settings2 size={14} />, onClick: () => handleOpenChangeColumnType(target.column) },
-        { label: 'Delete column', icon: <Trash2 size={14} />, danger: true, onClick: () => handleOpenDeleteColumn(target.column) },
+        { label: 'Delete column', icon: <Trash2 size={14} />, danger: true, separatorBefore: true, onClick: () => handleOpenDeleteColumn(target.column) },
       ];
     }
 
@@ -510,7 +514,7 @@ export default function StudioPage() {
 
     return [
       { label: 'Edit row', icon: <Pencil size={14} />, onClick: () => handleOpenEditRow(target.rowIndex) },
-      { label: 'Delete row', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteRow(target.rowIndex) },
+      { label: 'Delete row', icon: <Trash2 size={14} />, danger: true, separatorBefore: true, onClick: () => handleDeleteRow(target.rowIndex) },
     ];
   }, [contextMenu.target, currentTableSchema]);
 

@@ -1,18 +1,30 @@
 "use client";
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { apiRequest } from '../../../../lib/api';
 import { AppShell } from '../../../../components/AppShell';
 import { TableSidebar } from '../../../../components/studio/TableSidebar';
 import { DataGrid } from '../../../../components/studio/DataGrid';
+import { ContextMenu, type ContextMenuItem } from '../../../../components/studio/ContextMenu';
 import { SqlRunner } from '../../../../components/studio/SqlRunner';
-import { ChevronRight, X, AlertTriangle, Pencil, Plus } from 'lucide-react';
+import { ChevronRight, X, AlertTriangle, Pencil, Plus, Trash2, Edit3, Settings2 } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
 type TableSchema = { table: string; kind: 'table' | 'view'; rowCount: number; columns: ColumnMeta[]; foreignKeys: unknown[] };
 type DatabaseInfo = { id: string; name: string; type: string; status: string };
 type RowMode = 'insert' | 'edit';
+type MenuTarget =
+  | { type: 'table'; table: string }
+  | { type: 'column'; column: string }
+  | { type: 'row'; rowIndex: number };
+
+type MenuState = {
+  open: boolean;
+  x: number;
+  y: number;
+  target: MenuTarget | null;
+};
 
 function getColumnInputKind(column: ColumnMeta): 'text' | 'number' | 'date' | 'datetime-local' | 'checkbox' {
   const type = (column.type || '').toUpperCase();
@@ -86,6 +98,7 @@ export default function StudioPage() {
   const [columnRiskTarget, setColumnRiskTarget] = useState('');
   const [columnRiskType, setColumnRiskType] = useState('TEXT');
   const [selectedColumn, setSelectedColumn] = useState('');
+  const [contextMenu, setContextMenu] = useState<MenuState>({ open: false, x: 0, y: 0, target: null });
 
   const visibleSchemas = tables.filter((schema) => schema.kind === activeKind);
   const currentTableSchema = tables.find((schema) => schema.table === activeTable);
@@ -465,6 +478,40 @@ export default function StudioPage() {
     setColumnError('');
   }
 
+  const closeContextMenu = useCallback(() => {
+    setContextMenu((current) => ({ ...current, open: false, target: null }));
+  }, []);
+
+  const openContextMenu = useCallback((x: number, y: number, target: MenuTarget) => {
+    setContextMenu({ open: true, x, y, target });
+  }, []);
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!contextMenu.target) return [];
+
+    if (contextMenu.target.type === 'table') {
+      return [
+        { label: 'Rename table', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameTable(contextMenu.target.table) },
+        { label: 'Delete table', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteTable(contextMenu.target.table) },
+      ];
+    }
+
+    if (contextMenu.target.type === 'column') {
+      return [
+        { label: 'Rename column', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameColumn(contextMenu.target.column) },
+        { label: 'Change type', icon: <Settings2 size={14} />, onClick: () => handleOpenChangeColumnType(contextMenu.target.column) },
+        { label: 'Delete column', icon: <Trash2 size={14} />, danger: true, onClick: () => handleOpenDeleteColumn(contextMenu.target.column) },
+      ];
+    }
+
+    if (!currentTableSchema || currentTableSchema.kind !== 'table') return [];
+
+    return [
+      { label: 'Edit row', icon: <Pencil size={14} />, onClick: () => handleOpenEditRow(contextMenu.target.rowIndex) },
+      { label: 'Delete row', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteRow(contextMenu.target.rowIndex) },
+    ];
+  }, [contextMenu.target, currentTableSchema]);
+
   async function confirmDeleteTable() {
     if (!deleteTarget || !activeTable) return;
 
@@ -608,7 +655,7 @@ export default function StudioPage() {
             onSelectKind={handleSelectKind}
             onSelectTab={setActiveTab}
             onRefresh={loadSchema}
-            onDeleteTable={handleDeleteTable}
+            onTableMenu={(table, event) => openContextMenu(event.clientX, event.clientY, { type: 'table', table })}
             loading={schemaLoading}
           />
 
@@ -659,6 +706,10 @@ export default function StudioPage() {
                       key={column.name}
                       type="button"
                       onClick={() => setSelectedColumn(column.name)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        openContextMenu(event.clientX, event.clientY, { type: 'column', column: column.name });
+                      }}
                       className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${selectedColumn === column.name ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-zinc-800 bg-[#0f0f0f] text-zinc-300 hover:bg-zinc-800'}`}
                     >
                       <div className="font-medium">{column.name}</div>
@@ -696,6 +747,8 @@ export default function StudioPage() {
                 onAddRow={handleAddRow}
                 onInsertRow={handleOpenInsertRow}
                 loading={gridLoading}
+                onColumnMenu={(column, event) => openContextMenu(event.clientX, event.clientY, { type: 'column', column })}
+                onRowMenu={(rowIndex, event) => openContextMenu(event.clientX, event.clientY, { type: 'row', rowIndex })}
               />
             ) : activeTab === 'data' && !activeTable ? (
               <div className="h-full flex items-center justify-center text-zinc-500 text-sm">
@@ -1032,6 +1085,14 @@ export default function StudioPage() {
           </div>
         </div>
       )}
+
+      <ContextMenu
+        open={contextMenu.open}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={contextMenuItems}
+        onClose={closeContextMenu}
+      />
     </AppShell>
   );
 }

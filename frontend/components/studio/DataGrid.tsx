@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, type MouseEvent } from 'react';
 import { LayoutGrid, Database, ChevronLeft, ChevronRight, Filter, ArrowUpDown, Columns, Plus, MoreVertical, Key, X, Pencil } from 'lucide-react';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 
 type ColumnMeta = { name: string; type: string; notnull: number; pk: number };
 
@@ -68,6 +69,7 @@ export function DataGrid({
 }: Props) {
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [cellMenu, setCellMenu] = useState<{ open: boolean; x: number; y: number; items: ContextMenuItem[] }>({ open: false, x: 0, y: 0, items: [] });
   const inputRef = useRef<HTMLInputElement | null>(null);
   const commitLockRef = useRef(false);
 
@@ -122,6 +124,10 @@ export function DataGrid({
     if (t.includes('BLOB')) return 'text-red-400';
     if (t.includes('DATE') || t.includes('TIME')) return 'text-emerald-400';
     return 'text-zinc-500';
+  }, []);
+
+  const closeCellMenu = useCallback(() => {
+    setCellMenu((current) => ({ ...current, open: false }));
   }, []);
 
   const formatCell = useCallback((value: unknown) => {
@@ -287,6 +293,23 @@ export function DataGrid({
                         onDoubleClick={() => {
                           if (!readOnly) handleStartEdit(rowIdx, col.name, cellValue);
                         }}
+                        onContextMenu={(event) => {
+                          if (readOnly) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setCellMenu({
+                            open: true,
+                            x: event.clientX,
+                            y: event.clientY,
+                            items: [
+                              {
+                                label: 'Edit cell',
+                                icon: <Pencil size={14} />,
+                                onClick: () => handleStartEdit(rowIdx, col.name, cellValue),
+                              },
+                            ],
+                          });
+                        }}
                       >
                         {isEditing && !readOnly ? (
                               getColumnInputKind(col) === 'checkbox' ? (
@@ -367,6 +390,13 @@ export function DataGrid({
           </tbody>
         </table>
       </div>
+      <ContextMenu
+        open={cellMenu.open}
+        x={cellMenu.x}
+        y={cellMenu.y}
+        items={cellMenu.items}
+        onClose={closeCellMenu}
+      />
     </div>
   );
 }

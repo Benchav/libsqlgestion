@@ -114,7 +114,7 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
               key={t.table}
               role="button"
               tabIndex={0}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-all text-left stagger-item cursor-default ${
+              className={`group w-full flex items-center justify-between px-3 py-2 rounded-md transition-all text-left stagger-item cursor-default ${
                 activeTab === 'data' && activeTable === t.table 
                   ? 'bg-zinc-800/80 text-zinc-100' 
                   : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'

@@ -497,6 +497,7 @@ export default function StudioPage() {
     }
 
     if (contextMenu.target.type === 'column') {
+      if (!currentTableSchema || currentTableSchema.kind !== 'table') return [];
       return [
         { label: 'Rename column', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameColumn(contextMenu.target.column) },
         { label: 'Change type', icon: <Settings2 size={14} />, onClick: () => handleOpenChangeColumnType(contextMenu.target.column) },

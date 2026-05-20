@@ -488,28 +488,29 @@ export default function StudioPage() {
 
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!contextMenu.target) return [];
+    const target = contextMenu.target;
 
-    if (contextMenu.target.type === 'table') {
+    if (target.type === 'table') {
       return [
-        { label: 'Rename table', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameTable(contextMenu.target.table) },
-        { label: 'Delete table', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteTable(contextMenu.target.table) },
+        { label: 'Rename table', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameTable(target.table) },
+        { label: 'Delete table', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteTable(target.table) },
       ];
     }
 
-    if (contextMenu.target.type === 'column') {
+    if (target.type === 'column') {
       if (!currentTableSchema || currentTableSchema.kind !== 'table') return [];
       return [
-        { label: 'Rename column', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameColumn(contextMenu.target.column) },
-        { label: 'Change type', icon: <Settings2 size={14} />, onClick: () => handleOpenChangeColumnType(contextMenu.target.column) },
-        { label: 'Delete column', icon: <Trash2 size={14} />, danger: true, onClick: () => handleOpenDeleteColumn(contextMenu.target.column) },
+        { label: 'Rename column', icon: <Edit3 size={14} />, onClick: () => handleOpenRenameColumn(target.column) },
+        { label: 'Change type', icon: <Settings2 size={14} />, onClick: () => handleOpenChangeColumnType(target.column) },
+        { label: 'Delete column', icon: <Trash2 size={14} />, danger: true, onClick: () => handleOpenDeleteColumn(target.column) },
       ];
     }
 
     if (!currentTableSchema || currentTableSchema.kind !== 'table') return [];
 
     return [
-      { label: 'Edit row', icon: <Pencil size={14} />, onClick: () => handleOpenEditRow(contextMenu.target.rowIndex) },
-      { label: 'Delete row', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteRow(contextMenu.target.rowIndex) },
+      { label: 'Edit row', icon: <Pencil size={14} />, onClick: () => handleOpenEditRow(target.rowIndex) },
+      { label: 'Delete row', icon: <Trash2 size={14} />, danger: true, onClick: () => handleDeleteRow(target.rowIndex) },
     ];
   }, [contextMenu.target, currentTableSchema]);
 

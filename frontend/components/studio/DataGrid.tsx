@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, type MouseEvent } from 'react';
 import { LayoutGrid, Database, ChevronLeft, ChevronRight, Filter, ArrowUpDown, Columns, Plus, MoreVertical, Key, X, Pencil } from 'lucide-react';
-import { ContextMenu } from './ContextMenu';
 
 type ColumnMeta = { name: string; type: string; notnull: number; pk: number };
 
@@ -42,8 +41,8 @@ type Props = {
   onAddRow: () => void;
   onInsertRow: () => void;
   loading: boolean;
-  onColumnMenu?: (column: string, event: React.MouseEvent) => void;
-  onRowMenu?: (rowIndex: number, event: React.MouseEvent) => void;
+  onColumnMenu?: (column: string, event: MouseEvent) => void;
+  onRowMenu?: (rowIndex: number, event: MouseEvent) => void;
 };
 
 export function DataGrid({
@@ -69,12 +68,6 @@ export function DataGrid({
 }: Props) {
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState('');
-  const [menuState, setMenuState] = useState<{
-    open: boolean;
-    x: number;
-    y: number;
-    items: Array<{ label: string; danger?: boolean; disabled?: boolean; onClick: () => void }>;
-  }>({ open: false, x: 0, y: 0, items: [] });
   const inputRef = useRef<HTMLInputElement | null>(null);
   const commitLockRef = useRef(false);
 
@@ -120,14 +113,6 @@ export function DataGrid({
       onSort(colName, 'ASC');
     }
   }, [sortColumn, sortDir, onSort]);
-
-  const openMenu = useCallback((x: number, y: number, items: Array<{ label: string; danger?: boolean; disabled?: boolean; onClick: () => void }>) => {
-    setMenuState({ open: true, x, y, items });
-  }, []);
-
-  const closeMenu = useCallback(() => {
-    setMenuState((current) => ({ ...current, open: false }));
-  }, []);
 
   const getTypeColor = useCallback((type: string) => {
     const t = type.toUpperCase();
@@ -221,12 +206,12 @@ export function DataGrid({
                 #
               </th>
               {columns.map((col) => (
-                <th
-                  key={col.name}
-                  className="border-b border-r border-zinc-800 py-1.5 px-3 bg-[#09090b] cursor-pointer hover:bg-zinc-800/50 transition-colors group select-none min-w-[160px]"
-                  onClick={() => handleHeaderClick(col.name)}
-                  onContextMenu={(event) => {
-                    if (!onColumnMenu) return;
+                  <th
+                    key={col.name}
+                    className="border-b border-r border-zinc-800 py-1.5 px-3 bg-[#09090b] cursor-pointer hover:bg-zinc-800/50 transition-colors group select-none min-w-[160px]"
+                    onClick={() => handleHeaderClick(col.name)}
+                    onContextMenu={(event) => {
+                      if (!onColumnMenu) return;
                     event.preventDefault();
                     onColumnMenu(col.name, event);
                   }}
@@ -301,11 +286,6 @@ export function DataGrid({
                           ${cellValue === null && !isEditing ? 'bg-zinc-900/20' : ''}`}
                         onDoubleClick={() => {
                           if (!readOnly) handleStartEdit(rowIdx, col.name, cellValue);
-                        }}
-                        onContextMenu={(event) => {
-                          if (!onColumnMenu) return;
-                          event.preventDefault();
-                          onColumnMenu(col.name, event);
                         }}
                       >
                         {isEditing && !readOnly ? (
@@ -387,13 +367,6 @@ export function DataGrid({
           </tbody>
         </table>
       </div>
-      <ContextMenu
-        open={menuState.open}
-        x={menuState.x}
-        y={menuState.y}
-        items={menuState.items}
-        onClose={closeMenu}
-      />
     </div>
   );
 }

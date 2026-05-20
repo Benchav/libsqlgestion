@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from 'react';
-import { Search, RotateCw, LayoutGrid, Trash2 } from 'lucide-react';
+import { Search, RotateCw, LayoutGrid, MoreVertical } from 'lucide-react';
 
 type TableInfo = {
   table: string;
@@ -19,11 +19,11 @@ type Props = {
   onSelectKind: (kind: 'table' | 'view') => void;
   onSelectTab: (tab: 'data' | 'sql') => void;
   onRefresh: () => void;
-  onDeleteTable?: (table: string) => void;
+  onTableMenu?: (table: string, event: React.MouseEvent) => void;
   loading?: boolean;
 };
 
-export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh, onDeleteTable, loading = false }: Props) {
+export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh, onTableMenu, loading = false }: Props) {
   const [query, setQuery] = useState('');
 
   const visibleTables = useMemo(
@@ -110,10 +110,11 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
         ) : null}
         {!loading && <div className="flex flex-col gap-0.5">
           {visibleTables.map((t, i) => (
-            <button
-              type="button"
+            <div
               key={t.table}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-all text-left stagger-item ${
+              role="button"
+              tabIndex={0}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-all text-left stagger-item cursor-default ${
                 activeTab === 'data' && activeTable === t.table 
                   ? 'bg-zinc-800/80 text-zinc-100' 
                   : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
@@ -122,6 +123,18 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
               onClick={() => {
                 onSelectTable(t.table);
                 onSelectTab('data');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onSelectTable(t.table);
+                  onSelectTab('data');
+                }
+              }}
+              onContextMenu={(event) => {
+                if (!onTableMenu) return;
+                event.preventDefault();
+                onTableMenu(t.table, event);
               }}
             >
               <div className="flex items-center gap-2 overflow-hidden">
@@ -132,21 +145,9 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
                 <span className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}>
                   {t.rowCount}
                 </span>
-                {onDeleteTable && (
-                  <button
-                    type="button"
-                    className="rounded p-1 text-zinc-600 opacity-0 transition-colors hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteTable(t.table);
-                    }}
-                    title="Delete table"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                )}
+                {onTableMenu && <MoreVertical size={12} className="text-zinc-600 opacity-0 group-hover:opacity-100" />}
               </div>
-            </button>
+            </div>
           ))}
         </div>}
       </nav>

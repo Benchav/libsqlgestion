@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 import { Search, RotateCw, LayoutGrid, MoreVertical } from 'lucide-react';
 
 type TableInfo = {
@@ -19,7 +19,7 @@ type Props = {
   onSelectKind: (kind: 'table' | 'view') => void;
   onSelectTab: (tab: 'data' | 'sql') => void;
   onRefresh: () => void;
-  onTableMenu?: (table: string, event: React.MouseEvent) => void;
+  onTableMenu?: (table: string, event: MouseEvent) => void;
   loading?: boolean;
 };
 

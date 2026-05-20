@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from 'react';
-import { Search, RotateCw, LayoutGrid } from 'lucide-react';
+import { Search, RotateCw, LayoutGrid, Trash2 } from 'lucide-react';
 
 type TableInfo = {
   table: string;
@@ -19,10 +19,11 @@ type Props = {
   onSelectKind: (kind: 'table' | 'view') => void;
   onSelectTab: (tab: 'data' | 'sql') => void;
   onRefresh: () => void;
+  onDeleteTable?: (table: string) => void;
   loading?: boolean;
 };
 
-export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh, loading = false }: Props) {
+export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSelectTable, onSelectKind, onSelectTab, onRefresh, onDeleteTable, loading = false }: Props) {
   const [query, setQuery] = useState('');
 
   const visibleTables = useMemo(
@@ -127,9 +128,24 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
                 <LayoutGrid size={14} className={activeTab === 'data' && activeTable === t.table ? 'text-zinc-300' : 'text-zinc-500'} />
                 <span className="font-medium truncate">{t.table}</span>
               </div>
-              <span className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                {t.rowCount}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  {t.rowCount}
+                </span>
+                {onDeleteTable && (
+                  <button
+                    type="button"
+                    className="rounded p-1 text-zinc-600 opacity-0 transition-colors hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDeleteTable(t.table);
+                    }}
+                    title="Delete table"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
             </button>
           ))}
         </div>}

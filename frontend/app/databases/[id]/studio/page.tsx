@@ -7,7 +7,7 @@ import { AppShell } from '../../../../components/AppShell';
 import { TableSidebar } from '../../../../components/studio/TableSidebar';
 import { DataGrid } from '../../../../components/studio/DataGrid';
 import { SqlRunner } from '../../../../components/studio/SqlRunner';
-import { ChevronRight, X, AlertTriangle } from 'lucide-react';
+import { ChevronRight, X, AlertTriangle, Pencil, Plus } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
 type TableSchema = { table: string; kind: 'table' | 'view'; rowCount: number; columns: ColumnMeta[]; foreignKeys: unknown[] };
@@ -71,6 +71,21 @@ export default function StudioPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deletingTable, setDeletingTable] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [renameTarget, setRenameTarget] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renamingTable, setRenamingTable] = useState(false);
+  const [renameError, setRenameError] = useState('');
+  const [columnDialog, setColumnDialog] = useState<{ mode: 'add' | 'rename'; table: string; column?: string } | null>(null);
+  const [columnName, setColumnName] = useState('');
+  const [columnType, setColumnType] = useState('TEXT');
+  const [columnNotNull, setColumnNotNull] = useState(false);
+  const [columnDefaultValue, setColumnDefaultValue] = useState('');
+  const [columnError, setColumnError] = useState('');
+  const [columnSaving, setColumnSaving] = useState(false);
+  const [columnRiskMode, setColumnRiskMode] = useState<'delete' | 'type' | null>(null);
+  const [columnRiskTarget, setColumnRiskTarget] = useState('');
+  const [columnRiskType, setColumnRiskType] = useState('TEXT');
+  const [selectedColumn, setSelectedColumn] = useState('');
 
   const visibleSchemas = tables.filter((schema) => schema.kind === activeKind);
   const currentTableSchema = tables.find((schema) => schema.table === activeTable);
@@ -409,6 +424,47 @@ export default function StudioPage() {
     setDeleteError('');
   }
 
+  function handleOpenRenameTable(tableName: string) {
+    setRenameTarget(tableName);
+    setRenameValue(tableName);
+    setRenameError('');
+  }
+
+  function handleOpenAddColumn() {
+    if (!activeTable) return;
+    setColumnDialog({ mode: 'add', table: activeTable });
+    setColumnName('');
+    setColumnType('TEXT');
+    setColumnNotNull(false);
+    setColumnDefaultValue('');
+    setColumnError('');
+  }
+
+  function handleOpenRenameColumn(column: string) {
+    if (!activeTable) return;
+    setColumnDialog({ mode: 'rename', table: activeTable, column });
+    setColumnName(column);
+    setColumnType('TEXT');
+    setColumnNotNull(false);
+    setColumnDefaultValue('');
+    setColumnError('');
+  }
+
+  function handleOpenDeleteColumn(column: string) {
+    if (!activeTable) return;
+    setColumnRiskMode('delete');
+    setColumnRiskTarget(column);
+    setColumnError('');
+  }
+
+  function handleOpenChangeColumnType(column: string) {
+    if (!activeTable) return;
+    setColumnRiskMode('type');
+    setColumnRiskTarget(column);
+    setColumnRiskType('TEXT');
+    setColumnError('');
+  }
+
   async function confirmDeleteTable() {
     if (!deleteTarget || !activeTable) return;
 
@@ -429,6 +485,90 @@ export default function StudioPage() {
       setDeleteError(err.message);
     } finally {
       setDeletingTable(false);
+    }
+  }
+
+  async function confirmRenameTable() {
+    if (!renameTarget || !renameValue.trim()) return;
+
+    setRenamingTable(true);
+    setRenameError('');
+    try {
+      await apiRequest(`/databases/${dbId}/schema/tables/${encodeURIComponent(renameTarget)}/rename`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: renameValue.trim() }),
+      });
+
+      const nextName = renameValue.trim();
+      setRenameTarget(null);
+      setRenameValue('');
+      await loadSchema();
+      setActiveTable((current) => (current === renameTarget ? nextName : current));
+    } catch (err: any) {
+      setRenameError(err.message);
+    } finally {
+      setRenamingTable(false);
+    }
+  }
+
+  async function confirmColumnAction() {
+    if (!columnDialog || !activeTable) return;
+    if (!columnName.trim()) return;
+
+    setColumnSaving(true);
+    setColumnError('');
+    try {
+      if (columnDialog.mode === 'add') {
+        const defaultValue = columnDefaultValue.trim();
+        await apiRequest(`/databases/${dbId}/schema/tables/${encodeURIComponent(columnDialog.table)}/columns`, {
+          method: 'POST',
+          body: JSON.stringify({
+            name: columnName.trim(),
+            type: columnType.trim(),
+            notnull: columnNotNull,
+            defaultValue: defaultValue || undefined,
+          }),
+        });
+      } else if (columnDialog.column) {
+        await apiRequest(`/databases/${dbId}/schema/tables/${encodeURIComponent(columnDialog.table)}/columns/${encodeURIComponent(columnDialog.column)}/rename`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name: columnName.trim() }),
+        });
+      }
+
+      setColumnDialog(null);
+      await loadSchema();
+    } catch (err: any) {
+      setColumnError(err.message);
+    } finally {
+      setColumnSaving(false);
+    }
+  }
+
+  async function confirmColumnRiskAction() {
+    if (!activeTable || !columnRiskMode || !columnRiskTarget) return;
+
+    setColumnSaving(true);
+    setColumnError('');
+    try {
+      if (columnRiskMode === 'delete') {
+        await apiRequest(`/databases/${dbId}/schema/tables/${encodeURIComponent(activeTable)}/columns/${encodeURIComponent(columnRiskTarget)}`, {
+          method: 'DELETE',
+        });
+      } else {
+        await apiRequest(`/databases/${dbId}/schema/tables/${encodeURIComponent(activeTable)}/columns/${encodeURIComponent(columnRiskTarget)}/type`, {
+          method: 'PATCH',
+          body: JSON.stringify({ type: columnRiskType.trim() }),
+        });
+      }
+
+      setColumnRiskMode(null);
+      setColumnRiskTarget('');
+      await loadSchema();
+    } catch (err: any) {
+      setColumnError(err.message);
+    } finally {
+      setColumnSaving(false);
     }
   }
 
@@ -473,6 +613,69 @@ export default function StudioPage() {
           />
 
           <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a]">
+            {activeTable && currentTableSchema && (
+              <div className="flex items-center justify-between border-b border-zinc-800/80 bg-[#09090b] px-4 py-3">
+                <div>
+                  <div className="text-xs uppercase tracking-wider text-zinc-500">Selected table</div>
+                  <div className="text-sm font-medium text-zinc-100">{activeTable}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenAddColumn}
+                    className="inline-flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                  >
+                    <Plus size={14} /> Add column
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRenameTable(activeTable)}
+                    className="inline-flex items-center gap-2 rounded-md border border-zinc-800 bg-[#0f0f0f] px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+                  >
+                    <Pencil size={14} /> Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTable(activeTable)}
+                    className="inline-flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20"
+                  >
+                    <AlertTriangle size={14} /> Delete
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeTable && currentTableSchema && (
+              <div className="border-b border-zinc-800/80 bg-[#0b0b0d] px-4 py-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-zinc-500">Columns</div>
+                    <div className="text-sm text-zinc-400">Select a column to edit safely.</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {currentTableSchema.columns.map((column) => (
+                    <button
+                      key={column.name}
+                      type="button"
+                      onClick={() => setSelectedColumn(column.name)}
+                      className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${selectedColumn === column.name ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-zinc-800 bg-[#0f0f0f] text-zinc-300 hover:bg-zinc-800'}`}
+                    >
+                      <div className="font-medium">{column.name}</div>
+                      <div className="mt-0.5 text-[11px] text-zinc-500">{column.type || 'ANY'}</div>
+                    </button>
+                  ))}
+                </div>
+                {selectedColumn && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3">
+                    <button type="button" onClick={() => handleOpenRenameColumn(selectedColumn)} className="rounded-md border border-zinc-800 bg-[#0f0f0f] px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800">Rename column</button>
+                    <button type="button" onClick={() => handleOpenChangeColumnType(selectedColumn)} className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-amber-500/20">Change type</button>
+                    <button type="button" onClick={() => handleOpenDeleteColumn(selectedColumn)} className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/20">Delete column</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Main Area */}
             {activeTab === 'data' && activeTable && currentTableSchema ? (
               <DataGrid
@@ -593,6 +796,237 @@ export default function StudioPage() {
                 className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-400 disabled:opacity-60"
               >
                 {deletingTable ? 'Deleting...' : 'Delete table'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-[#101114] shadow-2xl">
+            <div className="flex items-start gap-3 border-b border-amber-500/20 px-6 py-5">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-400">
+                <Pencil size={20} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-zinc-100">Rename table</h3>
+                <p className="mt-1 text-sm text-zinc-400">
+                  Rename <span className="font-mono text-zinc-200">{renameTarget}</span> to a new table name.
+                </p>
+              </div>
+            </div>
+
+            {renameError && (
+              <div className="mx-6 mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                {renameError}
+              </div>
+            )}
+
+            <div className="px-6 py-5 space-y-3">
+              <label className="block text-sm font-medium text-zinc-300">New name</label>
+              <input
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                placeholder="new_table_name"
+              />
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                This is safe for SQLite, but references in your app code may need to be updated.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-amber-500/20 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!renamingTable) {
+                    setRenameTarget(null);
+                    setRenameValue('');
+                    setRenameError('');
+                  }
+                }}
+                className="rounded-lg border border-zinc-800 bg-[#0f0f0f] px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRenameTable}
+                disabled={renamingTable || !renameValue.trim() || renameValue.trim() === renameTarget}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-amber-400 disabled:opacity-60"
+              >
+                {renamingTable ? 'Renaming...' : 'Rename table'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {columnDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-2xl border border-emerald-500/30 bg-[#101114] shadow-2xl">
+            <div className="flex items-start gap-3 border-b border-emerald-500/20 px-6 py-5">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
+                <Plus size={20} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-zinc-100">{columnDialog.mode === 'add' ? 'Add column' : 'Rename column'}</h3>
+                <p className="mt-1 text-sm text-zinc-400">
+                  {columnDialog.mode === 'add'
+                    ? `Add a new column to ${columnDialog.table}.`
+                    : `Rename the selected column in ${columnDialog.table}.`}
+                </p>
+              </div>
+            </div>
+
+            {columnError && (
+              <div className="mx-6 mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                {columnError}
+              </div>
+            )}
+
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-zinc-300">Column name</label>
+                <input
+                  value={columnName}
+                  onChange={(event) => setColumnName(event.target.value)}
+                  className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                  placeholder="column_name"
+                />
+              </div>
+
+              {columnDialog.mode === 'add' && (
+                <>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-300">Type</label>
+                    <input
+                      value={columnType}
+                      onChange={(event) => setColumnType(event.target.value)}
+                      className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                      placeholder="TEXT"
+                    />
+                  </div>
+                  <label className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-3 text-sm text-zinc-300">
+                    <input type="checkbox" checked={columnNotNull} onChange={(event) => setColumnNotNull(event.target.checked)} />
+                    NOT NULL
+                  </label>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-300">Default value</label>
+                    <input
+                      value={columnDefaultValue}
+                      onChange={(event) => setColumnDefaultValue(event.target.value)}
+                      className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                    Only safe ADD COLUMN forms are supported. Unique and complex constraints are intentionally blocked.
+                  </div>
+                </>
+              )}
+
+              {columnDialog.mode === 'rename' && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                  Renaming a column is safe in modern SQLite, but app code and queries may need updates.
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-emerald-500/20 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!columnSaving) {
+                    setColumnDialog(null);
+                    setColumnError('');
+                  }
+                }}
+                className="rounded-lg border border-zinc-800 bg-[#0f0f0f] px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmColumnAction}
+                disabled={columnSaving || !columnName.trim()}
+                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-400 disabled:opacity-60"
+              >
+                {columnSaving ? 'Saving...' : columnDialog.mode === 'add' ? 'Add column' : 'Rename column'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {columnRiskMode && columnRiskTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-red-500/30 bg-[#120f10] shadow-2xl">
+            <div className="flex items-start gap-3 border-b border-red-500/20 px-6 py-5">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-zinc-100">
+                  {columnRiskMode === 'delete' ? 'Delete column' : 'Change column type'}
+                </h3>
+                <p className="mt-1 text-sm text-zinc-400">
+                  <span className="font-mono text-zinc-200">{columnRiskTarget}</span> in <span className="font-mono text-zinc-200">{activeTable}</span>
+                </p>
+              </div>
+            </div>
+
+            {columnError && (
+              <div className="mx-6 mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                {columnError}
+              </div>
+            )}
+
+            <div className="px-6 py-5 space-y-4">
+              {columnRiskMode === 'delete' ? (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                  This may rebuild the table if SQLite cannot drop the column directly. It is blocked when the column is part of a constraint.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-300">New type</label>
+                    <input
+                      value={columnRiskType}
+                      onChange={(event) => setColumnRiskType(event.target.value)}
+                      className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                      placeholder="TEXT"
+                    />
+                  </div>
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                    Changing type rebuilds the table and may be blocked if the current schema is unsafe.
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-red-500/20 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!columnSaving) {
+                    setColumnRiskMode(null);
+                    setColumnRiskTarget('');
+                    setColumnError('');
+                  }
+                }}
+                className="rounded-lg border border-zinc-800 bg-[#0f0f0f] px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmColumnRiskAction}
+                disabled={columnSaving}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-400 disabled:opacity-60"
+              >
+                {columnSaving ? 'Working...' : 'Confirm'}
               </button>
             </div>
           </div>

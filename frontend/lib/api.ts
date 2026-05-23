@@ -40,6 +40,36 @@ export function isAuthenticated() {
   return window.sessionStorage.getItem(SESSION_KEY) === '1';
 }
 
+function normalizeErrorMessage(payload: unknown, fallback: string) {
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload;
+  }
+
+  if (payload && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>;
+
+    if (typeof record.error === 'string' && record.error.trim()) {
+      return record.error;
+    }
+
+    if (record.error && typeof record.error === 'object') {
+      const nested = record.error as Record<string, unknown>;
+      if (typeof nested.message === 'string' && nested.message.trim()) {
+        return nested.message;
+      }
+      if (typeof nested.error === 'string' && nested.error.trim()) {
+        return nested.error;
+      }
+    }
+
+    if (typeof record.message === 'string' && record.message.trim()) {
+      return record.message;
+    }
+  }
+
+  return fallback;
+}
+
 async function tryRefreshToken(): Promise<boolean> {
   try {
     const response = await fetch(`${API_URL}/auth/refresh`, {
@@ -112,8 +142,18 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       window.location.href = '/login';
     }
     }
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || response.statusText);
+    const text = await response.text().catch(() => '');
+    let payload: unknown = text;
+
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
+    }
+
+    throw new Error(normalizeErrorMessage(payload, response.statusText || 'Request failed'));
   }
 
   return response.json();

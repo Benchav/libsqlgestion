@@ -665,7 +665,7 @@ export default function StudioPage() {
             loading={schemaLoading}
           />
 
-          <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a]">
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#0a0a0a]">
             {activeTable && currentTableSchema && (
               <div className="flex items-center justify-between border-b border-zinc-800/80 bg-[#09090b] px-4 py-3">
                 <div>

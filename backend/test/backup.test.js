@@ -20,8 +20,9 @@ const { Project } = require('../dist/domain/entities/Project');
 const { Database } = require('../dist/domain/entities/Database');
 const { User } = require('../dist/domain/entities/User');
 const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
+const { buildServer } = require('../dist/server');
 
-test.describe('Database Backup Integration Tests', () => {
+test.describe('Database Backup Service Tests', () => {
   let databaseService;
   let testUser;
   let testProject;
@@ -144,5 +145,128 @@ test.describe('Database Backup Integration Tests', () => {
       databaseService.backupDatabase(dbNoFile.id, { name: 'failed-backup-file' }),
       /source database file not found on disk/
     );
+  });
+});
+
+test.describe('Database Backup API Routes', () => {
+  let app;
+  let cookieHeader;
+  let csrfToken;
+  let projectId;
+  let dbId;
+
+  test.before(async () => {
+    // Boot the fastify server
+    app = buildServer();
+
+    // 1. Register a user via API
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: 'api-admin@example.com', password: 'Password123!' }
+    });
+    assert.equal(regRes.statusCode, 200);
+
+    // Extract auth and CSRF cookies
+    const setCookies = regRes.headers['set-cookie'];
+    const cookies = {};
+    const list = Array.isArray(setCookies) ? setCookies : [setCookies];
+    for (const item of list) {
+      const parts = item.split(';')[0].split('=');
+      if (parts.length === 2) {
+        cookies[parts[0].trim()] = parts[1].trim();
+      }
+    }
+
+    csrfToken = cookies['libsqlite.csrfToken.v2'] || cookies['libsqlite.csrfToken'];
+    cookieHeader = `libsqlite.accessToken=${cookies['libsqlite.accessToken']}; libsqlite.csrfToken.v2=${csrfToken}`;
+
+    // 2. Create a project via API
+    const projRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects',
+      headers: {
+        cookie: cookieHeader,
+        'x-csrf-token-v2': csrfToken
+      },
+      payload: { name: 'API Backup Project' }
+    });
+    assert.equal(projRes.statusCode, 201);
+    const projData = JSON.parse(projRes.payload);
+    projectId = projData.project.id;
+
+    // 3. Create a database via API
+    const dbRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/databases',
+      headers: {
+        cookie: cookieHeader,
+        'x-csrf-token-v2': csrfToken
+      },
+      payload: { projectId, name: 'api-original-db', type: 'sqlite' }
+    });
+    assert.equal(dbRes.statusCode, 201);
+    const dbData = JSON.parse(dbRes.payload);
+    dbId = dbData.database.id;
+  });
+
+  test.after(async () => {
+    await app.close();
+  });
+
+  test('successfully performs database backup through POST /api/v1/databases/:id/backup', async () => {
+    const backupRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${dbId}/backup`,
+      headers: {
+        cookie: cookieHeader,
+        'x-csrf-token-v2': csrfToken
+      },
+      payload: { name: 'api-backup-copy' }
+    });
+
+    assert.equal(backupRes.statusCode, 201);
+    const body = JSON.parse(backupRes.payload);
+    assert.ok(body.database);
+    assert.ok(body.token);
+    assert.equal(body.database.name, 'api-backup-copy');
+    assert.equal(body.database.metadata.backup, true);
+    assert.equal(body.database.metadata.sourceId, dbId);
+
+    // Verify the backup file exists
+    assert.ok(body.database.url);
+    assert.ok(fs.existsSync(body.database.url));
+  });
+
+  test('returns 400 when name is missing or empty in payload', async () => {
+    const backupRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${dbId}/backup`,
+      headers: {
+        cookie: cookieHeader,
+        'x-csrf-token-v2': csrfToken
+      },
+      payload: { name: '   ' }
+    });
+
+    assert.equal(backupRes.statusCode, 400);
+    const body = JSON.parse(backupRes.payload);
+    assert.equal(body.error, 'name is required for the backup database');
+  });
+
+  test('returns 403 when csrf token is missing or invalid', async () => {
+    const backupRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${dbId}/backup`,
+      headers: {
+        cookie: cookieHeader,
+        'x-csrf-token-v2': 'wrong-token'
+      },
+      payload: { name: 'api-backup-copy' }
+    });
+
+    assert.equal(backupRes.statusCode, 403);
+    const body = JSON.parse(backupRes.payload);
+    assert.equal(body.error, 'invalid csrf token');
   });
 });

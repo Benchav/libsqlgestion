@@ -174,4 +174,23 @@ async function databaseRoutes(app) {
         const result = await databaseService.testConnection(id);
         return reply.send(result);
     });
+    app.post('/databases/:id/backup', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const { id } = request.params;
+        const body = request.body;
+        if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
+            return reply.status(400).send({ error: 'name is required for the backup database' });
+        }
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
+        try {
+            const result = await databaseService.backupDatabase(id, { name: body.name.trim() });
+            return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to create backup' });
+        }
+    });
 }

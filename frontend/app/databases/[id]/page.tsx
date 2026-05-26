@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -42,6 +42,7 @@ export default function DatabaseDetailPage() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
 
   async function loadDatabase() {
     try {
@@ -115,7 +116,6 @@ export default function DatabaseDetailPage() {
   const envSnippet = serverUrl && revealedToken
     ? `# Next.js API / libsql client\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
     : '';
-                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Panel-managed env snippet</label>
 
   if (!database && !error) {
     return (
@@ -329,9 +329,14 @@ export default function DatabaseDetailPage() {
                   ) : (
                     <div className="flex items-center justify-between border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300">
                       <span className="blur-[4px] select-none">Token is only shown once after create/import/rotate</span>
-                      <button onClick={handleRotateToken} className="text-blue-400 hover:text-blue-300 font-sans flex items-center gap-1.5 ml-4">
-                        <RefreshCw size={14} /> Rotate
-                      </button>
+                      <div className="flex items-center gap-3 ml-4">
+                        <button onClick={() => setIsBackupOpen(true)} className="text-emerald-400 hover:text-emerald-300 font-sans flex items-center gap-1.5">
+                          <Archive size={14} /> Backup
+                        </button>
+                        <button onClick={handleRotateToken} className="text-blue-400 hover:text-blue-300 font-sans flex items-center gap-1.5">
+                          <RefreshCw size={14} /> Rotate
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -414,6 +419,20 @@ console.log(rs.rows);`}
           onSaved={async () => {
             setIsEditOpen(false);
             await loadDatabase();
+          }}
+        />
+      )}
+
+      {isBackupOpen && database && (
+        <BackupDatabaseModal
+          database={database}
+          onClose={() => setIsBackupOpen(false)}
+          onCreated={async (newDbId: string, newToken: string) => {
+            setIsBackupOpen(false);
+            if (typeof window !== 'undefined') {
+              window.sessionStorage.setItem(`libsqlite.databaseToken.${newDbId}`, newToken);
+            }
+            router.push(`/databases/${newDbId}`);
           }}
         />
       )}
@@ -507,6 +526,111 @@ function EditDatabaseModal({
               className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
             >
               {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function BackupDatabaseModal({
+  database,
+  onClose,
+  onCreated,
+}: {
+  database: DatabaseDetail;
+  onClose: () => void;
+  onCreated: (newDbId: string, newToken: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(`backup-${database.name}`);
+  const [restoreMode, setRestoreMode] = useState<'now' | 'custom'>('now');
+  const [customDate, setCustomDate] = useState(new Date().toISOString().slice(0, 10));
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+
+    setError('');
+    setCreating(true);
+    try {
+      const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${database.id}/backup`, {
+        method: 'POST',
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      await onCreated(result.database.id, result.token);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px] modal-backdrop">
+      <div className="w-full max-w-[520px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl modal-content">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-100">Create Database from Backup</h2>
+            <p className="mt-1 text-sm text-zinc-400">Create a new database with the same schema and data as this one at a specific point in time.</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300">
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-2">Database Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="backup-mydb"
+              className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-2">Restore from</label>
+            <div className="flex items-center gap-3">
+              <select
+                value={restoreMode}
+                onChange={(e) => setRestoreMode(e.target.value as 'now' | 'custom')}
+                className="rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              >
+                <option value="now">Now</option>
+                <option value="custom">Custom</option>
+              </select>
+              {restoreMode === 'custom' && (
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={creating || !name.trim()}
+              className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
+            >
+              {creating ? 'Creating...' : 'Create Database'}
             </button>
           </div>
         </form>

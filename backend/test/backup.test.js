@@ -165,6 +165,9 @@ test.describe('Database Backup API Routes', () => {
       url: '/api/v1/auth/register',
       payload: { email: 'api-admin@example.com', password: 'Password123!' }
     });
+    if (regRes.statusCode !== 200) {
+      console.error('Registration failed! Status:', regRes.statusCode, 'Body:', regRes.payload);
+    }
     assert.equal(regRes.statusCode, 200);
 
     // Extract auth and CSRF cookies

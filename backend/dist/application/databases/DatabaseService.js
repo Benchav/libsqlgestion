@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -285,6 +318,81 @@ class DatabaseService {
             metadata: input,
         });
         return database;
+    }
+    async backupDatabase(sourceId, input) {
+        const sourceDatabase = await this.databaseRepo.findOne({ where: { id: sourceId }, relations: ['project'] });
+        if (!sourceDatabase)
+            throw new Error('source database not found');
+        const project = sourceDatabase.project;
+        // Resolve the source SQLite file path
+        const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id);
+        const fs = await Promise.resolve().then(() => __importStar(require('fs')));
+        if (!fs.existsSync(sourcePath)) {
+            throw new Error('source database file not found on disk');
+        }
+        const subdomain = (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
+        const database = await this.databaseRepo.save(this.databaseRepo.create({
+            name: input.name,
+            type: sourceDatabase.type,
+            status: 'inactive',
+            subdomain,
+            metadata: {
+                backup: true,
+                sourceId: sourceDatabase.id,
+                sourceName: sourceDatabase.name,
+                backupTimestamp: new Date().toISOString(),
+            },
+            project,
+        }));
+        // Copy the SQLite file byte-by-byte to the new managed location
+        const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id);
+        let managedRuntime = null;
+        const canProvisionRuntime = this.runtimeService.isEnabled();
+        try {
+            if (canProvisionRuntime) {
+                try {
+                    managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                    database.url = managedPath;
+                    database.status = 'active';
+                    database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
+                    database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+                    await this.databaseRepo.save(database);
+                    await this.auditService.record({
+                        action: 'database.backup',
+                        resourceType: 'database',
+                        resourceId: database.id,
+                        metadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id, runtime: managedRuntime.metadata.provider },
+                    });
+                    return { database, token: managedRuntime.token };
+                }
+                catch {
+                    // Fall through to local-file mode when Docker runtime cannot start.
+                }
+            }
+            const token = (0, tokens_1.randomToken)();
+            database.url = managedPath;
+            database.status = 'active';
+            database.encryptedToken = (0, crypto_1.encrypt)(token);
+            database.metadata = mergeRuntimeMetadata(database.metadata, {
+                provider: 'local-file',
+                databasePath: managedPath,
+                connectionUrl: managedPath,
+                internalUrl: managedPath,
+                publicUrl: managedPath,
+            });
+            await this.databaseRepo.save(database);
+            await this.auditService.record({
+                action: 'database.backup',
+                resourceType: 'database',
+                resourceId: database.id,
+                metadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id, runtime: 'local-file' },
+            });
+            return { database, token };
+        }
+        catch (error) {
+            await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
+            throw error;
+        }
     }
     isManagedRuntimeRequest(input) {
         return isManagedRuntimeType(input);

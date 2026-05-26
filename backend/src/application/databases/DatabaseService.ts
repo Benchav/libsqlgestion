@@ -312,7 +312,6 @@ export class DatabaseService {
 
     // Resolve the source SQLite file path
     const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id);
-    const fs = await import('fs');
     if (!fs.existsSync(sourcePath)) {
       throw new Error('source database file not found on disk');
     }

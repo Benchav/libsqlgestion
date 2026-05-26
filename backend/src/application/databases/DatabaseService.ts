@@ -304,6 +304,91 @@ export class DatabaseService {
     return database;
   }
 
+  async backupDatabase(sourceId: string, input: { name: string }) {
+    const sourceDatabase = await this.databaseRepo.findOne({ where: { id: sourceId }, relations: ['project'] });
+    if (!sourceDatabase) throw new Error('source database not found');
+
+    const project = sourceDatabase.project;
+
+    // Resolve the source SQLite file path
+    const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id);
+    const fs = await import('fs');
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error('source database file not found on disk');
+    }
+
+    const subdomain = ensureSubdomain(input.name, randomToken());
+
+    const database = await this.databaseRepo.save(this.databaseRepo.create({
+      name: input.name,
+      type: sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
+      status: 'inactive',
+      subdomain,
+      metadata: {
+        backup: true,
+        sourceId: sourceDatabase.id,
+        sourceName: sourceDatabase.name,
+        backupTimestamp: new Date().toISOString(),
+      },
+      project,
+    }));
+
+    // Copy the SQLite file byte-by-byte to the new managed location
+    const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id);
+    let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
+    const canProvisionRuntime = this.runtimeService.isEnabled();
+
+    try {
+      if (canProvisionRuntime) {
+        try {
+          managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+
+          database.url = managedPath;
+          database.status = 'active';
+          database.encryptedToken = encrypt(managedRuntime.token);
+          database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+          await this.databaseRepo.save(database);
+
+          await this.auditService.record({
+            action: 'database.backup',
+            resourceType: 'database',
+            resourceId: database.id,
+            metadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id, runtime: managedRuntime.metadata.provider },
+          });
+
+          return { database, token: managedRuntime.token };
+        } catch {
+          // Fall through to local-file mode when Docker runtime cannot start.
+        }
+      }
+
+      const token = randomToken();
+      database.url = managedPath;
+      database.status = 'active';
+      database.encryptedToken = encrypt(token);
+      database.metadata = mergeRuntimeMetadata(database.metadata, {
+        provider: 'local-file',
+        databasePath: managedPath,
+        connectionUrl: managedPath,
+        internalUrl: managedPath,
+        publicUrl: managedPath,
+      });
+      await this.databaseRepo.save(database);
+
+      await this.auditService.record({
+        action: 'database.backup',
+        resourceType: 'database',
+        resourceId: database.id,
+        metadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id, runtime: 'local-file' },
+      });
+
+      return { database, token };
+    } catch (error) {
+      await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
+      throw error;
+    }
+  }
+
   private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {
     return isManagedRuntimeType(input);
   }

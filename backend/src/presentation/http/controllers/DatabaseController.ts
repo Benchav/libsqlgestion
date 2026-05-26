@@ -160,4 +160,21 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const result = await databaseService.testConnection(id);
     return reply.send(result);
   });
+
+  app.post('/databases/:id/backup', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const body = request.body as any;
+    if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
+      return reply.status(400).send({ error: 'name is required for the backup database' });
+    }
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    try {
+      const result = await databaseService.backupDatabase(id, { name: body.name.trim() });
+      return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err?.message || 'failed to create backup' });
+    }
+  });
 }

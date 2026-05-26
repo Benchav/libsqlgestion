@@ -116,7 +116,6 @@ export default function DatabaseDetailPage() {
   const envSnippet = serverUrl && revealedToken
     ? `# Next.js API / libsql client\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
     : '';
-                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Panel-managed env snippet</label>
 
   if (!database && !error) {
     return (

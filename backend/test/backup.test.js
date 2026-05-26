@@ -18,10 +18,12 @@ const { bootstrapSecurityCatalog } = require('../dist/application/auth/auth.boot
 const { DatabaseService } = require('../dist/application/databases/DatabaseService');
 const { Project } = require('../dist/domain/entities/Project');
 const { Database } = require('../dist/domain/entities/Database');
+const { User } = require('../dist/domain/entities/User');
 const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
 
 test.describe('Database Backup Integration Tests', () => {
   let databaseService;
+  let testUser;
   let testProject;
   let testDb;
   let sourceSqlitePath;
@@ -34,12 +36,22 @@ test.describe('Database Backup Integration Tests', () => {
 
     databaseService = new DatabaseService();
 
-    // 1. Create a mock Project in DB
+    // 0. Create a mock User in DB
+    const userRepo = AppDataSource.getRepository(User);
+    testUser = await userRepo.save(
+      userRepo.create({
+        email: 'test-owner@example.com',
+        passwordHash: '$argon2id$v=19$m=65536,t=3,p=4$abcde/fghijk$xyz',
+      })
+    );
+
+    // 1. Create a mock Project with owner in DB
     const projectRepo = AppDataSource.getRepository(Project);
     testProject = await projectRepo.save(
       projectRepo.create({
         name: 'Backup Test Project',
         description: 'Testing backup flow',
+        owner: testUser,
       })
     );
 

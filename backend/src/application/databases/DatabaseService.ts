@@ -64,6 +64,14 @@ export class DatabaseService {
       if (input.type === 'sqlite') {
         managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
         await fs.promises.writeFile(managedPath, '');
+        
+        // Initialize the new SQLite file and set WAL mode persistently once
+        const initClient = new SqliteClient(managedPath);
+        try {
+          await initClient.run('PRAGMA journal_mode = WAL;');
+        } finally {
+          await initClient.close();
+        }
 
         const token = input.token ?? randomToken();
         database.url = managedPath;

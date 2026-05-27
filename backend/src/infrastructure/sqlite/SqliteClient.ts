@@ -97,6 +97,14 @@ export class SqliteClient {
     }
 
     this.db = new sqlite3.Database(filePath);
+    // Apply SQLite performance and concurrency tuning immediately after opening
+    this.db.serialize(() => {
+      this.db.run('PRAGMA busy_timeout = 10000;');
+      this.db.run('PRAGMA synchronous = NORMAL;');
+      this.db.run('PRAGMA cache_size = -20000;');
+      this.db.run('PRAGMA temp_store = MEMORY;');
+      this.db.run('PRAGMA mmap_size = 268435456;');
+    });
     this.all = (sql: string, params: unknown[] = []) =>
       new Promise((resolve, reject) => {
         this.db.all(sql, params, (error: Error | null, rows: unknown[]) => {
@@ -161,7 +169,12 @@ export class SqliteClient {
     }
   }
 
-  close() {
-    this.db.close();
+  close(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.db.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
 }

@@ -65,6 +65,14 @@ class DatabaseService {
             if (input.type === 'sqlite') {
                 managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
                 await fs_1.default.promises.writeFile(managedPath, '');
+                // Initialize the new SQLite file and set WAL mode persistently once
+                const initClient = new SqliteClient_1.SqliteClient(managedPath);
+                try {
+                    await initClient.run('PRAGMA journal_mode = WAL;');
+                }
+                finally {
+                    await initClient.close();
+                }
                 const token = input.token ?? (0, tokens_1.randomToken)();
                 database.url = managedPath;
                 database.status = 'active';
@@ -359,6 +367,12 @@ class DatabaseService {
             await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
             throw error;
         }
+    }
+    async getDatabaseFilePath(id) {
+        const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+        if (!database)
+            throw new Error('database not found');
+        return database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
     }
     isManagedRuntimeRequest(input) {
         return isManagedRuntimeType(input);

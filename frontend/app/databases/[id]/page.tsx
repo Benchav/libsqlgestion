@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive, Zap, Download } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -98,6 +98,29 @@ export default function DatabaseDetailPage() {
       setError(err.message);
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function handleDownloadDatabase() {
+    try {
+      const response = await fetch(`/api/v1/databases/${id}/download`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error('Failed to download database file');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${database?.name || 'database'}.db`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message || 'Error downloading database');
     }
   }
 
@@ -216,6 +239,12 @@ export default function DatabaseDetailPage() {
                 className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
               >
                 <Pencil size={16} /> Edit Database
+              </button>
+              <button
+                onClick={handleDownloadDatabase}
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+              >
+                <Download size={16} /> Download
               </button>
               <button
                 onClick={handleDeleteDatabase}
@@ -376,13 +405,68 @@ export default function DatabaseDetailPage() {
 {`import { createClient } from '@libsql/client';
 
 const client = createClient({
-  url: "YOUR_CONNECTION_URL",
-  authToken: "YOUR_AUTH_TOKEN",
+  url: "${serverUrl || 'YOUR_CONNECTION_URL'}",
+  authToken: "${revealedToken || 'YOUR_AUTH_TOKEN'}",
 });
 
 const rs = await client.execute("SELECT * FROM users");
 console.log(rs.rows);`}
               </pre>
+            </div>
+
+            {/* ERP & High-Concurrency Performance Tuning */}
+            <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">
+              <div className="px-6 py-4 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center gap-2">
+                <Zap size={16} className="text-amber-400 animate-pulse" />
+                <h3 className="font-medium text-zinc-200">ERP & High-Concurrency Performance Tuning</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm text-zinc-400">
+                  SQLite/libSQL is blazingly fast but requires active connection tuning under concurrent loads (like an ERP). LibSQLite has optimized the database server with WAL and synchronous NORMAL modes, but your ERP client connection should also run the following recommended settings:
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-[#050505] border border-zinc-800/60 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                      <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Busy Timeout (Critical)</h4>
+                    </div>
+                    <p className="text-xs text-zinc-500">
+                      Prevents immediate <code className="text-amber-400 bg-amber-400/5 px-1 rounded font-mono">SQLITE_BUSY</code> failures by telling the client to wait up to 10s for other writes to finish.
+                    </p>
+                  </div>
+                  
+                  <div className="bg-[#050505] border border-zinc-800/60 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                      <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Synchronous Normal</h4>
+                    </div>
+                    <p className="text-xs text-zinc-500">
+                      Reduces disk I/O bottlenecks by syncing transactions in WAL chunks, speeding up writes by up to 100x safely.
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Recommended Connection Hook (Node.js)</label>
+                  <pre className="bg-[#050505] border border-zinc-800 p-4 rounded-lg overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar whitespace-pre">
+{`import { createClient } from '@libsql/client';
+
+const client = createClient({
+  url: "${serverUrl || 'YOUR_CONNECTION_URL'}",
+  authToken: "${revealedToken || 'YOUR_AUTH_TOKEN'}",
+});
+
+// Optimization: Apply concurrency settings on connection startup
+await client.execute(\`
+  PRAGMA busy_timeout = 10000;
+  PRAGMA synchronous = NORMAL;
+  PRAGMA cache_size = -20000;
+  PRAGMA temp_store = MEMORY;
+\`);`}
+                  </pre>
+                </div>
+              </div>
             </div>
           </div>
 

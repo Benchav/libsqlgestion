@@ -64,6 +64,14 @@ export class DatabaseService {
       if (input.type === 'sqlite') {
         managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
         await fs.promises.writeFile(managedPath, '');
+        
+        // Initialize the new SQLite file and set WAL mode persistently once
+        const initClient = new SqliteClient(managedPath);
+        try {
+          await initClient.run('PRAGMA journal_mode = WAL;');
+        } finally {
+          await initClient.close();
+        }
 
         const token = input.token ?? randomToken();
         database.url = managedPath;
@@ -386,6 +394,12 @@ export class DatabaseService {
       await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
       throw error;
     }
+  }
+
+  async getDatabaseFilePath(id: string): Promise<string> {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) throw new Error('database not found');
+    return database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
   }
 
   private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {

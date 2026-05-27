@@ -368,6 +368,12 @@ class DatabaseService {
             throw error;
         }
     }
+    async getDatabaseFilePath(id) {
+        const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+        if (!database)
+            throw new Error('database not found');
+        return database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
+    }
     isManagedRuntimeRequest(input) {
         return isManagedRuntimeType(input);
     }

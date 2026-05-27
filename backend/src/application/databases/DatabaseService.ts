@@ -396,6 +396,12 @@ export class DatabaseService {
     }
   }
 
+  async getDatabaseFilePath(id: string): Promise<string> {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) throw new Error('database not found');
+    return database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
+  }
+
   private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {
     return isManagedRuntimeType(input);
   }

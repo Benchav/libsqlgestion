@@ -174,6 +174,31 @@ async function databaseRoutes(app) {
         const result = await databaseService.testConnection(id);
         return reply.send(result);
     });
+    app.get('/databases/:id/download', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
+            return;
+        const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
+        try {
+            const database = await databaseService.getDatabase(id);
+            if (!database)
+                return reply.status(404).send({ error: 'database not found' });
+            const filePath = await databaseService.getDatabaseFilePath(id);
+            if (!fs_1.default.existsSync(filePath)) {
+                return reply.status(404).send({ error: 'database file not found on disk' });
+            }
+            const filename = `${database.name}.db`;
+            reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+            reply.header('Content-Type', 'application/x-sqlite3');
+            const stream = fs_1.default.createReadStream(filePath);
+            return reply.send(stream);
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err?.message || 'failed to download database file' });
+        }
+    });
     app.post('/databases/:id/backup', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;

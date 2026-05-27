@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive, Zap } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive, Zap, Download } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -98,6 +98,29 @@ export default function DatabaseDetailPage() {
       setError(err.message);
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function handleDownloadDatabase() {
+    try {
+      const response = await fetch(`/api/v1/databases/${id}/download`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error('Failed to download database file');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${database?.name || 'database'}.db`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message || 'Error downloading database');
     }
   }
 
@@ -216,6 +239,12 @@ export default function DatabaseDetailPage() {
                 className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
               >
                 <Pencil size={16} /> Edit Database
+              </button>
+              <button
+                onClick={handleDownloadDatabase}
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+              >
+                <Download size={16} /> Download
               </button>
               <button
                 onClick={handleDeleteDatabase}

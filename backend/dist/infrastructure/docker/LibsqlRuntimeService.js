@@ -336,24 +336,6 @@ class LibsqlRuntimeService {
                     const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
                     try {
                         await client.execute('SELECT 1');
-                        // Apply SQLite/libSQL performance and concurrency optimizations to the database
-                        try {
-                            await client.batch([
-                                'PRAGMA journal_mode = WAL',
-                                'PRAGMA synchronous = NORMAL',
-                                'PRAGMA busy_timeout = 10000',
-                                'PRAGMA cache_size = -20000',
-                                'PRAGMA temp_store = MEMORY'
-                            ], 'write');
-                        }
-                        catch {
-                            // Fallback to sequential execution if batch is not supported or fails
-                            await client.execute('PRAGMA journal_mode = WAL').catch(() => undefined);
-                            await client.execute('PRAGMA synchronous = NORMAL').catch(() => undefined);
-                            await client.execute('PRAGMA busy_timeout = 10000').catch(() => undefined);
-                            await client.execute('PRAGMA cache_size = -20000').catch(() => undefined);
-                            await client.execute('PRAGMA temp_store = MEMORY').catch(() => undefined);
-                        }
                         return url;
                     }
                     finally {

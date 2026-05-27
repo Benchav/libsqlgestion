@@ -36,7 +36,7 @@ test('sqlite exec runs a multi-statement script atomically', async () => {
     const rows = await client.all('SELECT name FROM users ORDER BY id');
     assert.deepEqual(rows.map((row) => row.name), ['A', 'B']);
   } finally {
-    client.close();
+    await client.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

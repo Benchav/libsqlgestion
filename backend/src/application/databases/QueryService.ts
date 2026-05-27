@@ -47,51 +47,31 @@ export class QueryService {
       const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
       try {
         if (isScript) {
-          const statementResults: StatementExecutionResult[] = [];
-          let rows: unknown[] | undefined;
-          let rowsAffected = 0;
-          let lastInsertRowid: unknown;
+          const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
+          const results = await client.batch(batchArgs, 'write');
+          
+          const statementResults: StatementExecutionResult[] = results.map((result, index) => {
+            const statement = statements[index];
+            const isRead = READ_ONLY_REGEX.test(statement);
+            return {
+              index: index + 1,
+              sql: statement,
+              kind: isRead ? 'read' : 'write',
+              rows: result.rows,
+              rowsAffected: Number(result.rowsAffected ?? 0),
+              lastInsertRowid: result.lastInsertRowid,
+            };
+          });
 
-          await client.execute('BEGIN IMMEDIATE');
-          try {
-            for (const [index, statement] of statements.entries()) {
-              if (READ_ONLY_REGEX.test(statement)) {
-                const result = await client.execute(statement);
-                const step: StatementExecutionResult = {
-                  index: index + 1,
-                  sql: statement,
-                  kind: 'read',
-                  rows: result.rows,
-                };
-                statementResults.push(step);
-                rows = result.rows;
-                continue;
-              }
-
-              const result = await client.execute(statement);
-              const affected = Number(result.rowsAffected ?? 0);
-              const step: StatementExecutionResult = {
-                index: index + 1,
-                sql: statement,
-                kind: 'write',
-                rowsAffected: affected,
-                lastInsertRowid: result.lastInsertRowid,
-              };
-              statementResults.push(step);
-              rowsAffected += affected;
-              lastInsertRowid = result.lastInsertRowid;
-            }
-
-            await client.execute('COMMIT');
-          } catch (error) {
-            await client.execute('ROLLBACK').catch(() => undefined);
-            throw error;
-          }
+          // Aggregate values for compatibility with overall query result
+          const lastResult = results[results.length - 1];
+          const rowsAffected = results.reduce((acc, r) => acc + Number(r.rowsAffected ?? 0), 0);
+          const lastInsertRowid = lastResult?.lastInsertRowid;
 
           return {
             ok: true,
             statementsExecuted: statements.length,
-            rows,
+            rows: lastResult?.rows,
             rowsAffected,
             lastInsertRowid,
             statementResults,

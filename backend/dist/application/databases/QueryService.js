@@ -26,48 +26,28 @@ class QueryService {
             const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, (0, crypto_1.decrypt)(database.encryptedToken));
             try {
                 if (isScript) {
-                    const statementResults = [];
-                    let rows;
-                    let rowsAffected = 0;
-                    let lastInsertRowid;
-                    await client.execute('BEGIN IMMEDIATE');
-                    try {
-                        for (const [index, statement] of statements.entries()) {
-                            if (READ_ONLY_REGEX.test(statement)) {
-                                const result = await client.execute(statement);
-                                const step = {
-                                    index: index + 1,
-                                    sql: statement,
-                                    kind: 'read',
-                                    rows: result.rows,
-                                };
-                                statementResults.push(step);
-                                rows = result.rows;
-                                continue;
-                            }
-                            const result = await client.execute(statement);
-                            const affected = Number(result.rowsAffected ?? 0);
-                            const step = {
-                                index: index + 1,
-                                sql: statement,
-                                kind: 'write',
-                                rowsAffected: affected,
-                                lastInsertRowid: result.lastInsertRowid,
-                            };
-                            statementResults.push(step);
-                            rowsAffected += affected;
-                            lastInsertRowid = result.lastInsertRowid;
-                        }
-                        await client.execute('COMMIT');
-                    }
-                    catch (error) {
-                        await client.execute('ROLLBACK').catch(() => undefined);
-                        throw error;
-                    }
+                    const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
+                    const results = await client.batch(batchArgs, 'write');
+                    const statementResults = results.map((result, index) => {
+                        const statement = statements[index];
+                        const isRead = READ_ONLY_REGEX.test(statement);
+                        return {
+                            index: index + 1,
+                            sql: statement,
+                            kind: isRead ? 'read' : 'write',
+                            rows: result.rows,
+                            rowsAffected: Number(result.rowsAffected ?? 0),
+                            lastInsertRowid: result.lastInsertRowid,
+                        };
+                    });
+                    // Aggregate values for compatibility with overall query result
+                    const lastResult = results[results.length - 1];
+                    const rowsAffected = results.reduce((acc, r) => acc + Number(r.rowsAffected ?? 0), 0);
+                    const lastInsertRowid = lastResult?.lastInsertRowid;
                     return {
                         ok: true,
                         statementsExecuted: statements.length,
-                        rows,
+                        rows: lastResult?.rows,
                         rowsAffected,
                         lastInsertRowid,
                         statementResults,

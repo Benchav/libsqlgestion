@@ -17,6 +17,7 @@ const HealthController_1 = __importDefault(require("./controllers/HealthControll
 const DiscoveryController_1 = __importDefault(require("./controllers/DiscoveryController"));
 const MigrationController_1 = __importDefault(require("./controllers/MigrationController"));
 const SchemaManagementController_1 = __importDefault(require("./controllers/SchemaManagementController"));
+const MetricsController_1 = __importDefault(require("./controllers/MetricsController"));
 async function routes(app) {
     app.register(HealthController_1.default);
     app.register(AuthController_1.default);
@@ -31,4 +32,5 @@ async function routes(app) {
     app.register(DiscoveryController_1.default);
     app.register(MigrationController_1.default);
     app.register(SchemaManagementController_1.default);
+    app.register(MetricsController_1.default);
 }

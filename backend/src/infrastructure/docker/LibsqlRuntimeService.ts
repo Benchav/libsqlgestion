@@ -457,6 +457,17 @@ export class LibsqlRuntimeService {
     }
   }
 
+  async getContainerStats(containerId: string): Promise<{ memoryBytes: number }> {
+    try {
+      const stats = await this.requestJson('GET', `/containers/${containerId}/stats?stream=false`);
+      return {
+        memoryBytes: typeof stats?.memory_stats?.usage === 'number' ? stats.memory_stats.usage : 0,
+      };
+    } catch {
+      return { memoryBytes: 0 };
+    }
+  }
+
   private async fetchContainerLogs(containerId: string) {
     try {
       const response = await this.request('GET', `/containers/${containerId}/logs?stdout=true&stderr=true&tail=80`);

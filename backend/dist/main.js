@@ -11,6 +11,7 @@ const server_1 = require("./server");
 const auth_bootstrap_1 = require("./application/auth/auth.bootstrap");
 const DiscoveryService_1 = require("./application/databases/DiscoveryService");
 const PlatformSettingsService_1 = require("./application/settings/PlatformSettingsService");
+const ConnectionPool_1 = require("./infrastructure/db/ConnectionPool");
 const start = async () => {
     await data_source_1.AppDataSource.initialize();
     await data_source_1.AppDataSource.runMigrations();
@@ -32,5 +33,23 @@ const start = async () => {
         app.log.error(err);
         process.exit(1);
     }
+    // Graceful shutdown: close all pooled database connections before exiting
+    const shutdown = async (signal) => {
+        console.log(`\n${signal} received — shutting down gracefully...`);
+        try {
+            const pool = ConnectionPool_1.ConnectionPool.getInstance();
+            console.log(`Closing ${pool.size} pooled database connection(s)...`);
+            await pool.shutdown();
+            await app.close();
+            await data_source_1.AppDataSource.destroy();
+            console.log('Shutdown complete.');
+        }
+        catch (err) {
+            console.error('Error during shutdown:', err);
+        }
+        process.exit(0);
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 };
 start();

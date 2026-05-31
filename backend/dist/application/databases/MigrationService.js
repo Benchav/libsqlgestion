@@ -9,8 +9,7 @@ const data_source_1 = require("../../infrastructure/db/data-source");
 const Database_1 = require("../../domain/entities/Database");
 const DatabaseMigration_1 = require("../../domain/entities/DatabaseMigration");
 const SqliteClient_1 = require("../../infrastructure/sqlite/SqliteClient");
-const LibsqlClient_1 = require("../../infrastructure/libsql/LibsqlClient");
-const crypto_2 = require("../../infrastructure/crypto");
+const ConnectionPool_1 = require("../../infrastructure/db/ConnectionPool");
 const AuditService_1 = require("../audit/AuditService");
 class MigrationService {
     constructor() {
@@ -158,9 +157,10 @@ class MigrationService {
      * If any statement fails, all changes are rolled back.
      */
     async applyToSqlite(database, statements) {
+        const pool = ConnectionPool_1.ConnectionPool.getInstance();
         let client;
         try {
-            client = new SqliteClient_1.SqliteClient(database.url || '');
+            client = pool.getSqliteClient(database);
         }
         catch (error) {
             throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
@@ -178,10 +178,8 @@ class MigrationService {
                 await client.run('ROLLBACK;');
             }
             catch { /* ignore rollback errors */ }
+            pool.evictOnError(database.id, error);
             throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
-        }
-        finally {
-            client.close();
         }
     }
     /**
@@ -191,7 +189,8 @@ class MigrationService {
     async applyToLibsql(database, statements) {
         if (!database.url || !database.encryptedToken)
             throw new Error('missing url or token');
-        const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, (0, crypto_2.decrypt)(database.encryptedToken));
+        const pool = ConnectionPool_1.ConnectionPool.getInstance();
+        const client = pool.getClient(database);
         try {
             // Attempt batch execution for atomicity
             try {
@@ -205,10 +204,8 @@ class MigrationService {
             }
         }
         catch (error) {
+            pool.evictOnError(database.id, error);
             throw new SqliteClient_1.DatabaseError('LIBSQL_ERROR', error.message || 'Remote migration failed', true);
-        }
-        finally {
-            client.close();
         }
     }
 }

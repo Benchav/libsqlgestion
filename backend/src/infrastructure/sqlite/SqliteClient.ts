@@ -82,23 +82,12 @@ export class SqliteClient {
       throw new DatabaseError('SQLITE_CANTOPEN', `Path is a directory, not a database file: ${filePath}`, false);
     }
 
-    const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
 
-    // Validate that the file starts with a valid SQLite header (first 16 bytes)
-    if (stat && stat.size > 0) {
-      const fd = fs.openSync(filePath, 'r');
-      const header = Buffer.alloc(16);
-      fs.readSync(fd, header, 0, 16, 0);
-      fs.closeSync(fd);
-      const magic = header.toString('ascii', 0, 15);
-      if (magic !== 'SQLite format 3') {
-        throw new DatabaseError('SQLITE_NOTADB', `The file is not a valid SQLite database: ${filePath}`, false);
-      }
-    }
 
     this.db = new sqlite3.Database(filePath);
     // Apply SQLite performance and concurrency tuning immediately after opening
     this.db.serialize(() => {
+      this.db.run('PRAGMA journal_mode = WAL;');
       this.db.run('PRAGMA busy_timeout = 10000;');
       this.db.run('PRAGMA synchronous = NORMAL;');
       this.db.run('PRAGMA cache_size = -20000;');
@@ -156,10 +145,32 @@ export class SqliteClient {
   }
 
   /**
-   * Validates that the database file is not corrupted by running PRAGMA integrity_check.
+   * Validates that the database file is not corrupted.
+   * Includes a header check (moved from constructor to avoid blocking I/O on every query)
+   * and a PRAGMA integrity_check.
    */
   async checkIntegrity(): Promise<{ ok: boolean; details: string }> {
     try {
+      // Quick header validation (was previously in constructor, blocking every request)
+      const filePath = (this.db as any).filename;
+      if (filePath && typeof filePath === 'string') {
+        try {
+          const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+          if (stat && stat.size > 0) {
+            const fd = fs.openSync(filePath, 'r');
+            const header = Buffer.alloc(16);
+            fs.readSync(fd, header, 0, 16, 0);
+            fs.closeSync(fd);
+            const magic = header.toString('ascii', 0, 15);
+            if (magic !== 'SQLite format 3') {
+              return { ok: false, details: `The file is not a valid SQLite database: ${filePath}` };
+            }
+          }
+        } catch {
+          // If we can't read the header, fall through to integrity_check
+        }
+      }
+
       const result = await this.all('PRAGMA integrity_check(1)');
       const firstRow = result[0] as { integrity_check?: string } | undefined;
       const status = firstRow?.integrity_check || 'unknown';

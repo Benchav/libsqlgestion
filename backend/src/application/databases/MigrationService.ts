@@ -4,8 +4,7 @@ import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { DatabaseMigration } from '../../domain/entities/DatabaseMigration';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
-import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
-import { decrypt } from '../../infrastructure/crypto';
+import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { AuditService } from '../audit/AuditService';
 
 export class MigrationService {
@@ -175,9 +174,10 @@ export class MigrationService {
    * If any statement fails, all changes are rolled back.
    */
   private async applyToSqlite(database: Database, statements: string[]) {
+    const pool = ConnectionPool.getInstance();
     let client: SqliteClient;
     try {
-      client = new SqliteClient(database.url || '');
+      client = pool.getSqliteClient(database);
     } catch (error: any) {
       throw error instanceof DatabaseError ? error : DatabaseError.from(error);
     }
@@ -191,9 +191,8 @@ export class MigrationService {
     } catch (error: any) {
       // Attempt rollback — if it fails, the original error is still thrown
       try { await client.run('ROLLBACK;'); } catch { /* ignore rollback errors */ }
+      pool.evictOnError(database.id, error);
       throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-    } finally {
-      client.close();
     }
   }
 
@@ -203,7 +202,8 @@ export class MigrationService {
    */
   private async applyToLibsql(database: Database, statements: string[]) {
     if (!database.url || !database.encryptedToken) throw new Error('missing url or token');
-    const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+    const pool = ConnectionPool.getInstance();
+    const client = pool.getClient(database);
     try {
       // Attempt batch execution for atomicity
       try {
@@ -211,13 +211,12 @@ export class MigrationService {
       } catch {
         // Fallback: execute one by one (older libsql clients)
         for (const statement of statements) {
-          await client.execute(statement);
+          await (client as any).execute(statement);
         }
       }
     } catch (error: any) {
+      pool.evictOnError(database.id, error);
       throw new DatabaseError('LIBSQL_ERROR', error.message || 'Remote migration failed', true);
-    } finally {
-      client.close();
     }
   }
 }

@@ -69,21 +69,10 @@ class SqliteClient {
         if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isDirectory()) {
             throw new DatabaseError('SQLITE_CANTOPEN', `Path is a directory, not a database file: ${filePath}`, false);
         }
-        const stat = fs_1.default.existsSync(filePath) ? fs_1.default.statSync(filePath) : null;
-        // Validate that the file starts with a valid SQLite header (first 16 bytes)
-        if (stat && stat.size > 0) {
-            const fd = fs_1.default.openSync(filePath, 'r');
-            const header = Buffer.alloc(16);
-            fs_1.default.readSync(fd, header, 0, 16, 0);
-            fs_1.default.closeSync(fd);
-            const magic = header.toString('ascii', 0, 15);
-            if (magic !== 'SQLite format 3') {
-                throw new DatabaseError('SQLITE_NOTADB', `The file is not a valid SQLite database: ${filePath}`, false);
-            }
-        }
         this.db = new sqlite3_1.default.Database(filePath);
         // Apply SQLite performance and concurrency tuning immediately after opening
         this.db.serialize(() => {
+            this.db.run('PRAGMA journal_mode = WAL;');
             this.db.run('PRAGMA busy_timeout = 10000;');
             this.db.run('PRAGMA synchronous = NORMAL;');
             this.db.run('PRAGMA cache_size = -20000;');
@@ -140,10 +129,32 @@ class SqliteClient {
         };
     }
     /**
-     * Validates that the database file is not corrupted by running PRAGMA integrity_check.
+     * Validates that the database file is not corrupted.
+     * Includes a header check (moved from constructor to avoid blocking I/O on every query)
+     * and a PRAGMA integrity_check.
      */
     async checkIntegrity() {
         try {
+            // Quick header validation (was previously in constructor, blocking every request)
+            const filePath = this.db.filename;
+            if (filePath && typeof filePath === 'string') {
+                try {
+                    const stat = fs_1.default.existsSync(filePath) ? fs_1.default.statSync(filePath) : null;
+                    if (stat && stat.size > 0) {
+                        const fd = fs_1.default.openSync(filePath, 'r');
+                        const header = Buffer.alloc(16);
+                        fs_1.default.readSync(fd, header, 0, 16, 0);
+                        fs_1.default.closeSync(fd);
+                        const magic = header.toString('ascii', 0, 15);
+                        if (magic !== 'SQLite format 3') {
+                            return { ok: false, details: `The file is not a valid SQLite database: ${filePath}` };
+                        }
+                    }
+                }
+                catch {
+                    // If we can't read the header, fall through to integrity_check
+                }
+            }
             const result = await this.all('PRAGMA integrity_check(1)');
             const firstRow = result[0];
             const status = firstRow?.integrity_check || 'unknown';

@@ -3,9 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaService = void 0;
 const data_source_1 = require("../../infrastructure/db/data-source");
 const Database_1 = require("../../domain/entities/Database");
-const SqliteClient_1 = require("../../infrastructure/sqlite/SqliteClient");
-const LibsqlClient_1 = require("../../infrastructure/libsql/LibsqlClient");
-const crypto_1 = require("../../infrastructure/crypto");
+const ConnectionPool_1 = require("../../infrastructure/db/ConnectionPool");
 function quoteIdentifier(identifier) {
     return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -35,21 +33,23 @@ class SchemaService {
     }
     async getSchema(databaseId) {
         const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+        const pool = ConnectionPool_1.ConnectionPool.getInstance();
         if (database.type !== 'sqlite') {
             if (!database.url || !database.encryptedToken) {
                 return { tables: [], note: 'missing url or token' };
             }
-            const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, (0, crypto_1.decrypt)(database.encryptedToken));
+            const client = pool.getClient(database);
             try {
                 const tables = await loadSchemaEntries(client, 'table');
                 const views = await loadSchemaEntries(client, 'view');
                 return { tables, views };
             }
-            finally {
-                client.close();
+            catch (error) {
+                pool.evictOnError(database.id, error);
+                throw error;
             }
         }
-        const client = new SqliteClient_1.SqliteClient(database.url || '');
+        const client = pool.getSqliteClient(database);
         try {
             const tables = await loadSchemaEntries({
                 execute: async (sql) => ({ rows: (await client.all(sql)) }),
@@ -59,8 +59,9 @@ class SchemaService {
             }, 'view');
             return { tables, views };
         }
-        finally {
-            client.close();
+        catch (error) {
+            pool.evictOnError(database.id, error);
+            throw error;
         }
     }
 }

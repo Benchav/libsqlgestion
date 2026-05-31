@@ -2,8 +2,7 @@ import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { AuditService } from '../audit/AuditService';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
-import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
-import { decrypt } from '../../infrastructure/crypto';
+import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 
 function quoteIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -205,28 +204,27 @@ export class SchemaManagementService {
   async deleteTable(databaseId: string, tableName: string, actorId?: string) {
     const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
     const safeTableName = validateTableName(tableName);
+    const pool = ConnectionPool.getInstance();
 
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        await client.execute(`DROP TABLE IF EXISTS ${quoteIdentifier(safeTableName)}`);
+        await (client as any).execute(`DROP TABLE IF EXISTS ${quoteIdentifier(safeTableName)}`);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to drop table', true);
-      } finally {
-        client.close();
       }
     } else {
-      const client = new SqliteClient(database.url || '');
+      const client = pool.getSqliteClient(database);
       try {
         await client.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(safeTableName)};`);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-      } finally {
-        client.close();
       }
     }
 
@@ -251,28 +249,27 @@ export class SchemaManagementService {
     }
 
     const sql = `ALTER TABLE ${quoteIdentifier(safeTableName)} RENAME TO ${quoteIdentifier(safeNextTableName)}`;
+    const pool = ConnectionPool.getInstance();
 
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        await client.execute(sql);
+        await (client as any).execute(sql);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to rename table', true);
-      } finally {
-        client.close();
       }
     } else {
-      const client = new SqliteClient(database.url || '');
+      const client = pool.getSqliteClient(database);
       try {
         await client.exec(`${sql};`);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-      } finally {
-        client.close();
       }
     }
 
@@ -303,28 +300,27 @@ export class SchemaManagementService {
     }
 
     const sql = parts.join(' ');
+    const pool = ConnectionPool.getInstance();
 
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        await client.execute(sql);
+        await (client as any).execute(sql);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to add column', true);
-      } finally {
-        client.close();
       }
     } else {
-      const client = new SqliteClient(database.url || '');
+      const client = pool.getSqliteClient(database);
       try {
         await client.exec(`${sql};`);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-      } finally {
-        client.close();
       }
     }
 
@@ -350,28 +346,27 @@ export class SchemaManagementService {
     }
 
     const sql = `ALTER TABLE ${quoteIdentifier(safeTableName)} RENAME COLUMN ${quoteIdentifier(safeColumnName)} TO ${quoteIdentifier(safeNextColumnName)}`;
+    const pool = ConnectionPool.getInstance();
 
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        await client.execute(sql);
+        await (client as any).execute(sql);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to rename column', true);
-      } finally {
-        client.close();
       }
     } else {
-      const client = new SqliteClient(database.url || '');
+      const client = pool.getSqliteClient(database);
       try {
         await client.exec(`${sql};`);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-      } finally {
-        client.close();
       }
     }
 
@@ -390,29 +385,30 @@ export class SchemaManagementService {
     const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
     const safeTableName = validateTableName(tableName);
     const safeColumnName = validateColumnName(columnName);
+    const pool = ConnectionPool.getInstance();
 
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        await client.execute(`ALTER TABLE ${quoteIdentifier(safeTableName)} DROP COLUMN ${quoteIdentifier(safeColumnName)}`);
+        await (client as any).execute(`ALTER TABLE ${quoteIdentifier(safeTableName)} DROP COLUMN ${quoteIdentifier(safeColumnName)}`);
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to delete column', true);
-      } finally {
-        client.close();
       }
     } else {
-      const client = new SqliteClient(database.url || '');
+      const client = pool.getSqliteClient(database);
       try {
         await client.exec(`ALTER TABLE ${quoteIdentifier(safeTableName)} DROP COLUMN ${quoteIdentifier(safeColumnName)};`);
       } catch (error: any) {
         const fallback = await this.rebuildWithoutColumn(client, safeTableName, safeColumnName);
-        if (!fallback.ok) throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-      } finally {
-        client.close();
+        if (!fallback.ok) {
+          pool.evictOnError(database.id, error);
+          throw error instanceof DatabaseError ? error : DatabaseError.from(error);
+        }
       }
     }
 
@@ -432,28 +428,27 @@ export class SchemaManagementService {
     const safeTableName = validateTableName(tableName);
     const safeColumnName = validateColumnName(columnName);
     const safeNextType = validateColumnType(nextType);
+    const pool = ConnectionPool.getInstance();
 
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        await this.rebuildTableWithClient(client, safeTableName, (parts) => this.transformColumnType(parts, safeColumnName, safeNextType));
+        await this.rebuildTableWithClient(client as any, safeTableName, (parts) => this.transformColumnType(parts, safeColumnName, safeNextType));
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to change column type', true);
-      } finally {
-        client.close();
       }
     } else {
-      const client = new SqliteClient(database.url || '');
+      const client = pool.getSqliteClient(database);
       try {
         await this.rebuildTableWithClient(client, safeTableName, (parts) => this.transformColumnType(parts, safeColumnName, safeNextType));
       } catch (error: any) {
+        pool.evictOnError(database.id, error);
         throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-      } finally {
-        client.close();
       }
     }
 
@@ -473,7 +468,7 @@ export class SchemaManagementService {
   }
 
   private async rebuildTableWithClient(
-    client: SqliteClient | ReturnType<typeof createLibsqlClient>,
+    client: SqliteClient | { execute: (sql: string) => Promise<any> },
     tableName: string,
     transform: (parts: { createSql: string; columnDefs: string[]; tableConstraints: string[]; indexes: Array<{ name: string; sql: string }> }) => { columnDefs: string[]; tableConstraints: string[]; indexSqls: string[] },
   ) {

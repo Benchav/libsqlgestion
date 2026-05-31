@@ -1,8 +1,7 @@
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
-import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
-import { decrypt } from '../../infrastructure/crypto';
+import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 
 type SchemaEntry = {
   table: string;
@@ -45,22 +44,25 @@ export class SchemaService {
 
   async getSchema(databaseId: string) {
     const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const pool = ConnectionPool.getInstance();
+
     if (database.type !== 'sqlite') {
       if (!database.url || !database.encryptedToken) {
         return { tables: [], note: 'missing url or token' };
       }
 
-      const client = createLibsqlClient(database.url, decrypt(database.encryptedToken));
+      const client = pool.getClient(database);
       try {
-        const tables = await loadSchemaEntries(client, 'table');
-        const views = await loadSchemaEntries(client, 'view');
+        const tables = await loadSchemaEntries(client as any, 'table');
+        const views = await loadSchemaEntries(client as any, 'view');
         return { tables, views };
-      } finally {
-        client.close();
+      } catch (error: any) {
+        pool.evictOnError(database.id, error);
+        throw error;
       }
     }
 
-    const client = new SqliteClient(database.url || '');
+    const client = pool.getSqliteClient(database);
     try {
       const tables = await loadSchemaEntries(
         {
@@ -76,8 +78,9 @@ export class SchemaService {
       );
 
       return { tables, views };
-    } finally {
-      client.close();
+    } catch (error: any) {
+      pool.evictOnError(database.id, error);
+      throw error;
     }
   }
 }

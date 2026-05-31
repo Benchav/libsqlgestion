@@ -17,6 +17,7 @@ const SqliteClient_1 = require("../../infrastructure/sqlite/SqliteClient");
 const slug_1 = require("../../infrastructure/security/slug");
 const SqliteStorageService_1 = require("../../infrastructure/storage/SqliteStorageService");
 const LibsqlRuntimeService_1 = require("../../infrastructure/docker/LibsqlRuntimeService");
+const ConnectionPool_1 = require("../../infrastructure/db/ConnectionPool");
 class DatabaseService {
     constructor() {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
@@ -188,6 +189,8 @@ class DatabaseService {
         const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
         if (!database)
             throw new Error('database not found');
+        // Evict old connection from pool before rotating credentials
+        ConnectionPool_1.ConnectionPool.getInstance().evict(id);
         if (this.isManagedRuntime(database)) {
             const runtime = await this.runtimeService.rotateDatabase(database);
             if (!runtime) {
@@ -269,6 +272,8 @@ class DatabaseService {
         const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
         if (!database)
             throw new Error('database not found');
+        // Evict connection from pool before removing the database
+        ConnectionPool_1.ConnectionPool.getInstance().evict(id);
         await this.runtimeService.removeDatabase(database);
         await this.databaseRepo.remove(database);
         await this.auditService.record({

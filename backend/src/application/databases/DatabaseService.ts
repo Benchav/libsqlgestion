@@ -11,6 +11,7 @@ import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
 import { ensureSubdomain } from '../../infrastructure/security/slug';
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
+import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -204,6 +205,8 @@ export class DatabaseService {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
 
+    // Evict old connection from pool before rotating credentials
+    ConnectionPool.getInstance().evict(id);
     if (this.isManagedRuntime(database)) {
       const runtime = await this.runtimeService.rotateDatabase(database);
       if (!runtime) {
@@ -284,6 +287,9 @@ export class DatabaseService {
   async deleteDatabase(id: string) {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
+
+    // Evict connection from pool before removing the database
+    ConnectionPool.getInstance().evict(id);
 
     await this.runtimeService.removeDatabase(database);
     await this.databaseRepo.remove(database);

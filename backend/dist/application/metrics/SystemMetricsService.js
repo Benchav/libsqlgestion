@@ -9,6 +9,7 @@ const data_source_1 = require("../../infrastructure/db/data-source");
 const Database_1 = require("../../domain/entities/Database");
 const LibsqlRuntimeService_1 = require("../../infrastructure/docker/LibsqlRuntimeService");
 const ConnectionPool_1 = require("../../infrastructure/db/ConnectionPool");
+const os_1 = __importDefault(require("os"));
 class SystemMetricsService {
     constructor() {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
@@ -72,9 +73,15 @@ class SystemMetricsService {
         }
         // Sort by largest disk/ram
         metrics.sort((a, b) => b.ramBytes - a.ramBytes || b.diskBytes - a.diskBytes);
+        const maxRamBytes = os_1.default.totalmem();
+        // Rough estimate of CPU load % over the last 1 minute on the server
+        const cpus = os_1.default.cpus().length;
+        const cpuUsagePercent = Math.min(100, Math.max(0, (os_1.default.loadavg()[0] / cpus) * 100));
         return {
             totalDiskBytes,
             totalRamBytes,
+            maxRamBytes,
+            cpuUsagePercent,
             databases: metrics,
         };
     }

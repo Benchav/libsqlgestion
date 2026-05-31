@@ -4,6 +4,8 @@ import { Database } from '../../domain/entities/Database';
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 
+import os from 'os';
+
 export type DatabaseMetric = {
   id: string;
   name: string;
@@ -16,6 +18,8 @@ export type DatabaseMetric = {
 export type SystemMetrics = {
   totalDiskBytes: number;
   totalRamBytes: number;
+  maxRamBytes: number;
+  cpuUsagePercent: number;
   databases: DatabaseMetric[];
 };
 
@@ -90,9 +94,16 @@ export class SystemMetricsService {
     // Sort by largest disk/ram
     metrics.sort((a, b) => b.ramBytes - a.ramBytes || b.diskBytes - a.diskBytes);
 
+    const maxRamBytes = os.totalmem();
+    // Rough estimate of CPU load % over the last 1 minute on the server
+    const cpus = os.cpus().length;
+    const cpuUsagePercent = Math.min(100, Math.max(0, (os.loadavg()[0] / cpus) * 100));
+
     return {
       totalDiskBytes,
       totalRamBytes,
+      maxRamBytes,
+      cpuUsagePercent,
       databases: metrics,
     };
   }

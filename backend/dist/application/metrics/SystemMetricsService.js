@@ -22,6 +22,11 @@ class SystemMetricsService {
         // Node.js base memory usage (RSS)
         let totalRamBytes = process.memoryUsage().rss;
         const metrics = [];
+        let publicRuntimeCount = 0;
+        let healthyPublicRuntimeCount = 0;
+        let unhealthyPublicRuntimeCount = 0;
+        let provisioningCount = 0;
+        let errorCount = 0;
         for (const db of databases) {
             let diskBytes = 0;
             let ramBytes = 0;
@@ -32,6 +37,27 @@ class SystemMetricsService {
                 fileCandidates.add(db.url);
             }
             const runtimeMetadata = db.metadata?.runtime;
+            const runtimeHealth = runtimeMetadata?.routeHealth && typeof runtimeMetadata.routeHealth === 'object'
+                ? {
+                    internalOk: Boolean(runtimeMetadata.routeHealth.internalOk),
+                    backendOk: Boolean(runtimeMetadata.routeHealth.backendOk),
+                    publicOk: Boolean(runtimeMetadata.routeHealth.publicOk),
+                    publicChecked: Boolean(runtimeMetadata.routeHealth.publicChecked),
+                }
+                : null;
+            if (db.status === 'provisioning')
+                provisioningCount += 1;
+            if (db.status === 'error')
+                errorCount += 1;
+            if (runtimeMetadata?.provider === 'docker-libsql') {
+                publicRuntimeCount += 1;
+                if (runtimeHealth?.internalOk && runtimeHealth?.backendOk && (!runtimeHealth.publicChecked || runtimeHealth.publicOk)) {
+                    healthyPublicRuntimeCount += 1;
+                }
+                else {
+                    unhealthyPublicRuntimeCount += 1;
+                }
+            }
             if (runtimeMetadata?.provider === 'docker-libsql' && runtimeMetadata.databasePath) {
                 fileCandidates.add(runtimeMetadata.databasePath);
             }
@@ -66,9 +92,12 @@ class SystemMetricsService {
                 id: db.id,
                 name: db.name,
                 type: db.type,
+                status: db.status,
                 diskBytes,
                 ramBytes,
                 isRamEstimated,
+                runtimeProvider: typeof runtimeMetadata?.provider === 'string' ? runtimeMetadata.provider : undefined,
+                runtimeHealth,
             });
         }
         // Sort by largest disk/ram
@@ -82,6 +111,14 @@ class SystemMetricsService {
             totalRamBytes,
             maxRamBytes,
             cpuUsagePercent,
+            runtimeSummary: {
+                publicRuntimeCount,
+                healthyPublicRuntimeCount,
+                unhealthyPublicRuntimeCount,
+                provisioningCount,
+                errorCount,
+            },
+            pool: pool.stats,
             databases: metrics,
         };
     }

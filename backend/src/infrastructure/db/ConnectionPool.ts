@@ -24,6 +24,9 @@ type PooledClient = {
 export class ConnectionPool {
   private static instance: ConnectionPool;
   private readonly pool = new Map<string, PooledClient>();
+  private readonly maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 128));
+  private readonly idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 15 * 60 * 1000));
+  private lastSweepAt = 0;
 
   private constructor() {}
 
@@ -39,12 +42,15 @@ export class ConnectionPool {
    * doesn't exist yet. The client is kept alive for future requests.
    */
   getClient(database: Database): SqliteClient | ReturnType<typeof createLibsqlClient> {
+    this.sweepIdleConnections();
+
     const existing = this.pool.get(database.id);
     if (existing) {
       existing.lastUsed = Date.now();
       return existing.client;
     }
 
+    this.ensureCapacity();
     const entry = this.createClient(database);
     this.pool.set(database.id, entry);
     return entry.client;
@@ -71,7 +77,7 @@ export class ConnectionPool {
     if (!entry) return;
 
     this.pool.delete(databaseId);
-    this.closeClient(entry);
+    void this.closeClient(entry);
   }
 
   /**
@@ -91,7 +97,7 @@ export class ConnectionPool {
     this.pool.clear();
 
     for (const [, entry] of entries) {
-      this.closeClient(entry);
+      await this.closeClient(entry);
     }
   }
 
@@ -100,6 +106,14 @@ export class ConnectionPool {
    */
   get size(): number {
     return this.pool.size;
+  }
+
+  get stats() {
+    return {
+      size: this.pool.size,
+      maxSize: this.maxSize,
+      idleTtlMs: this.idleTtlMs,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -123,10 +137,10 @@ export class ConnectionPool {
     return { client, type: 'libsql', lastUsed: Date.now() };
   }
 
-  private closeClient(entry: PooledClient): void {
+  private async closeClient(entry: PooledClient): Promise<void> {
     try {
       if (entry.type === 'sqlite') {
-        (entry.client as SqliteClient).close();
+        await (entry.client as SqliteClient).close();
       } else {
         (entry.client as ReturnType<typeof createLibsqlClient>).close();
       }
@@ -145,5 +159,36 @@ export class ConnectionPool {
       msg.includes('not a database') ||
       msg.includes('database disk image is malformed')
     );
+  }
+
+  private sweepIdleConnections() {
+    const now = Date.now();
+    if (now - this.lastSweepAt < 30_000) {
+      return;
+    }
+
+    this.lastSweepAt = now;
+    for (const [databaseId, entry] of this.pool.entries()) {
+      if (now - entry.lastUsed <= this.idleTtlMs) {
+        continue;
+      }
+
+      this.pool.delete(databaseId);
+      void this.closeClient(entry);
+    }
+  }
+
+  private ensureCapacity() {
+    if (this.pool.size < this.maxSize) {
+      return;
+    }
+
+    const oldest = Array.from(this.pool.entries()).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+    if (!oldest) {
+      return;
+    }
+
+    this.pool.delete(oldest[0]);
+    void this.closeClient(oldest[1]);
   }
 }

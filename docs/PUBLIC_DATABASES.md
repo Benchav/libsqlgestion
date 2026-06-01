@@ -84,6 +84,16 @@ Once deployed, open your LibSQLite Panel to tell the backend how to build your p
 
 Now, whenever you create or import a database, the panel will dynamically inject Traefik labels into the container using this domain and generate a public `URL` like `https://[database-name].yourdomain.com`.
 
+### Runtime health expectation
+Managed public databases are considered healthy only when LibSQLite can verify all of the following:
+
+1. the `libsql-server` container is running
+2. the internal runtime URL responds
+3. the backend-reachable URL responds
+4. the public subdomain responds when a real public domain is configured
+
+If any of these checks fail during provisioning, the database stays in an error state instead of silently degrading to a local-only runtime.
+
 ## 5. Using the Database in your ERP / API
 
 Once your database is created and active, you can consume it exactly like a Turso database. **No code changes are required in your application.**
@@ -95,6 +105,33 @@ TURSO_DATABASE_URL=https://[database-name].yourdomain.com
 TURSO_DATABASE_URL=libsql://[database-name].yourdomain.com
 
 TURSO_AUTH_TOKEN=eyJhbGciOiJFZERTQSIsInR...
+```
+
+LibSQLite now also exposes a public HTTPS URL and a public `libsql://` URL separately in the panel. Prefer the `libsql://` URL for production clients that support it, and use the HTTPS URL as a fallback.
+
+### Optional production runtime flags
+You can further tune a production deployment with these optional environment variables:
+
+```env
+# Runtime token TTL in seconds
+LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
+
+# Optional in-process async provisioning for managed public runtimes
+LIBSQL_PROVISION_ASYNC=false
+
+# SQLite tuning profile: safe | balanced | performance
+SQLITE_PERFORMANCE_PROFILE=balanced
+
+# Optional explicit SQLite tuning overrides
+SQLITE_BUSY_TIMEOUT_MS=10000
+SQLITE_CACHE_SIZE=-20000
+SQLITE_MMAP_SIZE=268435456
+SQLITE_SYNCHRONOUS=NORMAL
+SQLITE_TEMP_STORE=MEMORY
+
+# Backend pool tuning
+DB_CONNECTION_POOL_MAX_SIZE=128
+DB_CONNECTION_POOL_IDLE_TTL_MS=900000
 ```
 
 ### Troubleshooting a 500 Error

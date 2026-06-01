@@ -37,9 +37,14 @@ function buildDatabaseConnectionUrls(database) {
     const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
     const runtimeUrls = getRuntimeUrls(database);
     const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
+    const localUrl = database.url || '';
     const domainUrl = publicDomain && database.subdomain
         ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
         : '';
+    const libsqlPublicUrl = publicDomain && database.subdomain
+        ? `libsql://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
+        : '';
+    const runtimeProvider = getRuntimeProvider(database);
     if (runtimeUrls) {
         let publicUrl = runtimeUrls.publicUrl;
         if (template) {
@@ -53,14 +58,27 @@ function buildDatabaseConnectionUrls(database) {
         }
         return {
             publicUrl,
+            publicHttpsUrl: publicUrl,
+            publicLibsqlUrl: libsqlPublicUrl,
             internalUrl: runtimeUrls.internalUrl,
             backendUrl: runtimeUrls.backendUrl,
+        };
+    }
+    if (runtimeProvider === 'local-file') {
+        return {
+            publicUrl: '',
+            publicHttpsUrl: '',
+            publicLibsqlUrl: '',
+            internalUrl: localUrl,
+            backendUrl: localUrl,
         };
     }
     if (database.type === 'sqlite' && database.subdomain) {
         if (template) {
             return {
                 publicUrl: applyTemplate(template, database),
+                publicHttpsUrl: applyTemplate(template, database),
+                publicLibsqlUrl: libsqlPublicUrl,
                 internalUrl,
                 backendUrl: internalUrl,
             };
@@ -68,6 +86,8 @@ function buildDatabaseConnectionUrls(database) {
         if (domainUrl) {
             return {
                 publicUrl: domainUrl,
+                publicHttpsUrl: domainUrl,
+                publicLibsqlUrl: libsqlPublicUrl,
                 internalUrl,
                 backendUrl: internalUrl,
             };
@@ -75,12 +95,16 @@ function buildDatabaseConnectionUrls(database) {
         if (baseUrl) {
             return {
                 publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+                publicHttpsUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+                publicLibsqlUrl: libsqlPublicUrl,
                 internalUrl,
                 backendUrl: internalUrl,
             };
         }
         return {
             publicUrl: internalUrl,
+            publicHttpsUrl: '',
+            publicLibsqlUrl: '',
             internalUrl,
             backendUrl: internalUrl,
         };
@@ -89,12 +113,16 @@ function buildDatabaseConnectionUrls(database) {
         if (template && (database.type === 'libsql' || database.type === 'remote')) {
             return {
                 publicUrl: database.url,
+                publicHttpsUrl: database.url,
+                publicLibsqlUrl: database.url.startsWith('libsql://') ? database.url : '',
                 internalUrl: database.url,
                 backendUrl: database.url,
             };
         }
         return {
             publicUrl: database.url,
+            publicHttpsUrl: database.url.startsWith('http') ? database.url : '',
+            publicLibsqlUrl: database.url.startsWith('libsql://') ? database.url : '',
             internalUrl: database.url,
             backendUrl: database.url,
         };
@@ -102,6 +130,8 @@ function buildDatabaseConnectionUrls(database) {
     if (template && database.subdomain) {
         return {
             publicUrl: applyTemplate(template, database),
+            publicHttpsUrl: applyTemplate(template, database),
+            publicLibsqlUrl: libsqlPublicUrl,
             internalUrl,
             backendUrl: internalUrl,
         };
@@ -109,6 +139,8 @@ function buildDatabaseConnectionUrls(database) {
     if (domainUrl) {
         return {
             publicUrl: domainUrl,
+            publicHttpsUrl: domainUrl,
+            publicLibsqlUrl: libsqlPublicUrl,
             internalUrl,
             backendUrl: internalUrl,
         };
@@ -116,19 +148,27 @@ function buildDatabaseConnectionUrls(database) {
     if (baseUrl && database.subdomain) {
         return {
             publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+            publicHttpsUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+            publicLibsqlUrl: libsqlPublicUrl,
             internalUrl,
             backendUrl: internalUrl,
         };
     }
     return {
         publicUrl: internalUrl,
+        publicHttpsUrl: '',
+        publicLibsqlUrl: '',
         internalUrl,
         backendUrl: internalUrl,
     };
 }
+function getRuntimeProvider(database) {
+    const runtime = database.metadata?.runtime;
+    return typeof runtime?.provider === 'string' ? runtime.provider : '';
+}
 function getRuntimeUrls(database) {
     const runtime = database.metadata?.runtime;
-    if (!runtime) {
+    if (!runtime || runtime.provider === 'local-file') {
         return null;
     }
     const settings = (0, PlatformSettingsService_1.getPublicDatabaseSettings)();
@@ -136,13 +176,15 @@ function getRuntimeUrls(database) {
     const baseUrl = settings.baseUrl || process.env.DATABASE_PUBLIC_BASE_URL?.trim();
     const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim();
     const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
-    const backendUrl = typeof runtime.connectionUrl === 'string'
-        ? runtime.connectionUrl
-        : typeof runtime.publicUrl === 'string'
-            ? runtime.publicUrl
-            : typeof runtime.internalUrl === 'string'
-                ? runtime.internalUrl
-                : null;
+    const backendUrl = typeof runtime.backendUrl === 'string'
+        ? runtime.backendUrl
+        : typeof runtime.connectionUrl === 'string'
+            ? runtime.connectionUrl
+            : typeof runtime.publicUrl === 'string'
+                ? runtime.publicUrl
+                : typeof runtime.internalUrl === 'string'
+                    ? runtime.internalUrl
+                    : null;
     const internalUrl = typeof runtime.internalUrl === 'string'
         ? runtime.internalUrl
         : typeof runtime.publicUrl === 'string'

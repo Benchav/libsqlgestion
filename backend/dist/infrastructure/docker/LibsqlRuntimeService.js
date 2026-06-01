@@ -62,8 +62,13 @@ class LibsqlRuntimeService {
             createdContainerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
             const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-            const publicUrl = this.buildPublicUrl(publicPort);
-            const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
+            const backendUrl = this.buildBackendUrl(publicPort);
+            const publicUrl = this.buildCanonicalPublicUrl(paths.subdomain, publicPort);
+            const readiness = await this.waitForReady(createdContainerId, {
+                internalUrl,
+                backendUrl,
+                publicUrl,
+            }, authBundle.token);
             return {
                 token: authBundle.token,
                 metadata: {
@@ -74,10 +79,12 @@ class LibsqlRuntimeService {
                     databasePath,
                     authKeyPem: authBundle.publicKeyPem,
                     internalUrl,
-                    connectionUrl,
+                    connectionUrl: readiness.connectionUrl,
+                    backendUrl,
                     publicHost: this.getPublicHost(),
                     publicPort,
                     publicUrl,
+                    routeHealth: readiness.routeHealth,
                 },
             };
         }
@@ -111,8 +118,13 @@ class LibsqlRuntimeService {
             createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
             const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
-            const publicUrl = this.buildPublicUrl(publicPort);
-            const connectionUrl = (await this.waitForReady(createdContainerId, [publicUrl, internalUrl], authBundle.token)) || publicUrl;
+            const backendUrl = this.buildBackendUrl(publicPort);
+            const publicUrl = this.buildCanonicalPublicUrl(paths.subdomain, publicPort);
+            const readiness = await this.waitForReady(createdContainerId, {
+                internalUrl,
+                backendUrl,
+                publicUrl,
+            }, authBundle.token);
             return {
                 token: authBundle.token,
                 metadata: {
@@ -123,10 +135,12 @@ class LibsqlRuntimeService {
                     databasePath: runtime.databasePath,
                     authKeyPem: authBundle.publicKeyPem,
                     publicPort,
-                    connectionUrl,
+                    connectionUrl: readiness.connectionUrl,
+                    backendUrl,
                     publicHost: this.getPublicHost(),
                     publicUrl,
                     internalUrl,
+                    routeHealth: readiness.routeHealth,
                 },
             };
         }
@@ -192,6 +206,16 @@ class LibsqlRuntimeService {
     buildPublicUrl(publicPort) {
         return `${this.getPublicProtocol()}://${this.getPublicHost()}:${publicPort}`;
     }
+    buildBackendUrl(publicPort) {
+        return this.buildPublicUrl(publicPort);
+    }
+    buildCanonicalPublicUrl(subdomain, publicPort) {
+        const domain = this.getPublicDomain().replace(/^\.+/, '');
+        if (domain && domain !== 'localhost') {
+            return `${this.getPublicProtocol()}://${subdomain}.${domain}`;
+        }
+        return this.buildBackendUrl(publicPort);
+    }
     buildInternalUrl(containerName, publicPort) {
         if (containerName) {
             return `http://${containerName}:8080`;
@@ -218,6 +242,7 @@ class LibsqlRuntimeService {
             typeof runtime.authKeyPem !== 'string' ||
             typeof runtime.internalUrl !== 'string' ||
             typeof runtime.connectionUrl !== 'string' ||
+            typeof runtime.backendUrl !== 'string' ||
             typeof runtime.publicHost !== 'string' ||
             typeof runtime.publicPort !== 'string' ||
             typeof runtime.publicUrl !== 'string') {
@@ -228,9 +253,20 @@ class LibsqlRuntimeService {
     generateAuthBundle() {
         const { publicKey, privateKey } = crypto_1.default.generateKeyPairSync('ed25519');
         const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+        const issuedAt = Math.floor(Date.now() / 1000);
+        const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
+        const payload = {
+            iss: 'libsqlite',
+            aud: 'libsql-runtime',
+            sub: 'managed-runtime',
+            iat: issuedAt,
+            nbf: issuedAt,
+            exp: issuedAt + Math.max(300, expiresInSeconds),
+            jti: crypto_1.default.randomUUID(),
+        };
         const header = this.base64UrlEncode(Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' })));
-        const payload = this.base64UrlEncode(Buffer.from(JSON.stringify({})));
-        const signingInput = `${header}.${payload}`;
+        const encodedPayload = this.base64UrlEncode(Buffer.from(JSON.stringify(payload)));
+        const signingInput = `${header}.${encodedPayload}`;
         const signature = crypto_1.default.sign(null, Buffer.from(signingInput), privateKey);
         return {
             publicKeyPem,
@@ -269,6 +305,11 @@ class LibsqlRuntimeService {
                 AutoRemove: false,
                 PublishAllPorts: true,
                 RestartPolicy: { Name: 'unless-stopped' },
+                Memory: Math.max(0, Number(process.env.LIBSQL_RUNTIME_MEMORY_BYTES || 0)),
+                NanoCpus: Math.max(0, Number(process.env.LIBSQL_RUNTIME_CPU_NANO || 0)),
+                PidsLimit: Math.max(0, Number(process.env.LIBSQL_RUNTIME_PIDS_LIMIT || 0)) || undefined,
+                SecurityOpt: ['no-new-privileges:true'],
+                CapDrop: ['ALL'],
                 Binds: [
                     `${hostDirName}:/var/lib/sqld:rw`,
                 ],
@@ -331,22 +372,23 @@ class LibsqlRuntimeService {
                 const logs = await this.fetchContainerLogs(containerId);
                 throw new Error(`libSQL container stopped unexpectedly with exit code ${state.exitCode ?? 'unknown'}${logs ? `: ${logs}` : ''}`);
             }
-            for (const url of [...urls].sort((a, b) => (a.includes('host.docker.internal') ? 1 : 0) - (b.includes('host.docker.internal') ? 1 : 0))) {
-                try {
-                    const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken: token }));
-                    try {
-                        await client.execute('SELECT 1');
-                        return url;
-                    }
-                    finally {
-                        client.close();
-                    }
-                }
-                catch (error) {
-                    lastErrorMessage = error?.message || String(error);
-                    continue;
-                }
+            const internalOk = await this.canConnect(urls.internalUrl, token);
+            const backendOk = await this.canConnect(urls.backendUrl, token);
+            const publicChecked = urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl;
+            const publicOk = publicChecked ? await this.canConnect(urls.publicUrl, token) : backendOk || internalOk;
+            if (internalOk && backendOk && (!publicChecked || publicOk)) {
+                return {
+                    connectionUrl: urls.internalUrl,
+                    routeHealth: {
+                        checkedAt: new Date().toISOString(),
+                        internalOk,
+                        backendOk,
+                        publicOk,
+                        publicChecked,
+                    },
+                };
             }
+            lastErrorMessage = `internal=${internalOk} backend=${backendOk} public=${publicOk}`;
             await new Promise((resolve) => setTimeout(resolve, 500));
         }
         const state = await this.inspectContainerState(containerId);
@@ -355,6 +397,21 @@ class LibsqlRuntimeService {
             .filter(Boolean)
             .join(' | ');
         throw new Error(`Timed out waiting for libSQL to accept connections${suffix ? `: ${suffix}` : ''}`);
+    }
+    async canConnect(url, authToken) {
+        try {
+            const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken }));
+            try {
+                await client.execute('SELECT 1');
+                return true;
+            }
+            finally {
+                client.close();
+            }
+        }
+        catch {
+            return false;
+        }
     }
     getRuntimeErrorMessage(error) {
         if (error instanceof Error) {

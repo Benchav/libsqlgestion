@@ -17,15 +17,40 @@ export class AuthService {
     const existing = await this.userRepo.findOneBy({ email });
     if (existing) throw new Error('Email already registered');
 
+    if (!(await this.isRegistrationAllowed())) {
+      throw new Error('Public registration is disabled');
+    }
+
     const passwordHash = await hashPassword(password);
     const user = await this.userRepo.save(this.userRepo.create({ email, passwordHash, active: true }));
 
-    const defaultRole = await this.roleRepo.findOneBy({ name: 'admin' });
+    const defaultRoleName = await this.resolveDefaultRoleName();
+    const defaultRole = await this.roleRepo.findOneBy({ name: defaultRoleName });
     if (defaultRole) {
       await this.userRoleRepo.save(this.userRoleRepo.create({ user, role: defaultRole }));
     }
 
     return user;
+  }
+
+  private async isRegistrationAllowed() {
+    const usersCount = await this.userRepo.count();
+    if (usersCount === 0) return true;
+    return String(process.env.ALLOW_PUBLIC_REGISTRATION || 'true').toLowerCase() === 'true';
+  }
+
+  private async resolveDefaultRoleName() {
+    const adminRole = await this.roleRepo.findOneBy({ name: 'admin' });
+    const superadminRole = await this.roleRepo.findOneBy({ name: 'superadmin' });
+    const adminCount = adminRole ? await this.userRoleRepo.count({ where: { role: { id: adminRole.id } } }) : 0;
+    const superadminCount = superadminRole ? await this.userRoleRepo.count({ where: { role: { id: superadminRole.id } } }) : 0;
+    const privilegedCount = adminCount + superadminCount;
+
+    if (privilegedCount === 0) {
+      return 'admin';
+    }
+
+    return 'readonly';
   }
 
   async authenticate(email: string, password: string) {

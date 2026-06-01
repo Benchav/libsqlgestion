@@ -1,5 +1,6 @@
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { PlatformSetting } from '../../domain/entities/PlatformSetting';
+import { assertValidDomain, normalizeDomain } from '../../infrastructure/security/slug';
 
 export type PublicDatabaseSettings = {
   domain: string;
@@ -26,18 +27,35 @@ function loadEnvDefaults(): PublicDatabaseSettings {
     template: (process.env.DATABASE_PUBLIC_URL_TEMPLATE || '').trim(),
     baseUrl: (process.env.DATABASE_PUBLIC_BASE_URL || '').trim(),
     host: (process.env.DATABASE_PUBLIC_HOST || '').trim(),
-    protocol: (process.env.DATABASE_PUBLIC_PROTOCOL || 'http').trim() || 'http',
+    protocol: normalizeProtocol(process.env.DATABASE_PUBLIC_PROTOCOL),
   };
 }
 
+function normalizeProtocol(value?: string) {
+  const normalized = (value || 'https').trim().toLowerCase();
+  return normalized === 'http' ? 'http' : 'https';
+}
+
 function normalizeSettings(settings: Partial<PublicDatabaseSettings>): PublicDatabaseSettings {
+  const domain = normalizeDomain(settings.domain || '');
+  const host = normalizeDomain(settings.host || '');
+
   return {
-    domain: (settings.domain || '').trim(),
+    domain,
     template: (settings.template || '').trim(),
     baseUrl: (settings.baseUrl || '').trim(),
-    host: (settings.host || '').trim(),
-    protocol: (settings.protocol || 'http').trim() || 'http',
+    host,
+    protocol: normalizeProtocol(settings.protocol),
   };
+}
+
+function validateSettings(settings: PublicDatabaseSettings) {
+  if (settings.domain) {
+    assertValidDomain(settings.domain, 'domain');
+  }
+  if (settings.host) {
+    assertValidDomain(settings.host, 'host');
+  }
 }
 
 function mapRowsToSettings(rows: PlatformSetting[]): Partial<PublicDatabaseSettings> {
@@ -83,6 +101,7 @@ export async function reloadPublicDatabaseSettings() {
 export async function updatePublicDatabaseSettings(input: Partial<PublicDatabaseSettings>) {
   const repo = AppDataSource.getRepository(PlatformSetting);
   const settings = normalizeSettings(input);
+  validateSettings(settings);
 
   for (const [key, value] of rowsFromSettings(settings)) {
     const existing = await repo.findOneBy({ key });

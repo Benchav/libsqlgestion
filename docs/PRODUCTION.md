@@ -51,6 +51,14 @@ SQLITE_STORAGE_ROOT=/app/data/sqlite
 SQLITE_DISCOVERY_PATH=/app/data/sqlite-discovery
 SQLITE_DISCOVERY_PROJECT_ID=<project-id>
 SQLITE_DISCOVERY_ADOPT=true
+ALLOW_PUBLIC_REGISTRATION=false
+SQLITE_PERFORMANCE_PROFILE=balanced
+DB_CONNECTION_POOL_MAX_SIZE=128
+DB_CONNECTION_POOL_IDLE_TTL_MS=900000
+LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
+LIBSQL_RUNTIME_MEMORY_BYTES=0
+LIBSQL_RUNTIME_CPU_NANO=0
+LIBSQL_RUNTIME_PIDS_LIMIT=0
 ```
 
 Notes:
@@ -59,6 +67,10 @@ Notes:
 - `SQLITE_STORAGE_ROOT` is where managed SQLite files are written.
 - `SQLITE_DISCOVERY_PATH` should point to a mounted directory with existing `.db` files.
 - `SQLITE_DISCOVERY_ADOPT=true` makes the backend copy discovered files into managed storage.
+- `ALLOW_PUBLIC_REGISTRATION=false` is strongly recommended for public deployments after the initial admin bootstrap.
+- `SQLITE_PERFORMANCE_PROFILE` controls the default SQLite tuning profile.
+- `DB_CONNECTION_POOL_MAX_SIZE` and `DB_CONNECTION_POOL_IDLE_TTL_MS` tune backend client reuse.
+- `LIBSQL_RUNTIME_*` resource variables let you constrain managed runtime containers when needed.
 
 ### Backend volumes
 

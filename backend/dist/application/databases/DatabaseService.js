@@ -28,24 +28,36 @@ class DatabaseService {
     }
     async createDatabase(projectId, input) {
         const project = await this.projectRepo.findOneByOrFail({ id: projectId });
-        const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
+        const subdomain = input.subdomain ? (0, slug_1.assertValidSubdomainLabel)(input.subdomain) : (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
         let managedPath;
         let managedRuntime = null;
+        let managedRuntimeMetadata;
         const canProvisionRuntime = this.isManagedRuntimeRequest(input) && this.runtimeService.isEnabled();
+        const provisionAsync = canProvisionRuntime && this.shouldProvisionAsync();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: input.name,
             type: input.type,
             url: input.url,
             subdomain,
-            status: 'inactive',
+            status: canProvisionRuntime ? 'provisioning' : 'inactive',
             metadata: input.metadata,
             project,
         }));
         try {
             if (canProvisionRuntime) {
                 managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
+                if (provisionAsync) {
+                    this.scheduleManagedRuntimeProvisioning({
+                        databaseId: database.id,
+                        managedPath,
+                        auditAction: 'database.create',
+                        auditMetadata: { projectId, type: input.type, subdomain: input.subdomain },
+                    });
+                    return { database };
+                }
                 try {
                     managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                    managedRuntimeMetadata = managedRuntime.metadata;
                     database.url = managedPath;
                     database.status = 'active';
                     database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
@@ -59,8 +71,9 @@ class DatabaseService {
                     });
                     return { database, token: managedRuntime.token };
                 }
-                catch {
-                    // Fall through to local-file mode when the Docker libSQL runtime cannot start.
+                catch (error) {
+                    await this.markProvisioningError(database, error, managedPath);
+                    throw error;
                 }
             }
             if (input.type === 'sqlite') {
@@ -109,7 +122,10 @@ class DatabaseService {
             return { database, token };
         }
         catch (error) {
-            await this.cleanupCreatedDatabase(database.id, managedPath ? [managedPath] : [], managedRuntime?.metadata);
+            if (database.status === 'error') {
+                throw error;
+            }
+            await this.cleanupCreatedDatabase(database.id, managedPath ? [managedPath] : [], managedRuntimeMetadata);
             throw error;
         }
     }
@@ -119,22 +135,33 @@ class DatabaseService {
             throw new Error('sourcePath does not exist');
         }
         const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
-        const subdomain = input.subdomain ?? (0, slug_1.ensureSubdomain)(databaseName, (0, tokens_1.randomToken)());
+        const subdomain = input.subdomain ? (0, slug_1.assertValidSubdomainLabel)(input.subdomain) : (0, slug_1.ensureSubdomain)(databaseName, (0, tokens_1.randomToken)());
+        const canProvisionRuntime = this.runtimeService.isEnabled();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: databaseName,
             type: 'sqlite',
-            status: 'inactive',
+            status: canProvisionRuntime ? 'provisioning' : 'inactive',
             subdomain,
             metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
             project,
         }));
         const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
         let managedRuntime = null;
-        const canProvisionRuntime = this.runtimeService.isEnabled();
+        let managedRuntimeMetadata;
         try {
             if (canProvisionRuntime) {
+                if (this.shouldProvisionAsync()) {
+                    this.scheduleManagedRuntimeProvisioning({
+                        databaseId: database.id,
+                        managedPath,
+                        auditAction: 'database.import',
+                        auditMetadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain },
+                    });
+                    return { database };
+                }
                 try {
                     managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                    managedRuntimeMetadata = managedRuntime.metadata;
                     database.url = managedPath;
                     database.status = 'active';
                     database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
@@ -148,8 +175,9 @@ class DatabaseService {
                     });
                     return { database, token: managedRuntime.token };
                 }
-                catch {
-                    // Fall through to local-file mode when the Docker libSQL runtime cannot start.
+                catch (error) {
+                    await this.markProvisioningError(database, error, managedPath);
+                    throw error;
                 }
             }
             const token = input.token ?? (0, tokens_1.randomToken)();
@@ -173,7 +201,10 @@ class DatabaseService {
             return { database, token };
         }
         catch (error) {
-            await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
+            if (database.status === 'error') {
+                throw error;
+            }
+            await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntimeMetadata);
             throw error;
         }
     }
@@ -310,10 +341,11 @@ class DatabaseService {
             throw new Error('source database file not found on disk');
         }
         const subdomain = (0, slug_1.ensureSubdomain)(input.name, (0, tokens_1.randomToken)());
+        const canProvisionRuntime = this.runtimeService.isEnabled();
         const database = await this.databaseRepo.save(this.databaseRepo.create({
             name: input.name,
             type: sourceDatabase.type,
-            status: 'inactive',
+            status: canProvisionRuntime ? 'provisioning' : 'inactive',
             subdomain,
             metadata: {
                 backup: true,
@@ -326,11 +358,21 @@ class DatabaseService {
         // Copy the SQLite file byte-by-byte to the new managed location
         const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id);
         let managedRuntime = null;
-        const canProvisionRuntime = this.runtimeService.isEnabled();
+        let managedRuntimeMetadata;
         try {
             if (canProvisionRuntime) {
+                if (this.shouldProvisionAsync()) {
+                    this.scheduleManagedRuntimeProvisioning({
+                        databaseId: database.id,
+                        managedPath,
+                        auditAction: 'database.backup',
+                        auditMetadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id },
+                    });
+                    return { database };
+                }
                 try {
                     managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+                    managedRuntimeMetadata = managedRuntime.metadata;
                     database.url = managedPath;
                     database.status = 'active';
                     database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
@@ -344,8 +386,9 @@ class DatabaseService {
                     });
                     return { database, token: managedRuntime.token };
                 }
-                catch {
-                    // Fall through to local-file mode when Docker runtime cannot start.
+                catch (error) {
+                    await this.markProvisioningError(database, error, managedPath);
+                    throw error;
                 }
             }
             const token = (0, tokens_1.randomToken)();
@@ -369,7 +412,10 @@ class DatabaseService {
             return { database, token };
         }
         catch (error) {
-            await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntime?.metadata);
+            if (database.status === 'error') {
+                throw error;
+            }
+            await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntimeMetadata);
             throw error;
         }
     }
@@ -408,6 +454,44 @@ class DatabaseService {
             }
         }
     }
+    async markProvisioningError(database, error, managedPath) {
+        database.status = 'error';
+        database.url = managedPath || database.url;
+        database.metadata = {
+            ...(database.metadata ?? {}),
+            runtimeError: this.runtimeService.getRuntimeErrorMessage(error),
+            lastProvisioningAttemptAt: new Date().toISOString(),
+        };
+        await this.databaseRepo.save(database);
+    }
+    shouldProvisionAsync() {
+        return String(process.env.LIBSQL_PROVISION_ASYNC || 'false').toLowerCase() === 'true';
+    }
+    scheduleManagedRuntimeProvisioning(input) {
+        setImmediate(async () => {
+            const database = await this.databaseRepo.findOne({ where: { id: input.databaseId }, relations: ['project'] }).catch(() => null);
+            if (!database) {
+                return;
+            }
+            try {
+                const managedRuntime = await this.runtimeService.provisionDatabase(database, input.managedPath);
+                database.url = input.managedPath;
+                database.status = 'active';
+                database.encryptedToken = (0, crypto_1.encrypt)(managedRuntime.token);
+                database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+                await this.databaseRepo.save(database);
+                await this.auditService.record({
+                    action: input.auditAction,
+                    resourceType: 'database',
+                    resourceId: database.id,
+                    metadata: { ...input.auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned: true },
+                });
+            }
+            catch (error) {
+                await this.markProvisioningError(database, error, input.managedPath);
+            }
+        });
+    }
 }
 exports.DatabaseService = DatabaseService;
 function deriveDatabaseName(name, sourceName, sourcePath) {
@@ -420,6 +504,8 @@ function deriveDatabaseName(name, sourceName, sourcePath) {
 function mergeRuntimeMetadata(existing, runtime) {
     return {
         ...(existing ?? {}),
+        runtimeError: undefined,
+        lastHealthyAt: new Date().toISOString(),
         runtime,
     };
 }

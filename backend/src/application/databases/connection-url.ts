@@ -11,6 +11,8 @@ type ConnectionUrlDatabase = {
 
 type ConnectionUrls = {
   publicUrl: string;
+  publicHttpsUrl: string;
+  publicLibsqlUrl: string;
   internalUrl: string;
   backendUrl: string;
 };
@@ -53,10 +55,15 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
   const runtimeUrls = getRuntimeUrls(database);
   const internalUrl = database.subdomain ? `libsql://${database.subdomain}.libsqlite.local` : database.url || '';
+  const localUrl = database.url || '';
 
   const domainUrl = publicDomain && database.subdomain
     ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
     : '';
+  const libsqlPublicUrl = publicDomain && database.subdomain
+    ? `libsql://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
+    : '';
+  const runtimeProvider = getRuntimeProvider(database);
 
   if (runtimeUrls) {
     let publicUrl = runtimeUrls.publicUrl;
@@ -70,8 +77,20 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
 
     return {
       publicUrl,
+      publicHttpsUrl: publicUrl,
+      publicLibsqlUrl: libsqlPublicUrl,
       internalUrl: runtimeUrls.internalUrl,
       backendUrl: runtimeUrls.backendUrl,
+    };
+  }
+
+  if (runtimeProvider === 'local-file') {
+    return {
+      publicUrl: '',
+      publicHttpsUrl: '',
+      publicLibsqlUrl: '',
+      internalUrl: localUrl,
+      backendUrl: localUrl,
     };
   }
 
@@ -79,6 +98,8 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     if (template) {
       return {
         publicUrl: applyTemplate(template, database),
+        publicHttpsUrl: applyTemplate(template, database),
+        publicLibsqlUrl: libsqlPublicUrl,
         internalUrl,
         backendUrl: internalUrl,
       };
@@ -86,6 +107,8 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     if (domainUrl) {
       return {
         publicUrl: domainUrl,
+        publicHttpsUrl: domainUrl,
+        publicLibsqlUrl: libsqlPublicUrl,
         internalUrl,
         backendUrl: internalUrl,
       };
@@ -93,12 +116,16 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     if (baseUrl) {
       return {
         publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+        publicHttpsUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+        publicLibsqlUrl: libsqlPublicUrl,
         internalUrl,
         backendUrl: internalUrl,
       };
     }
     return {
       publicUrl: internalUrl,
+      publicHttpsUrl: '',
+      publicLibsqlUrl: '',
       internalUrl,
       backendUrl: internalUrl,
     };
@@ -108,12 +135,16 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     if (template && (database.type === 'libsql' || database.type === 'remote')) {
       return {
         publicUrl: database.url,
+        publicHttpsUrl: database.url,
+        publicLibsqlUrl: database.url.startsWith('libsql://') ? database.url : '',
         internalUrl: database.url,
         backendUrl: database.url,
       };
     }
     return {
       publicUrl: database.url,
+      publicHttpsUrl: database.url.startsWith('http') ? database.url : '',
+      publicLibsqlUrl: database.url.startsWith('libsql://') ? database.url : '',
       internalUrl: database.url,
       backendUrl: database.url,
     };
@@ -122,6 +153,8 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   if (template && database.subdomain) {
     return {
       publicUrl: applyTemplate(template, database),
+      publicHttpsUrl: applyTemplate(template, database),
+      publicLibsqlUrl: libsqlPublicUrl,
       internalUrl,
       backendUrl: internalUrl,
     };
@@ -130,6 +163,8 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   if (domainUrl) {
     return {
       publicUrl: domainUrl,
+      publicHttpsUrl: domainUrl,
+      publicLibsqlUrl: libsqlPublicUrl,
       internalUrl,
       backendUrl: internalUrl,
     };
@@ -138,6 +173,8 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   if (baseUrl && database.subdomain) {
     return {
       publicUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+      publicHttpsUrl: `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`,
+      publicLibsqlUrl: libsqlPublicUrl,
       internalUrl,
       backendUrl: internalUrl,
     };
@@ -145,14 +182,21 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
 
   return {
     publicUrl: internalUrl,
+    publicHttpsUrl: '',
+    publicLibsqlUrl: '',
     internalUrl,
     backendUrl: internalUrl,
   };
 }
 
+function getRuntimeProvider(database: ConnectionUrlDatabase) {
+  const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
+  return typeof runtime?.provider === 'string' ? runtime.provider : '';
+}
+
 function getRuntimeUrls(database: ConnectionUrlDatabase) {
-  const runtime = database.metadata?.runtime as { connectionUrl?: unknown; internalUrl?: unknown; publicUrl?: unknown } | undefined;
-  if (!runtime) {
+  const runtime = database.metadata?.runtime as { provider?: unknown; connectionUrl?: unknown; backendUrl?: unknown; internalUrl?: unknown; publicUrl?: unknown } | undefined;
+  if (!runtime || runtime.provider === 'local-file') {
     return null;
   }
 
@@ -162,7 +206,9 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
   const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim();
   const publicProtocol = settings.protocol || process.env.DATABASE_PUBLIC_PROTOCOL?.trim() || 'https';
 
-  const backendUrl = typeof runtime.connectionUrl === 'string'
+  const backendUrl = typeof runtime.backendUrl === 'string'
+    ? runtime.backendUrl
+    : typeof runtime.connectionUrl === 'string'
     ? runtime.connectionUrl
     : typeof runtime.publicUrl === 'string'
       ? runtime.publicUrl

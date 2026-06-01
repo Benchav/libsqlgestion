@@ -8,7 +8,7 @@ const sqlite3_1 = __importDefault(require("sqlite3"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 function getSqlitePerformanceProfile() {
-    const profile = String(process.env.SQLITE_PERFORMANCE_PROFILE || 'balanced').toLowerCase();
+    const profile = String(process.env.SQLITE_PERFORMANCE_PROFILE || 'performance').toLowerCase();
     if (profile === 'safe' || profile === 'performance')
         return profile;
     return 'balanced';
@@ -31,11 +31,11 @@ function getSqlitePerformanceConfig() {
             mmapSize: 268435456,
         },
         performance: {
-            busyTimeoutMs: 5000,
+            busyTimeoutMs: 2500,
             synchronous: 'NORMAL',
-            cacheSize: -40000,
+            cacheSize: -80000,
             tempStore: 'MEMORY',
-            mmapSize: 536870912,
+            mmapSize: 1073741824,
         },
     };
     const selected = baseConfig[profile];

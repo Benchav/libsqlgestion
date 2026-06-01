@@ -24,8 +24,8 @@ type PooledClient = {
 export class ConnectionPool {
   private static instance: ConnectionPool;
   private readonly pool = new Map<string, PooledClient>();
-  private readonly maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 128));
-  private readonly idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 15 * 60 * 1000));
+  private readonly maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 256));
+  private readonly idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 30 * 60 * 1000));
   private lastSweepAt = 0;
 
   private constructor() {}

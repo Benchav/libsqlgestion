@@ -13,7 +13,7 @@ type SqlitePerformanceConfig = {
 };
 
 function getSqlitePerformanceProfile(): SqlitePerformanceProfile {
-  const profile = String(process.env.SQLITE_PERFORMANCE_PROFILE || 'balanced').toLowerCase();
+  const profile = String(process.env.SQLITE_PERFORMANCE_PROFILE || 'performance').toLowerCase();
   if (profile === 'safe' || profile === 'performance') return profile;
   return 'balanced';
 }
@@ -36,11 +36,11 @@ function getSqlitePerformanceConfig(): SqlitePerformanceConfig {
       mmapSize: 268435456,
     },
     performance: {
-      busyTimeoutMs: 5000,
+      busyTimeoutMs: 2500,
       synchronous: 'NORMAL',
-      cacheSize: -40000,
+      cacheSize: -80000,
       tempStore: 'MEMORY',
-      mmapSize: 536870912,
+      mmapSize: 1073741824,
     },
   };
 

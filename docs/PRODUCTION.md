@@ -52,9 +52,9 @@ SQLITE_DISCOVERY_PATH=/app/data/sqlite-discovery
 SQLITE_DISCOVERY_PROJECT_ID=<project-id>
 SQLITE_DISCOVERY_ADOPT=true
 ALLOW_PUBLIC_REGISTRATION=false
-SQLITE_PERFORMANCE_PROFILE=balanced
-DB_CONNECTION_POOL_MAX_SIZE=128
-DB_CONNECTION_POOL_IDLE_TTL_MS=900000
+SQLITE_PERFORMANCE_PROFILE=performance
+DB_CONNECTION_POOL_MAX_SIZE=256
+DB_CONNECTION_POOL_IDLE_TTL_MS=1800000
 LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
 LIBSQL_RUNTIME_MEMORY_BYTES=0
 LIBSQL_RUNTIME_CPU_NANO=0
@@ -68,7 +68,7 @@ Notes:
 - `SQLITE_DISCOVERY_PATH` should point to a mounted directory with existing `.db` files.
 - `SQLITE_DISCOVERY_ADOPT=true` makes the backend copy discovered files into managed storage.
 - `ALLOW_PUBLIC_REGISTRATION=false` is strongly recommended for public deployments after the initial admin bootstrap.
-- `SQLITE_PERFORMANCE_PROFILE` controls the default SQLite tuning profile.
+- `SQLITE_PERFORMANCE_PROFILE=performance` prioritizes throughput and lower latency for ERP-style workloads.
 - `DB_CONNECTION_POOL_MAX_SIZE` and `DB_CONNECTION_POOL_IDLE_TTL_MS` tune backend client reuse.
 - `LIBSQL_RUNTIME_*` resource variables let you constrain managed runtime containers when needed.
 

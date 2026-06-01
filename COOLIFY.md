@@ -44,9 +44,9 @@ DATABASE_PUBLIC_URL_TEMPLATE=
 DATABASE_PUBLIC_BASE_URL=
 DATABASE_PUBLIC_HOST=db.example.com
 ALLOW_PUBLIC_REGISTRATION=false
-SQLITE_PERFORMANCE_PROFILE=balanced
-DB_CONNECTION_POOL_MAX_SIZE=128
-DB_CONNECTION_POOL_IDLE_TTL_MS=900000
+SQLITE_PERFORMANCE_PROFILE=performance
+DB_CONNECTION_POOL_MAX_SIZE=256
+DB_CONNECTION_POOL_IDLE_TTL_MS=1800000
 LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
 LIBSQL_RUNTIME_MEMORY_BYTES=0
 LIBSQL_RUNTIME_CPU_NANO=0
@@ -64,7 +64,7 @@ Notes:
 - `DATABASE_PUBLIC_BASE_URL` is optional if you prefer path-based URLs.
 - `DATABASE_PUBLIC_HOST` must resolve to the same host your ERP or editor will use when opening the database connection.
 - `ALLOW_PUBLIC_REGISTRATION=false` is recommended after the first admin is created.
-- `SQLITE_PERFORMANCE_PROFILE` lets you start with a balanced production tuning profile.
+- `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.

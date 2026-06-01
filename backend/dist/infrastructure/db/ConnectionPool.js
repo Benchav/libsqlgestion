@@ -19,8 +19,8 @@ const crypto_1 = require("../crypto");
 class ConnectionPool {
     constructor() {
         this.pool = new Map();
-        this.maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 128));
-        this.idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 15 * 60 * 1000));
+        this.maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 256));
+        this.idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 30 * 60 * 1000));
         this.lastSweepAt = 0;
     }
     static getInstance() {

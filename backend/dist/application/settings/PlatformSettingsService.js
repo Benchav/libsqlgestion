@@ -8,6 +8,7 @@ exports.updatePublicDatabaseSettings = updatePublicDatabaseSettings;
 exports.getPublicDatabaseSettingSource = getPublicDatabaseSettingSource;
 const data_source_1 = require("../../infrastructure/db/data-source");
 const PlatformSetting_1 = require("../../domain/entities/PlatformSetting");
+const slug_1 = require("../../infrastructure/security/slug");
 const SETTING_KEYS = {
     domain: 'DATABASE_PUBLIC_DOMAIN',
     template: 'DATABASE_PUBLIC_URL_TEMPLATE',
@@ -23,17 +24,31 @@ function loadEnvDefaults() {
         template: (process.env.DATABASE_PUBLIC_URL_TEMPLATE || '').trim(),
         baseUrl: (process.env.DATABASE_PUBLIC_BASE_URL || '').trim(),
         host: (process.env.DATABASE_PUBLIC_HOST || '').trim(),
-        protocol: (process.env.DATABASE_PUBLIC_PROTOCOL || 'http').trim() || 'http',
+        protocol: normalizeProtocol(process.env.DATABASE_PUBLIC_PROTOCOL),
     };
 }
+function normalizeProtocol(value) {
+    const normalized = (value || 'https').trim().toLowerCase();
+    return normalized === 'http' ? 'http' : 'https';
+}
 function normalizeSettings(settings) {
+    const domain = (0, slug_1.normalizeDomain)(settings.domain || '');
+    const host = (0, slug_1.normalizeDomain)(settings.host || '');
     return {
-        domain: (settings.domain || '').trim(),
+        domain,
         template: (settings.template || '').trim(),
         baseUrl: (settings.baseUrl || '').trim(),
-        host: (settings.host || '').trim(),
-        protocol: (settings.protocol || 'http').trim() || 'http',
+        host,
+        protocol: normalizeProtocol(settings.protocol),
     };
+}
+function validateSettings(settings) {
+    if (settings.domain) {
+        (0, slug_1.assertValidDomain)(settings.domain, 'domain');
+    }
+    if (settings.host) {
+        (0, slug_1.assertValidDomain)(settings.host, 'host');
+    }
 }
 function mapRowsToSettings(rows) {
     const entries = new Map(rows.map((row) => [row.key, (row.value || '').trim()]));
@@ -72,6 +87,7 @@ async function reloadPublicDatabaseSettings() {
 async function updatePublicDatabaseSettings(input) {
     const repo = data_source_1.AppDataSource.getRepository(PlatformSetting_1.PlatformSetting);
     const settings = normalizeSettings(input);
+    validateSettings(settings);
     for (const [key, value] of rowsFromSettings(settings)) {
         const existing = await repo.findOneBy({ key });
         if (!value) {

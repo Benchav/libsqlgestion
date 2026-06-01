@@ -13,12 +13,21 @@ const connection_url_1 = require("../../../application/databases/connection-url"
 const guards_1 = require("../guards");
 function withConnectionUrl(database) {
     const urls = (0, connection_url_1.buildDatabaseConnectionUrls)(database);
+    const runtime = database.metadata?.runtime;
+    const runtimeStatus = typeof database.status === 'string' ? database.status : 'inactive';
     return {
         ...database,
-        connectionUrl: urls.publicUrl,
-        publicConnectionUrl: urls.publicUrl,
+        connectionUrl: urls.publicHttpsUrl || urls.publicLibsqlUrl || urls.backendUrl,
+        publicConnectionUrl: urls.publicHttpsUrl,
+        publicHttpsUrl: urls.publicHttpsUrl,
+        publicLibsqlUrl: urls.publicLibsqlUrl,
         internalConnectionUrl: urls.internalUrl,
+        internalLibsqlUrl: urls.internalUrl,
         backendConnectionUrl: urls.backendUrl,
+        backendReachableUrl: urls.backendUrl,
+        runtimeStatus,
+        exposureMode: runtime?.provider === 'docker-libsql' ? 'public-runtime' : runtime?.provider === 'local-file' ? 'local-file' : database.type,
+        runtimeHealth: database.metadata?.runtime?.routeHealth,
     };
 }
 async function databaseRoutes(app) {

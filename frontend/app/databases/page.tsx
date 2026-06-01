@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { TokenReveal } from '../../components/TokenReveal';
 import { apiRequest } from '../../lib/api';
+import { clearEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../lib/token-cache';
 import { Database, Table2, X, Plus, Search, HardDrive, Upload } from 'lucide-react';
 
 type DatabaseInfo = { id: string; name: string; type: string; status: string; subdomain?: string; createdAt: string; project?: { id: string; name: string } };
@@ -154,8 +155,8 @@ export default function DatabasesPage() {
               setGeneratedToken(token);
               setGeneratedDatabaseName(databaseName || 'database');
               setGeneratedDatabaseId(databaseId || '');
-              if (typeof window !== 'undefined' && databaseId) {
-                window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
+              if (databaseId) {
+                setEphemeralDatabaseToken(databaseId, token, databaseName || 'database');
               }
             }
             loadDatabases();
@@ -173,8 +174,8 @@ export default function DatabasesPage() {
               setGeneratedToken(token);
               setGeneratedDatabaseName(databaseName || 'database');
               setGeneratedDatabaseId(databaseId || '');
-              if (typeof window !== 'undefined' && databaseId) {
-                window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
+              if (databaseId) {
+                setEphemeralDatabaseToken(databaseId, token, databaseName || 'database');
               }
             }
             loadDatabases();
@@ -189,9 +190,7 @@ export default function DatabasesPage() {
               token={generatedToken}
               label={`Token for ${generatedDatabaseName}`}
               onDismiss={() => {
-                if (typeof window !== 'undefined' && generatedDatabaseId) {
-                  window.sessionStorage.removeItem(`libsqlite.databaseToken.${generatedDatabaseId}`);
-                }
+                clearEphemeralDatabaseToken(generatedDatabaseId);
                 setGeneratedToken('');
                 setGeneratedDatabaseId('');
                 setGeneratedDatabaseName('');

@@ -4,18 +4,42 @@ import { Database } from '../../domain/entities/Database';
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 
+import os from 'os';
+
 export type DatabaseMetric = {
   id: string;
   name: string;
   type: string;
+  status: string;
   diskBytes: number;
   ramBytes: number;
   isRamEstimated: boolean;
+  runtimeProvider?: string;
+  runtimeHealth?: {
+    internalOk: boolean;
+    backendOk: boolean;
+    publicOk: boolean;
+    publicChecked: boolean;
+  } | null;
 };
 
 export type SystemMetrics = {
   totalDiskBytes: number;
   totalRamBytes: number;
+  maxRamBytes: number;
+  cpuUsagePercent: number;
+  runtimeSummary: {
+    publicRuntimeCount: number;
+    healthyPublicRuntimeCount: number;
+    unhealthyPublicRuntimeCount: number;
+    provisioningCount: number;
+    errorCount: number;
+  };
+  pool: {
+    size: number;
+    maxSize: number;
+    idleTtlMs: number;
+  };
   databases: DatabaseMetric[];
 };
 
@@ -32,6 +56,11 @@ export class SystemMetricsService {
     let totalRamBytes = process.memoryUsage().rss;
 
     const metrics: DatabaseMetric[] = [];
+    let publicRuntimeCount = 0;
+    let healthyPublicRuntimeCount = 0;
+    let unhealthyPublicRuntimeCount = 0;
+    let provisioningCount = 0;
+    let errorCount = 0;
 
     for (const db of databases) {
       let diskBytes = 0;
@@ -45,6 +74,26 @@ export class SystemMetricsService {
       }
       
       const runtimeMetadata: any = db.metadata?.runtime;
+      const runtimeHealth = runtimeMetadata?.routeHealth && typeof runtimeMetadata.routeHealth === 'object'
+        ? {
+            internalOk: Boolean(runtimeMetadata.routeHealth.internalOk),
+            backendOk: Boolean(runtimeMetadata.routeHealth.backendOk),
+            publicOk: Boolean(runtimeMetadata.routeHealth.publicOk),
+            publicChecked: Boolean(runtimeMetadata.routeHealth.publicChecked),
+          }
+        : null;
+
+      if (db.status === 'provisioning') provisioningCount += 1;
+      if (db.status === 'error') errorCount += 1;
+      if (runtimeMetadata?.provider === 'docker-libsql') {
+        publicRuntimeCount += 1;
+        if (runtimeHealth?.internalOk && runtimeHealth?.backendOk && (!runtimeHealth.publicChecked || runtimeHealth.publicOk)) {
+          healthyPublicRuntimeCount += 1;
+        } else {
+          unhealthyPublicRuntimeCount += 1;
+        }
+      }
+
       if (runtimeMetadata?.provider === 'docker-libsql' && runtimeMetadata.databasePath) {
         fileCandidates.add(runtimeMetadata.databasePath);
       }
@@ -81,18 +130,36 @@ export class SystemMetricsService {
         id: db.id,
         name: db.name,
         type: db.type,
+        status: db.status,
         diskBytes,
         ramBytes,
         isRamEstimated,
+        runtimeProvider: typeof runtimeMetadata?.provider === 'string' ? runtimeMetadata.provider : undefined,
+        runtimeHealth,
       });
     }
 
     // Sort by largest disk/ram
     metrics.sort((a, b) => b.ramBytes - a.ramBytes || b.diskBytes - a.diskBytes);
 
+    const maxRamBytes = os.totalmem();
+    // Rough estimate of CPU load % over the last 1 minute on the server
+    const cpus = os.cpus().length;
+    const cpuUsagePercent = Math.min(100, Math.max(0, (os.loadavg()[0] / cpus) * 100));
+
     return {
       totalDiskBytes,
       totalRamBytes,
+      maxRamBytes,
+      cpuUsagePercent,
+      runtimeSummary: {
+        publicRuntimeCount,
+        healthyPublicRuntimeCount,
+        unhealthyPublicRuntimeCount,
+        provisioningCount,
+        errorCount,
+      },
+      pool: pool.stats,
       databases: metrics,
     };
   }

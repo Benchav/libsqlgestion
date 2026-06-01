@@ -5,6 +5,7 @@ const data_source_1 = require("../../../infrastructure/db/data-source");
 const User_1 = require("../../../domain/entities/User");
 const Role_1 = require("../../../domain/entities/Role");
 const UserRole_1 = require("../../../domain/entities/UserRole");
+const authorization_1 = require("../../../application/auth/authorization");
 const guards_1 = require("../guards");
 async function userRoutes(app) {
     const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
@@ -31,6 +32,7 @@ async function userRoutes(app) {
         if (!existing) {
             await userRoleRepo.save(userRoleRepo.create({ user, role }));
         }
+        (0, authorization_1.invalidateUserPermissionCache)(id);
         return reply.send({ ok: true });
     });
 }

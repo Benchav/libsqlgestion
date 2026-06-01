@@ -7,6 +7,46 @@ exports.SqliteClient = exports.DatabaseError = void 0;
 const sqlite3_1 = __importDefault(require("sqlite3"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+function getSqlitePerformanceProfile() {
+    const profile = String(process.env.SQLITE_PERFORMANCE_PROFILE || 'balanced').toLowerCase();
+    if (profile === 'safe' || profile === 'performance')
+        return profile;
+    return 'balanced';
+}
+function getSqlitePerformanceConfig() {
+    const profile = getSqlitePerformanceProfile();
+    const baseConfig = {
+        safe: {
+            busyTimeoutMs: 15000,
+            synchronous: 'FULL',
+            cacheSize: -10000,
+            tempStore: 'DEFAULT',
+            mmapSize: 134217728,
+        },
+        balanced: {
+            busyTimeoutMs: 10000,
+            synchronous: 'NORMAL',
+            cacheSize: -20000,
+            tempStore: 'MEMORY',
+            mmapSize: 268435456,
+        },
+        performance: {
+            busyTimeoutMs: 5000,
+            synchronous: 'NORMAL',
+            cacheSize: -40000,
+            tempStore: 'MEMORY',
+            mmapSize: 536870912,
+        },
+    };
+    const selected = baseConfig[profile];
+    return {
+        busyTimeoutMs: Number(process.env.SQLITE_BUSY_TIMEOUT_MS || selected.busyTimeoutMs),
+        synchronous: String(process.env.SQLITE_SYNCHRONOUS || selected.synchronous).toUpperCase() === 'FULL' ? 'FULL' : 'NORMAL',
+        cacheSize: Number(process.env.SQLITE_CACHE_SIZE || selected.cacheSize),
+        tempStore: String(process.env.SQLITE_TEMP_STORE || selected.tempStore).toUpperCase() === 'DEFAULT' ? 'DEFAULT' : 'MEMORY',
+        mmapSize: Number(process.env.SQLITE_MMAP_SIZE || selected.mmapSize),
+    };
+}
 /**
  * Classifies SQLite error codes into user-friendly categories.
  */
@@ -70,14 +110,15 @@ class SqliteClient {
             throw new DatabaseError('SQLITE_CANTOPEN', `Path is a directory, not a database file: ${filePath}`, false);
         }
         this.db = new sqlite3_1.default.Database(filePath);
+        const config = getSqlitePerformanceConfig();
         // Apply SQLite performance and concurrency tuning immediately after opening
         this.db.serialize(() => {
             this.db.run('PRAGMA journal_mode = WAL;');
-            this.db.run('PRAGMA busy_timeout = 10000;');
-            this.db.run('PRAGMA synchronous = NORMAL;');
-            this.db.run('PRAGMA cache_size = -20000;');
-            this.db.run('PRAGMA temp_store = MEMORY;');
-            this.db.run('PRAGMA mmap_size = 268435456;');
+            this.db.run(`PRAGMA busy_timeout = ${Math.max(0, config.busyTimeoutMs)};`);
+            this.db.run(`PRAGMA synchronous = ${config.synchronous};`);
+            this.db.run(`PRAGMA cache_size = ${config.cacheSize};`);
+            this.db.run(`PRAGMA temp_store = ${config.tempStore};`);
+            this.db.run(`PRAGMA mmap_size = ${Math.max(0, config.mmapSize)};`);
         });
         this.all = (sql, params = []) => new Promise((resolve, reject) => {
             this.db.all(sql, params, (error, rows) => {

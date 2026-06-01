@@ -23,7 +23,7 @@ export class Database {
   subdomain?: string;
 
   @Column({ default: 'inactive' })
-  status!: 'inactive' | 'active' | 'error';
+  status!: 'draft' | 'inactive' | 'provisioning' | 'active' | 'error' | 'disabled';
 
   @Column({ type: 'simple-json', nullable: true })
   metadata?: Record<string, unknown>;

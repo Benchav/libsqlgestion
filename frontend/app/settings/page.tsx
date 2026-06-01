@@ -33,7 +33,7 @@ type PublicDatabaseSettings = {
 
 const DEFAULT_PUBLIC_DATABASE_SETTINGS: PublicDatabaseSettings = {
   domain: '',
-  protocol: 'http',
+  protocol: 'https',
 };
 
 export default function SettingsPage() {
@@ -86,7 +86,7 @@ export default function SettingsPage() {
         method: 'PUT',
         body: JSON.stringify({
           domain: publicDatabaseSettings.domain,
-          protocol: 'http',
+          protocol: publicDatabaseSettings.protocol,
           template: '',
           baseUrl: '',
           host: '',
@@ -123,7 +123,7 @@ export default function SettingsPage() {
             </div>
             <div className="p-6 space-y-5">
               <p className="text-sm text-zinc-400">
-                Add only the dedicated database domain, for example `db.example.com`. The panel will auto-generate subdomains for each database and use HTTP internally; Cloudflare will handle HTTPS publicly.
+                Add only the dedicated database domain, for example `db.example.com`. The panel will auto-generate subdomains for each database and build public URLs using the protocol you choose here.
               </p>
 
               {loadingPublicDatabaseSettings ? (
@@ -143,14 +143,19 @@ export default function SettingsPage() {
 
                   <div className="flex items-center gap-4">
                     <label className="w-40 text-sm font-medium text-zinc-300">Protocol</label>
-                    <div className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-400">
-                      http
-                    </div>
+                    <select
+                      value={publicDatabaseSettings.protocol}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, protocol: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    >
+                      <option value="https">https</option>
+                      <option value="http">http (development only)</option>
+                    </select>
                   </div>
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <p className="text-xs text-zinc-500">
-                      Save only the dedicated database domain. Example: `db.example.com` becomes a URL like `http://subdomain.db.example.com`.
+                      Save only the dedicated database domain. Example: `db.example.com` becomes a URL like `${publicDatabaseSettings.protocol}://subdomain.db.example.com`.
                     </p>
                     <button
                       type="button"

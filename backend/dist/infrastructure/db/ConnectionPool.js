@@ -19,6 +19,9 @@ const crypto_1 = require("../crypto");
 class ConnectionPool {
     constructor() {
         this.pool = new Map();
+        this.maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 128));
+        this.idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 15 * 60 * 1000));
+        this.lastSweepAt = 0;
     }
     static getInstance() {
         if (!ConnectionPool.instance) {
@@ -31,11 +34,13 @@ class ConnectionPool {
      * doesn't exist yet. The client is kept alive for future requests.
      */
     getClient(database) {
+        this.sweepIdleConnections();
         const existing = this.pool.get(database.id);
         if (existing) {
             existing.lastUsed = Date.now();
             return existing.client;
         }
+        this.ensureCapacity();
         const entry = this.createClient(database);
         this.pool.set(database.id, entry);
         return entry.client;
@@ -60,7 +65,7 @@ class ConnectionPool {
         if (!entry)
             return;
         this.pool.delete(databaseId);
-        this.closeClient(entry);
+        void this.closeClient(entry);
     }
     /**
      * Evict a connection only if it's been corrupted or errored fatally.
@@ -78,7 +83,7 @@ class ConnectionPool {
         const entries = Array.from(this.pool.entries());
         this.pool.clear();
         for (const [, entry] of entries) {
-            this.closeClient(entry);
+            await this.closeClient(entry);
         }
     }
     /**
@@ -86,6 +91,13 @@ class ConnectionPool {
      */
     get size() {
         return this.pool.size;
+    }
+    get stats() {
+        return {
+            size: this.pool.size,
+            maxSize: this.maxSize,
+            idleTtlMs: this.idleTtlMs,
+        };
     }
     // ---------------------------------------------------------------------------
     // Private
@@ -104,10 +116,10 @@ class ConnectionPool {
         const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, token);
         return { client, type: 'libsql', lastUsed: Date.now() };
     }
-    closeClient(entry) {
+    async closeClient(entry) {
         try {
             if (entry.type === 'sqlite') {
-                entry.client.close();
+                await entry.client.close();
             }
             else {
                 entry.client.close();
@@ -126,6 +138,31 @@ class ConnectionPool {
             msg.includes('sqlite_cantopen') ||
             msg.includes('not a database') ||
             msg.includes('database disk image is malformed'));
+    }
+    sweepIdleConnections() {
+        const now = Date.now();
+        if (now - this.lastSweepAt < 30000) {
+            return;
+        }
+        this.lastSweepAt = now;
+        for (const [databaseId, entry] of this.pool.entries()) {
+            if (now - entry.lastUsed <= this.idleTtlMs) {
+                continue;
+            }
+            this.pool.delete(databaseId);
+            void this.closeClient(entry);
+        }
+    }
+    ensureCapacity() {
+        if (this.pool.size < this.maxSize) {
+            return;
+        }
+        const oldest = Array.from(this.pool.entries()).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+        if (!oldest) {
+            return;
+        }
+        this.pool.delete(oldest[0]);
+        void this.closeClient(oldest[1]);
     }
 }
 exports.ConnectionPool = ConnectionPool;

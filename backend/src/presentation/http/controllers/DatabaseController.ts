@@ -9,12 +9,21 @@ import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../
 
 function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
   const urls = buildDatabaseConnectionUrls(database);
+  const runtime = (database as any).metadata?.runtime as { provider?: unknown } | undefined;
+  const runtimeStatus = typeof (database as any).status === 'string' ? (database as any).status : 'inactive';
   return {
     ...database,
-    connectionUrl: urls.publicUrl,
-    publicConnectionUrl: urls.publicUrl,
+    connectionUrl: urls.publicHttpsUrl || urls.publicLibsqlUrl || urls.backendUrl,
+    publicConnectionUrl: urls.publicHttpsUrl,
+    publicHttpsUrl: urls.publicHttpsUrl,
+    publicLibsqlUrl: urls.publicLibsqlUrl,
     internalConnectionUrl: urls.internalUrl,
+    internalLibsqlUrl: urls.internalUrl,
     backendConnectionUrl: urls.backendUrl,
+    backendReachableUrl: urls.backendUrl,
+    runtimeStatus,
+    exposureMode: runtime?.provider === 'docker-libsql' ? 'public-runtime' : runtime?.provider === 'local-file' ? 'local-file' : database.type,
+    runtimeHealth: (database as any).metadata?.runtime?.routeHealth,
   };
 }
 

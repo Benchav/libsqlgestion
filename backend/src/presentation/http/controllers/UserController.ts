@@ -3,6 +3,7 @@ import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { User } from '../../../domain/entities/User';
 import { Role } from '../../../domain/entities/Role';
 import { UserRole } from '../../../domain/entities/UserRole';
+import { invalidateUserPermissionCache } from '../../../application/auth/authorization';
 import { ensurePermission } from '../guards';
 
 export default async function userRoutes(app: FastifyInstance) {
@@ -30,6 +31,8 @@ export default async function userRoutes(app: FastifyInstance) {
     if (!existing) {
       await userRoleRepo.save(userRoleRepo.create({ user, role }));
     }
+
+    invalidateUserPermissionCache(id);
 
     return reply.send({ ok: true });
   });

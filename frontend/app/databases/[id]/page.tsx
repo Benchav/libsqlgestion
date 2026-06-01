@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
+import { clearEphemeralDatabaseToken, consumeEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../../lib/token-cache';
 import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive, Zap, Download } from 'lucide-react';
 
 type DatabaseDetail = {
@@ -16,8 +17,21 @@ type DatabaseDetail = {
   url?: string;
   connectionUrl?: string;
   publicConnectionUrl?: string;
+  publicHttpsUrl?: string;
+  publicLibsqlUrl?: string;
   internalConnectionUrl?: string;
+  internalLibsqlUrl?: string;
   backendConnectionUrl?: string;
+  backendReachableUrl?: string;
+  runtimeStatus?: string;
+  exposureMode?: string;
+  runtimeHealth?: {
+    checkedAt?: string;
+    internalOk?: boolean;
+    backendOk?: boolean;
+    publicOk?: boolean;
+    publicChecked?: boolean;
+  };
   metadata?: Record<string, unknown>;
   createdAt: string;
   project?: { id: string; name: string };
@@ -48,10 +62,8 @@ export default function DatabaseDetailPage() {
     try {
       const result = await apiRequest<{ database: DatabaseDetail }>(`/databases/${id}`);
       setDatabase(result.database);
-      if (typeof window !== 'undefined') {
-        const storedToken = window.sessionStorage.getItem(`libsqlite.databaseToken.${id}`) || '';
-        setRevealedToken(storedToken);
-      }
+      const entry = consumeEphemeralDatabaseToken(id);
+      setRevealedToken(entry?.token || '');
     } catch (err: any) {
       setError(err.message);
     }
@@ -77,9 +89,7 @@ export default function DatabaseDetailPage() {
     if (!confirm('Rotate token? Active connections using the old token will be dropped.')) return;
     try {
       const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/rotate-token`, { method: 'PATCH' });
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem(`libsqlite.databaseToken.${id}`, result.token);
-      }
+      setEphemeralDatabaseToken(id, result.token, result.database.name);
       setRevealedToken(result.token);
       setDatabase(result.database);
     } catch (err: any) {
@@ -131,13 +141,14 @@ export default function DatabaseDetailPage() {
     window.setTimeout(() => setCopiedKey(''), 1500);
   }
 
-  const publicUrl = database?.publicConnectionUrl || database?.connectionUrl || database?.url || '';
-  const internalUrl = database?.internalConnectionUrl || database?.url || '';
-  const backendUrl = database?.backendConnectionUrl || internalUrl || database?.url || '';
-  const serverUrl = backendUrl || publicUrl;
+  const publicUrl = database?.publicHttpsUrl || database?.publicConnectionUrl || '';
+  const publicLibsqlUrl = database?.publicLibsqlUrl || '';
+  const internalUrl = database?.internalLibsqlUrl || database?.internalConnectionUrl || database?.url || '';
+  const backendUrl = database?.backendReachableUrl || database?.backendConnectionUrl || internalUrl || database?.url || '';
+  const serverUrl = publicLibsqlUrl || publicUrl || backendUrl;
   const runtimeLabel = getRuntimeLabel(database?.metadata);
   const envSnippet = serverUrl && revealedToken
-    ? `# Next.js API / libsql client\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}`
+    ? `# Preferred libSQL connection\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}${publicUrl ? `\n\n# HTTPS fallback\nDATABASE_HTTPS_URL=${publicUrl}` : ''}`
     : '';
 
   if (!database && !error) {
@@ -343,15 +354,36 @@ export default function DatabaseDetailPage() {
                   </div>
                 </div>
 
+                {database?.runtimeHealth && (
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Runtime Health</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {[
+                        ['Internal', database.runtimeHealth.internalOk],
+                        ['Backend', database.runtimeHealth.backendOk],
+                        ['Public', database.runtimeHealth.publicChecked ? database.runtimeHealth.publicOk : undefined],
+                      ].map(([label, ok]) => (
+                        <div key={String(label)} className="border border-zinc-800 bg-[#050505] rounded-lg px-3 py-2 text-xs text-zinc-300 flex items-center justify-between gap-3">
+                          <span>{label}</span>
+                          <span className={ok === undefined ? 'text-zinc-500' : ok ? 'text-emerald-400' : 'text-red-400'}>
+                            {ok === undefined ? 'Skipped' : ok ? 'OK' : 'Fail'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {database.runtimeHealth.checkedAt && (
+                      <p className="mt-2 text-xs text-zinc-500">Checked {new Date(database.runtimeHealth.checkedAt).toLocaleString()}</p>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Auth Token</label>
                   {revealedToken ? (
                     <TokenReveal
                       token={revealedToken}
                       onDismiss={() => {
-                        if (typeof window !== 'undefined') {
-                          window.sessionStorage.removeItem(`libsqlite.databaseToken.${id}`);
-                        }
+                        clearEphemeralDatabaseToken(id);
                         setRevealedToken('');
                       }}
                     />
@@ -387,7 +419,7 @@ export default function DatabaseDetailPage() {
 {envSnippet || 'Reveal the token and configure the public URL from the panel to generate a copy-ready snippet.'}
                   </pre>
                   <p className="mt-2 text-xs text-zinc-500">
-                    For a Next.js API, use the backend URL first. If the runtime shows `local-file`, the base is not exposed as a remote libSQL endpoint.
+                    Prefer the public libSQL URL for remote clients. If the runtime shows `local-file`, the base is not exposed as a remote libSQL endpoint.
                   </p>
                 </div>
               </div>
@@ -399,7 +431,7 @@ export default function DatabaseDetailPage() {
                 <Key size={16} className="text-zinc-400" /> Connecting to your database
               </h3>
               <p className="text-sm text-zinc-400 mb-4">
-                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your Next.js API or server actions, and prefer the backend URL generated by the panel.
+                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your Next.js API or server actions, and prefer the public libSQL URL generated by the panel when it is available.
               </p>
               <pre className="bg-[#050505] border border-zinc-800 p-4 rounded-lg overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar">
 {`import { createClient } from '@libsql/client';
@@ -513,9 +545,7 @@ await client.execute(\`
           onClose={() => setIsBackupOpen(false)}
           onCreated={async (newDbId: string, newToken: string) => {
             setIsBackupOpen(false);
-            if (typeof window !== 'undefined') {
-              window.sessionStorage.setItem(`libsqlite.databaseToken.${newDbId}`, newToken);
-            }
+            setEphemeralDatabaseToken(newDbId, newToken, database.name);
             router.push(`/databases/${newDbId}`);
           }}
         />

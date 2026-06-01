@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
+import { clearEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../../lib/token-cache';
 import { Database, Plus, ChevronRight, Activity, Users, HardDrive, X } from 'lucide-react';
 
 type ProjectDetail = {
@@ -208,8 +209,8 @@ export default function ProjectDetailPage() {
               setGeneratedToken(token);
               setGeneratedDatabaseName(databaseName || 'database');
               setGeneratedDatabaseId(databaseId || '');
-              if (typeof window !== 'undefined' && databaseId) {
-                window.sessionStorage.setItem(`libsqlite.databaseToken.${databaseId}`, token);
+              if (databaseId) {
+                setEphemeralDatabaseToken(databaseId, token, databaseName || 'database');
               }
             }
             loadProject();
@@ -224,9 +225,7 @@ export default function ProjectDetailPage() {
               token={generatedToken}
               label={`Token for ${generatedDatabaseName}`}
               onDismiss={() => {
-                if (typeof window !== 'undefined' && generatedDatabaseId) {
-                  window.sessionStorage.removeItem(`libsqlite.databaseToken.${generatedDatabaseId}`);
-                }
+                clearEphemeralDatabaseToken(generatedDatabaseId);
                 setGeneratedToken('');
                 setGeneratedDatabaseName('');
                 setGeneratedDatabaseId('');

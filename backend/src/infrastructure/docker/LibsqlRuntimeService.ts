@@ -312,7 +312,7 @@ export class LibsqlRuntimeService {
       Image: this.image,
       Env: [
         'SQLD_NODE=primary',
-        'SQLD_DB_PATH=/var/lib/sqld/data',
+        'SQLD_DB_PATH=/var/lib/sqld',
         'SQLD_AUTH_JWT_KEY_FILE=/var/lib/sqld/auth.pem',
         'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
       ],

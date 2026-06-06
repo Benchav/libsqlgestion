@@ -307,12 +307,15 @@ export class LibsqlRuntimeService {
     }
     const hostDirName = await this.resolveHostPath(dbDirName);
 
+    const authPemPath = path.join(dbDirName, 'auth.pem');
+    await fs.promises.writeFile(authPemPath, authKeyPem, 'utf8');
+
     const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
       Image: this.image,
       Env: [
         'SQLD_NODE=primary',
         'SQLD_DB_PATH=/var/lib/sqld',
-        `SQLD_AUTH_JWT_KEY=${authKeyPem}`,
+        'SQLD_AUTH_JWT_KEY_FILE=/var/lib/sqld/auth.pem',
         'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
       ],
       ExposedPorts: {

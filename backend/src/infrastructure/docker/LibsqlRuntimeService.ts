@@ -264,7 +264,7 @@ export class LibsqlRuntimeService {
   }
 
   private generateAuthBundle() {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
     const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
     const issuedAt = Math.floor(Date.now() / 1000);
     const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
@@ -274,10 +274,10 @@ export class LibsqlRuntimeService {
       nbf: issuedAt - 60,
       exp: issuedAt + Math.max(300, expiresInSeconds),
     };
-    const header = this.base64UrlEncode(Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
+    const header = this.base64UrlEncode(Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' })));
     const encodedPayload = this.base64UrlEncode(Buffer.from(JSON.stringify(payload)));
     const signingInput = `${header}.${encodedPayload}`;
-    const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), privateKey);
+    const signature = crypto.sign(null, Buffer.from(signingInput), privateKey);
 
     return {
       publicKeyPem,

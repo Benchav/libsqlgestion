@@ -273,8 +273,8 @@ export class LibsqlRuntimeService {
       iss: 'libsqlite',
       aud: 'libsql-runtime',
       sub: 'managed-runtime',
-      iat: issuedAt,
-      nbf: issuedAt,
+      iat: issuedAt - 60,
+      nbf: issuedAt - 60,
       exp: issuedAt + Math.max(300, expiresInSeconds),
       jti: crypto.randomUUID(),
     };
@@ -409,9 +409,9 @@ export class LibsqlRuntimeService {
       const publicChecked = urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl;
       const publicOk = publicChecked ? await this.canConnect(urls.publicUrl, token) : backendOk || internalOk;
 
-      if (internalOk && backendOk && (!publicChecked || publicOk)) {
+      if (internalOk || backendOk) {
         return {
-          connectionUrl: urls.internalUrl,
+          connectionUrl: internalOk ? urls.internalUrl : urls.backendUrl,
           routeHealth: {
             checkedAt: new Date().toISOString(),
             internalOk,
@@ -445,7 +445,8 @@ export class LibsqlRuntimeService {
       } finally {
         client.close();
       }
-    } catch {
+    } catch (err: any) {
+      console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${err?.message || err}`);
       return false;
     }
   }

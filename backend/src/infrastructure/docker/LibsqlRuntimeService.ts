@@ -270,13 +270,9 @@ export class LibsqlRuntimeService {
     const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
     const payload = {
       a: 'rw',
-      iss: 'libsqlite',
-      aud: 'libsql-runtime',
-      sub: 'managed-runtime',
       iat: issuedAt - 60,
       nbf: issuedAt - 60,
       exp: issuedAt + Math.max(300, expiresInSeconds),
-      jti: crypto.randomUUID(),
     };
     const header = this.base64UrlEncode(Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' })));
     const encodedPayload = this.base64UrlEncode(Buffer.from(JSON.stringify(payload)));
@@ -303,8 +299,9 @@ export class LibsqlRuntimeService {
 
   private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
     let dbDirName = path.dirname(databasePath);
-    if (databasePath.replace(/\\/g, '/').endsWith('dbs/default/data')) {
-      dbDirName = path.dirname(path.dirname(path.dirname(databasePath)));
+    if (!databasePath.replace(/\\/g, '/').endsWith('/data')) {
+      // Evitar montar la carpeta compartida "databases" por accidente
+      throw new Error(`Cannot provision LibSQL container for a flat file path: ${databasePath}. Path must end in /data to ensure container isolation.`);
     }
     const hostDirName = await this.resolveHostPath(dbDirName);
 

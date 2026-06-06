@@ -269,6 +269,7 @@ export class LibsqlRuntimeService {
     const issuedAt = Math.floor(Date.now() / 1000);
     const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
     const payload = {
+      a: 'rw',
       iss: 'libsqlite',
       aud: 'libsql-runtime',
       sub: 'managed-runtime',

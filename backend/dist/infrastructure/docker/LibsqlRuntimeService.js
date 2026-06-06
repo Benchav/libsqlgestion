@@ -256,6 +256,7 @@ class LibsqlRuntimeService {
         const issuedAt = Math.floor(Date.now() / 1000);
         const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
         const payload = {
+            a: 'rw',
             iss: 'libsqlite',
             aud: 'libsql-runtime',
             sub: 'managed-runtime',
@@ -289,12 +290,14 @@ class LibsqlRuntimeService {
             dbDirName = path_1.default.dirname(path_1.default.dirname(path_1.default.dirname(databasePath)));
         }
         const hostDirName = await this.resolveHostPath(dbDirName);
+        const authPemPath = path_1.default.join(dbDirName, 'auth.pem');
+        await fs_1.default.promises.writeFile(authPemPath, authKeyPem, 'utf8');
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
             Image: this.image,
             Env: [
                 'SQLD_NODE=primary',
                 'SQLD_DB_PATH=/var/lib/sqld',
-                `SQLD_AUTH_JWT_KEY=${authKeyPem}`,
+                'SQLD_AUTH_JWT_KEY_FILE=/var/lib/sqld/auth.pem',
                 'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
             ],
             ExposedPorts: {
@@ -308,8 +311,8 @@ class LibsqlRuntimeService {
                 Memory: Math.max(0, Number(process.env.LIBSQL_RUNTIME_MEMORY_BYTES || 0)),
                 NanoCpus: Math.max(0, Number(process.env.LIBSQL_RUNTIME_CPU_NANO || 0)),
                 PidsLimit: Math.max(0, Number(process.env.LIBSQL_RUNTIME_PIDS_LIMIT || 0)) || undefined,
-                SecurityOpt: ['no-new-privileges:true'],
-                CapDrop: ['ALL'],
+                // SecurityOpt: ['no-new-privileges:true'],
+                // CapDrop: ['ALL'],
                 Binds: [
                     `${hostDirName}:/var/lib/sqld:rw`,
                 ],

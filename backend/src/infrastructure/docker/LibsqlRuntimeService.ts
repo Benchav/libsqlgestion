@@ -326,8 +326,8 @@ export class LibsqlRuntimeService {
         Memory: Math.max(0, Number(process.env.LIBSQL_RUNTIME_MEMORY_BYTES || 0)),
         NanoCpus: Math.max(0, Number(process.env.LIBSQL_RUNTIME_CPU_NANO || 0)),
         PidsLimit: Math.max(0, Number(process.env.LIBSQL_RUNTIME_PIDS_LIMIT || 0)) || undefined,
-        SecurityOpt: ['no-new-privileges:true'],
-        CapDrop: ['ALL'],
+        // SecurityOpt: ['no-new-privileges:true'],
+        // CapDrop: ['ALL'],
         Binds: [
           `${hostDirName}:/var/lib/sqld:rw`,
         ],

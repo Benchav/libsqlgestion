@@ -289,6 +289,10 @@ class LibsqlRuntimeService {
         if (databasePath.replace(/\\/g, '/').endsWith('dbs/default/data')) {
             dbDirName = path_1.default.dirname(path_1.default.dirname(path_1.default.dirname(databasePath)));
         }
+        else {
+            // Evitar montar la carpeta compartida "databases" por accidente
+            throw new Error(`Cannot provision LibSQL container for a flat file path: ${databasePath}. Path must end in dbs/default/data to ensure container isolation.`);
+        }
         const hostDirName = await this.resolveHostPath(dbDirName);
         const authPemPath = path_1.default.join(dbDirName, 'auth.pem');
         await fs_1.default.promises.writeFile(authPemPath, authKeyPem, 'utf8');

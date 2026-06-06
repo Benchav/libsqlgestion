@@ -31,7 +31,7 @@ export class DatabaseService {
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
-      type: input.type,
+      type: canProvisionRuntime ? 'libsql' : input.type,
       url: input.url,
       subdomain,
       status: canProvisionRuntime ? 'provisioning' : 'inactive',
@@ -41,7 +41,7 @@ export class DatabaseService {
 
     try {
       if (canProvisionRuntime) {
-        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
+        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, database.type);
         if (provisionAsync) {
           this.scheduleManagedRuntimeProvisioning({
             databaseId: database.id,
@@ -77,7 +77,7 @@ export class DatabaseService {
       }
 
       if (input.type === 'sqlite') {
-        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id);
+        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, database.type);
         await fs.promises.writeFile(managedPath, '');
         
         // Initialize the new SQLite file and set WAL mode persistently once
@@ -148,14 +148,14 @@ export class DatabaseService {
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: databaseName,
-      type: 'sqlite',
+      type: canProvisionRuntime ? 'libsql' : 'sqlite',
       status: canProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
       project,
     }));
 
-    const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id);
+    const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id, database.type);
     let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
     let managedRuntimeMetadata: Record<string, unknown> | undefined;
 
@@ -279,7 +279,7 @@ export class DatabaseService {
     }
 
     if (database.type === 'sqlite') {
-      const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
+      const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
       if (!fs.existsSync(url)) {
         return { ok: false, details: 'sqlite file missing', code: 'SQLITE_CANTOPEN' };
       }
@@ -358,7 +358,7 @@ export class DatabaseService {
     const project = sourceDatabase.project;
 
     // Resolve the source SQLite file path
-    const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id);
+    const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id, sourceDatabase.type);
     if (!fs.existsSync(sourcePath)) {
       throw new Error('source database file not found on disk');
     }
@@ -368,7 +368,7 @@ export class DatabaseService {
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
-      type: sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
+      type: canProvisionRuntime ? 'libsql' : sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
       status: canProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: {
@@ -381,7 +381,7 @@ export class DatabaseService {
     }));
 
     // Copy the SQLite file byte-by-byte to the new managed location
-    const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id);
+    const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id, database.type);
     let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
     let managedRuntimeMetadata: Record<string, unknown> | undefined;
 
@@ -454,7 +454,7 @@ export class DatabaseService {
   async getDatabaseFilePath(id: string): Promise<string> {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
-    return database.url || this.storageService.managedDatabasePath(database.project.id, database.id);
+    return database.url || this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
   }
 
   private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {

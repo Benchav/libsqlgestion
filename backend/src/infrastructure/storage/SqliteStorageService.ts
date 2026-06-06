@@ -11,7 +11,7 @@ export class SqliteStorageService {
 
   managedDatabasePath(projectId: string, databaseId: string, type?: string) {
     if (type === 'libsql') {
-      return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'dbs', 'default', 'data');
+      return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'data');
     }
     return path.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
   }

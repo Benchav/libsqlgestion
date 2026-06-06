@@ -264,24 +264,20 @@ export class LibsqlRuntimeService {
   }
 
   private generateAuthBundle() {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
     const issuedAt = Math.floor(Date.now() / 1000);
     const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
     const payload = {
       a: 'rw',
-      iss: 'libsqlite',
-      aud: 'libsql-runtime',
-      sub: 'managed-runtime',
       iat: issuedAt - 60,
       nbf: issuedAt - 60,
       exp: issuedAt + Math.max(300, expiresInSeconds),
-      jti: crypto.randomUUID(),
     };
-    const header = this.base64UrlEncode(Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' })));
+    const header = this.base64UrlEncode(Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
     const encodedPayload = this.base64UrlEncode(Buffer.from(JSON.stringify(payload)));
     const signingInput = `${header}.${encodedPayload}`;
-    const signature = crypto.sign(null, Buffer.from(signingInput), privateKey);
+    const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), privateKey);
 
     return {
       publicKeyPem,
@@ -303,11 +299,9 @@ export class LibsqlRuntimeService {
 
   private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
     let dbDirName = path.dirname(databasePath);
-    if (databasePath.replace(/\\/g, '/').endsWith('dbs/default/data')) {
-      dbDirName = path.dirname(path.dirname(path.dirname(databasePath)));
-    } else {
+    if (!databasePath.replace(/\\/g, '/').endsWith('/data')) {
       // Evitar montar la carpeta compartida "databases" por accidente
-      throw new Error(`Cannot provision LibSQL container for a flat file path: ${databasePath}. Path must end in dbs/default/data to ensure container isolation.`);
+      throw new Error(`Cannot provision LibSQL container for a flat file path: ${databasePath}. Path must end in /data to ensure container isolation.`);
     }
     const hostDirName = await this.resolveHostPath(dbDirName);
 
@@ -318,7 +312,7 @@ export class LibsqlRuntimeService {
       Image: this.image,
       Env: [
         'SQLD_NODE=primary',
-        'SQLD_DB_PATH=/var/lib/sqld',
+        'SQLD_DB_PATH=/var/lib/sqld/data',
         'SQLD_AUTH_JWT_KEY_FILE=/var/lib/sqld/auth.pem',
         'SQLD_HTTP_LISTEN_ADDR=0.0.0.0:8080',
       ],

@@ -27,7 +27,7 @@ export class DatabaseService {
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
-      type: willProvisionRuntime ? 'libsql' : input.type,
+      type: input.type,
       status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: input.metadata,
@@ -40,9 +40,10 @@ export class DatabaseService {
       const token = input.token ?? randomToken();
 
       if (input.type === 'sqlite' || willProvisionRuntime) {
-        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, database.type);
+        const storageType = willProvisionRuntime ? 'libsql' : input.type;
+        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, storageType);
 
-        if (input.type === 'sqlite') {
+        if (input.type === 'sqlite' && !willProvisionRuntime) {
           const initClient = new SqliteClient(managedPath);
           try {
             await initClient.run('PRAGMA journal_mode = WAL;');
@@ -94,17 +95,18 @@ export class DatabaseService {
     const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(databaseName, randomToken());
     const willProvisionRuntime = this.runtimeService.isEnabled();
+    const storageType = willProvisionRuntime ? 'libsql' : 'sqlite';
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: databaseName,
-      type: willProvisionRuntime ? 'libsql' : 'sqlite',
+      type: 'sqlite',
       status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
       project,
     }));
 
-    const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id, database.type);
+    const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id, storageType);
 
     try {
       const token = input.token ?? randomToken();
@@ -196,7 +198,7 @@ export class DatabaseService {
       }
     }
 
-    if (database.type === 'sqlite') {
+    if (isLocalFileDatabase(database)) {
       const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
       if (!fs.existsSync(url)) {
         return { ok: false, details: 'sqlite file missing', code: 'SQLITE_CANTOPEN' };
@@ -281,10 +283,11 @@ export class DatabaseService {
 
     const subdomain = ensureSubdomain(input.name, randomToken());
     const willProvisionRuntime = this.runtimeService.isEnabled();
+    const storageType = willProvisionRuntime ? 'libsql' : sourceDatabase.type as 'sqlite' | 'libsql' | 'remote';
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
-      type: willProvisionRuntime ? 'libsql' : sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
+      type: sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
       status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: {
@@ -296,7 +299,7 @@ export class DatabaseService {
       project,
     }));
 
-    const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id, database.type);
+    const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id, storageType);
 
     try {
       const token = randomToken();
@@ -359,6 +362,7 @@ export class DatabaseService {
 
     try {
       const managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+      database.type = 'libsql';
       database.url = managedPath;
       database.status = 'active';
       database.encryptedToken = encrypt(managedRuntime.token);
@@ -390,7 +394,6 @@ export class DatabaseService {
           metadata: runtimeMetadata ? { ...(database.metadata ?? {}), runtime: runtimeMetadata } : database.metadata,
         });
       } catch {
-        // Best-effort cleanup after a failed create/import flow.
       }
 
       await this.databaseRepo.remove(database);
@@ -400,7 +403,6 @@ export class DatabaseService {
       try {
         await fs.promises.rm(filePath, { force: true });
       } catch {
-        // Best-effort cleanup.
       }
     }
   }
@@ -421,6 +423,14 @@ function mergeRuntimeMetadata(existing: Record<string, unknown> | undefined, run
     lastHealthyAt: new Date().toISOString(),
     runtime,
   };
+}
+
+function isLocalFileDatabase(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
+  const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
+  if (runtime?.provider === 'docker-libsql') return false;
+  if (database.type === 'sqlite') return true;
+  if (!database.url) return true;
+  return !/^(https?|libsql):\/\//.test(database.url);
 }
 
 function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {

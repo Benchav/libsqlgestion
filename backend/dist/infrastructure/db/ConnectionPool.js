@@ -4,6 +4,9 @@ exports.ConnectionPool = void 0;
 const SqliteClient_1 = require("../sqlite/SqliteClient");
 const LibsqlClient_1 = require("../libsql/LibsqlClient");
 const crypto_1 = require("../crypto");
+function isRemoteUrl(url) {
+    return /^(https?|libsql):\/\//.test(url);
+}
 class ConnectionPool {
     constructor() {
         this.pool = new Map();
@@ -69,7 +72,8 @@ class ConnectionPool {
     // Private
     // ---------------------------------------------------------------------------
     createClient(database) {
-        if (database.type === 'sqlite') {
+        const effectiveType = this.resolveEffectiveType(database);
+        if (effectiveType === 'sqlite') {
             const filePath = database.url || '';
             if (!filePath) {
                 throw new Error(`Database ${database.id} has no file path configured`);
@@ -77,13 +81,29 @@ class ConnectionPool {
             const client = new SqliteClient_1.SqliteClient(filePath);
             return { client, type: 'sqlite', lastUsed: Date.now() };
         }
-        // libsql / remote
         if (!database.url || !database.encryptedToken) {
             throw new Error(`Database ${database.id} is missing url or token for libsql connection`);
         }
         const token = (0, crypto_1.decrypt)(database.encryptedToken);
         const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, token);
         return { client, type: 'libsql', lastUsed: Date.now() };
+    }
+    resolveEffectiveType(database) {
+        if (database.type !== 'sqlite' && database.type !== 'libsql') {
+            return database.type;
+        }
+        if (database.type === 'sqlite') {
+            return 'sqlite';
+        }
+        const url = database.url || '';
+        if (!isRemoteUrl(url)) {
+            return 'sqlite';
+        }
+        const runtime = database.metadata?.runtime;
+        if (runtime?.provider !== 'docker-libsql') {
+            return 'sqlite';
+        }
+        return 'libsql';
     }
     async closeClient(entry) {
         try {
@@ -95,7 +115,6 @@ class ConnectionPool {
             }
         }
         catch {
-            // Best-effort close — connection may already be broken.
         }
     }
     isFatalError(error) {

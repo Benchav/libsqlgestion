@@ -9,6 +9,10 @@ type PooledClient = {
   lastUsed: number;
 };
 
+function isRemoteUrl(url: string) {
+  return /^(https?|libsql):\/\//.test(url);
+}
+
 export class ConnectionPool {
   private static instance: ConnectionPool;
   private readonly pool = new Map<string, PooledClient>();
@@ -87,7 +91,9 @@ export class ConnectionPool {
   // ---------------------------------------------------------------------------
 
   private createClient(database: Database): PooledClient {
-    if (database.type === 'sqlite') {
+    const effectiveType = this.resolveEffectiveType(database);
+
+    if (effectiveType === 'sqlite') {
       const filePath = database.url || '';
       if (!filePath) {
         throw new Error(`Database ${database.id} has no file path configured`);
@@ -96,7 +102,6 @@ export class ConnectionPool {
       return { client, type: 'sqlite', lastUsed: Date.now() };
     }
 
-    // libsql / remote
     if (!database.url || !database.encryptedToken) {
       throw new Error(`Database ${database.id} is missing url or token for libsql connection`);
     }
@@ -104,6 +109,28 @@ export class ConnectionPool {
     const token = decrypt(database.encryptedToken);
     const client = createLibsqlClient(database.url, token);
     return { client, type: 'libsql', lastUsed: Date.now() };
+  }
+
+  private resolveEffectiveType(database: Database): 'sqlite' | 'libsql' {
+    if (database.type !== 'sqlite' && database.type !== 'libsql') {
+      return database.type as any;
+    }
+
+    if (database.type === 'sqlite') {
+      return 'sqlite';
+    }
+
+    const url = database.url || '';
+    if (!isRemoteUrl(url)) {
+      return 'sqlite';
+    }
+
+    const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
+    if (runtime?.provider !== 'docker-libsql') {
+      return 'sqlite';
+    }
+
+    return 'libsql';
   }
 
   private async closeClient(entry: PooledClient): Promise<void> {
@@ -114,7 +141,6 @@ export class ConnectionPool {
         (entry.client as ReturnType<typeof createLibsqlClient>).close();
       }
     } catch {
-      // Best-effort close — connection may already be broken.
     }
   }
 

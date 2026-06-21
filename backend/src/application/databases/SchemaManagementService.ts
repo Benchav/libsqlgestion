@@ -3,6 +3,7 @@ import { Database } from '../../domain/entities/Database';
 import { AuditService } from '../audit/AuditService';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
+import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 
 function quoteIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -211,9 +212,9 @@ export class SchemaManagementService {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = pool.getClient(database);
+      const client = pool.getClient(database) as LibsqlClient;
       try {
-        await (client as any).execute(`DROP TABLE IF EXISTS ${quoteIdentifier(safeTableName)}`);
+        await client.execute(`DROP TABLE IF EXISTS ${quoteIdentifier(safeTableName)}`);
       } catch (error: any) {
         pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to drop table', true);
@@ -256,9 +257,9 @@ export class SchemaManagementService {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = pool.getClient(database);
+      const client = pool.getClient(database) as LibsqlClient;
       try {
-        await (client as any).execute(sql);
+        await client.execute(sql);
       } catch (error: any) {
         pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to rename table', true);
@@ -309,7 +310,7 @@ export class SchemaManagementService {
 
       const client = pool.getClient(database);
       try {
-        await (client as any).execute(sql);
+        await (client as LibsqlClient).execute(sql);
       } catch (error: any) {
         pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to add column', true);
@@ -355,7 +356,7 @@ export class SchemaManagementService {
 
       const client = pool.getClient(database);
       try {
-        await (client as any).execute(sql);
+        await (client as LibsqlClient).execute(sql);
       } catch (error: any) {
         pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to rename column', true);
@@ -435,9 +436,9 @@ export class SchemaManagementService {
         throw new DatabaseError('SQLITE_SCHEMA_INVALID', 'Database connection is not configured.', false);
       }
 
-      const client = pool.getClient(database);
+      const client = pool.getClient(database) as LibsqlClient;
       try {
-        await this.rebuildTableWithClient(client as any, safeTableName, (parts) => this.transformColumnType(parts, safeColumnName, safeNextType));
+        await this.rebuildTableWithClient(client, safeTableName, (parts) => this.transformColumnType(parts, safeColumnName, safeNextType));
       } catch (error: any) {
         pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Failed to change column type', true);
@@ -468,7 +469,7 @@ export class SchemaManagementService {
   }
 
   private async rebuildTableWithClient(
-    client: SqliteClient | { execute: (sql: string) => Promise<any> },
+    client: SqliteClient | LibsqlClient,
     tableName: string,
     transform: (parts: { createSql: string; columnDefs: string[]; tableConstraints: string[]; indexes: Array<{ name: string; sql: string }> }) => { columnDefs: string[]; tableConstraints: string[]; indexSqls: string[] },
   ) {
@@ -477,14 +478,14 @@ export class SchemaManagementService {
         await (client as SqliteClient).exec(sql);
         return;
       }
-      await (client as any).execute(sql);
+      await (client as LibsqlClient).execute(sql);
     };
 
     const fetchRows = async (sql: string) => {
       if ('all' in client && typeof (client as SqliteClient).all === 'function') {
         return await (client as SqliteClient).all(sql);
       }
-      const result = await (client as any).execute(sql);
+      const result = await (client as LibsqlClient).execute(sql);
       return result.rows as unknown[];
     };
 

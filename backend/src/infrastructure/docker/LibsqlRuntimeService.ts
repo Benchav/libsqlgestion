@@ -44,6 +44,8 @@ export class LibsqlRuntimeService {
   private readonly socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
   private readonly image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
   private readonly backendContainerId = process.env.HOSTNAME?.trim() || '';
+  private imagePulled = false;
+  private imagePullPromise: Promise<void> | null = null;
 
   isEnabled() {
     return fs.existsSync(this.socketPath);
@@ -89,7 +91,6 @@ export class LibsqlRuntimeService {
         },
       };
     } catch (error) {
-      // Cleanup the orphaned container on failure to avoid leftovers
       if (createdContainerId) {
         try { await this.removeContainer(createdContainerId); } catch { /* best-effort */ }
       } else {
@@ -229,7 +230,6 @@ export class LibsqlRuntimeService {
   }
 
   private resolvePaths(database: Database, databasePath: string): RuntimePaths {
-    const directory = path.dirname(databasePath);
     const containerName = `libsqlite-${database.id}`;
 
     return {
@@ -294,15 +294,38 @@ export class LibsqlRuntimeService {
   }
 
   private async ensureImage() {
-    await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
+    if (this.imagePulled) return;
+    if (this.imagePullPromise) {
+      await this.imagePullPromise;
+      return;
+    }
+
+    this.imagePullPromise = (async () => {
+      const imageExists = await this.checkImageExists();
+      if (imageExists) {
+        this.imagePulled = true;
+        return;
+      }
+
+      await this.requestJson('POST', `/images/create?fromImage=${encodeURIComponent(this.image)}`);
+      this.imagePulled = true;
+    })();
+
+    await this.imagePullPromise;
+  }
+
+  private async checkImageExists(): Promise<boolean> {
+    try {
+      const result = await this.requestJson('GET', `/images/${encodeURIComponent(this.image)}/json`);
+      return Boolean(result && typeof result.Id === 'string');
+    } catch {
+      return false;
+    }
   }
 
   private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
-    let dbDirName = path.dirname(databasePath);
-    if (!databasePath.replace(/\\/g, '/').endsWith('/data')) {
-      // Evitar montar la carpeta compartida "databases" por accidente
-      throw new Error(`Cannot provision LibSQL container for a flat file path: ${databasePath}. Path must end in /data to ensure container isolation.`);
-    }
+    const dbDirName = path.dirname(databasePath);
+    const databaseDir = path.basename(dbDirName) || 'data';
     const hostDirName = await this.resolveHostPath(dbDirName);
 
     const authPemPath = path.join(dbDirName, 'auth.pem');
@@ -327,8 +350,6 @@ export class LibsqlRuntimeService {
         Memory: Math.max(0, Number(process.env.LIBSQL_RUNTIME_MEMORY_BYTES || 0)),
         NanoCpus: Math.max(0, Number(process.env.LIBSQL_RUNTIME_CPU_NANO || 0)),
         PidsLimit: Math.max(0, Number(process.env.LIBSQL_RUNTIME_PIDS_LIMIT || 0)) || undefined,
-        // SecurityOpt: ['no-new-privileges:true'],
-        // CapDrop: ['ALL'],
         Binds: [
           `${hostDirName}:/var/lib/sqld:rw`,
         ],
@@ -374,7 +395,8 @@ export class LibsqlRuntimeService {
 
   private async waitForPublishedPort(containerId: string, containerPort: number) {
     const portKey = `${containerPort}/tcp`;
-    const timeoutAt = Date.now() + 15000;
+    const timeoutAt = Date.now() + 30000;
+    let delay = 250;
 
     while (Date.now() < timeoutAt) {
       const inspect = await this.requestJson('GET', `/containers/${containerId}/json`);
@@ -384,17 +406,20 @@ export class LibsqlRuntimeService {
         return hostPort;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(delay * 1.5, 3000);
     }
 
     throw new Error('Timed out waiting for the libSQL server port to become available');
   }
 
   private async waitForReady(containerId: string, urls: { internalUrl: string; backendUrl: string; publicUrl: string }, token: string) {
-    const timeoutAt = Date.now() + 30000;
+    const timeoutAt = Date.now() + 60000;
     let lastErrorMessage = '';
+    let attempt = 0;
 
     while (Date.now() < timeoutAt) {
+      attempt += 1;
       const state = await this.inspectContainerState(containerId);
       if (state && state.running === false) {
         const logs = await this.fetchContainerLogs(containerId);
@@ -402,13 +427,13 @@ export class LibsqlRuntimeService {
       }
 
       const internalOk = await this.canConnect(urls.internalUrl, token);
-      const backendOk = await this.canConnect(urls.backendUrl, token);
-      const publicChecked = urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl;
-      const publicOk = publicChecked ? await this.canConnect(urls.publicUrl, token) : backendOk || internalOk;
+      if (internalOk) {
+        const backendOk = await this.canConnect(urls.backendUrl, token);
+        const publicChecked = urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl;
+        const publicOk = publicChecked ? await this.canConnect(urls.publicUrl, token) : backendOk || internalOk;
 
-      if (internalOk || backendOk) {
         return {
-          connectionUrl: internalOk ? urls.internalUrl : urls.backendUrl,
+          connectionUrl: urls.internalUrl,
           routeHealth: {
             checkedAt: new Date().toISOString(),
             internalOk,
@@ -419,9 +444,9 @@ export class LibsqlRuntimeService {
         };
       }
 
-      lastErrorMessage = `internal=${internalOk} backend=${backendOk} public=${publicOk}`;
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      lastErrorMessage = `internal=${internalOk}`;
+      const delay = Math.min(500 * Math.pow(1.5, attempt), 5000);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
     const state = await this.inspectContainerState(containerId);

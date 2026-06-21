@@ -5,43 +5,31 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { TokenReveal } from '../../components/TokenReveal';
 import { apiRequest } from '../../lib/api';
+import { useDatabases, useProjects, useCreateDatabase, DatabaseInfo, ProjectInfo } from '../../lib/hooks';
 import { clearEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../lib/token-cache';
-import { Database, Table2, X, Plus, Search, HardDrive, Upload } from 'lucide-react';
-
-type DatabaseInfo = { id: string; name: string; type: string; status: string; subdomain?: string; createdAt: string; project?: { id: string; name: string } };
-type Project = { id: string; name: string };
+import { Database, Table2, X, Plus, Search, HardDrive, Upload, RefreshCw } from 'lucide-react';
 
 export default function DatabasesPage() {
   const router = useRouter();
-  const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { data: databases = [], isLoading, error, refetch } = useDatabases();
+  const { data: projects = [], isLoading: projectsLoading } = useProjects();
+  const createDatabase = useCreateDatabase();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [generatedToken, setGeneratedToken] = useState('');
   const [generatedDatabaseName, setGeneratedDatabaseName] = useState('');
   const [generatedDatabaseId, setGeneratedDatabaseId] = useState('');
-
-  // Filter
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
-  async function loadDatabases() {
-    const result = await apiRequest<{ databases: DatabaseInfo[] }>('/databases');
-    setDatabases(result.databases);
-  }
-
-  async function loadProjects() {
-    const result = await apiRequest<{ projects: Project[] }>('/projects');
-    setProjects(result.projects);
-  }
-
-  useEffect(() => {
-    Promise.all([loadDatabases(), loadProjects()]).catch(console.error);
-  }, []);
-
-  const filteredDatabases = databases.filter((d) => 
-    d.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const filteredDatabases = databases.filter((d: DatabaseInfo) =>
+    d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (d.project?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const totalPages = Math.ceil(filteredDatabases.length / pageSize);
+  const paginatedDatabases = filteredDatabases.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <AppShell>
@@ -54,21 +42,24 @@ export default function DatabasesPage() {
           <div className="flex items-center gap-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={14} />
-              <input 
-                type="text" 
-                placeholder="Search databases..." 
+              <input
+                type="text"
+                placeholder="Search databases..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
                 className="pl-9 pr-4 py-2 bg-[#0f0f0f] border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 transition-colors w-64"
               />
             </div>
-            <button 
+            <button onClick={() => refetch()} className="text-zinc-500 hover:text-zinc-300 p-2 rounded-md transition-colors" title="Refresh">
+              <RefreshCw size={16} />
+            </button>
+            <button
               onClick={() => setIsImportModalOpen(true)}
               className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors border border-zinc-700"
             >
               <Upload size={16} /> Import Database
             </button>
-            <button 
+            <button
               onClick={() => setIsCreateModalOpen(true)}
               className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
             >
@@ -76,6 +67,12 @@ export default function DatabasesPage() {
             </button>
           </div>
         </div>
+
+        {error && (
+          <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
+            Failed to load databases: {(error as Error).message}
+          </div>
+        )}
 
         <div className="overflow-x-auto border border-zinc-800/80 rounded-lg bg-[#0f0f0f]">
           <table className="w-full text-left border-collapse">
@@ -90,7 +87,16 @@ export default function DatabasesPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredDatabases.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-zinc-500">
+                    <div className="flex flex-col items-center gap-2">
+                      <RefreshCw size={32} className="opacity-20 animate-spin" />
+                      <p>Loading databases...</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginatedDatabases.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-zinc-500">
                     <div className="flex flex-col items-center gap-2">
@@ -100,7 +106,7 @@ export default function DatabasesPage() {
                   </td>
                 </tr>
               ) : (
-                filteredDatabases.map((db) => (
+                paginatedDatabases.map((db: DatabaseInfo) => (
                   <tr key={db.id} className="border-b border-zinc-800/40 hover:bg-zinc-800/20 transition-colors group cursor-pointer" onClick={() => router.push(`/databases/${db.id}`)}>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
@@ -108,7 +114,7 @@ export default function DatabasesPage() {
                         <span className="font-medium text-zinc-200">{db.name}</span>
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-zinc-400">{db.project?.name || '—'}</td>
+                    <td className="py-3 px-4 text-zinc-400">{db.project?.name || '\u2014'}</td>
                     <td className="py-3 px-4">
                       <span className="bg-zinc-800 text-zinc-300 border border-zinc-700/50 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider">
                         {db.type}
@@ -116,8 +122,9 @@ export default function DatabasesPage() {
                     </td>
                     <td className="py-3 px-4">
                       <span className={`px-2 py-0.5 rounded text-xs font-medium border ${
-                        db.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
-                        db.status === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' : 
+                        db.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                        db.status === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        db.status === 'provisioning' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
                         'bg-amber-500/10 text-amber-400 border-amber-500/20'
                       }`}>
                         {db.status}
@@ -127,11 +134,11 @@ export default function DatabasesPage() {
                       {new Date(db.createdAt).toLocaleDateString()}
                     </td>
                     <td className="py-3 px-4 flex justify-end gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           router.push(`/databases/${db.id}/studio`);
-                        }} 
+                        }}
                         className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded text-xs font-medium border border-zinc-700 transition-colors"
                       >
                         <Table2 size={14} /> Edit Data
@@ -143,12 +150,23 @@ export default function DatabasesPage() {
             </tbody>
           </table>
         </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 text-sm text-zinc-400">
+            <span>Showing {Math.min((page - 1) * pageSize + 1, filteredDatabases.length)}\u2013{Math.min(page * pageSize, filteredDatabases.length)} of {filteredDatabases.length}</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-3 py-1.5 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+              <span className="px-2">{page} / {totalPages}</span>
+              <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-3 py-1.5 rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {isCreateModalOpen && (
-        <CreateDatabaseModal 
+        <CreateDatabaseModal
           projects={projects}
-          onClose={() => setIsCreateModalOpen(false)} 
+          onClose={() => setIsCreateModalOpen(false)}
           onSuccess={(token, databaseName, databaseId) => {
             setIsCreateModalOpen(false);
             if (token) {
@@ -159,8 +177,10 @@ export default function DatabasesPage() {
                 setEphemeralDatabaseToken(databaseId, token, databaseName || 'database');
               }
             }
-            loadDatabases();
+            refetch();
           }}
+          isCreating={createDatabase.isPending}
+          createError={createDatabase.error?.message}
         />
       )}
 
@@ -178,7 +198,7 @@ export default function DatabasesPage() {
                 setEphemeralDatabaseToken(databaseId, token, databaseName || 'database');
               }
             }
-            loadDatabases();
+            refetch();
           }}
         />
       )}
@@ -203,7 +223,7 @@ export default function DatabasesPage() {
   );
 }
 
-function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void }) {
+function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: ProjectInfo[], onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [name, setName] = useState('');
   const [subdomain, setSubdomain] = useState('');
@@ -379,18 +399,20 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   );
 }
 
-function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Project[], onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void }) {
+function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createError }: { projects: ProjectInfo[], onClose: () => void, onSuccess: (token: string, databaseName: string, databaseId?: string) => void, isCreating: boolean, createError?: string }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [name, setName] = useState('');
   const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(createError || '');
+
+  useEffect(() => {
+    if (createError) setError(createError);
+  }, [createError]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     if (!projectId || !name.trim()) return;
     setError('');
-    setCreating(true);
     try {
       const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases', {
         method: 'POST',
@@ -399,8 +421,6 @@ function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
       onSuccess(result.token, result.database.name, result.database.id);
     } catch (err: any) {
       setError(err.message);
-    } finally {
-      setCreating(false);
     }
   }
 
@@ -426,8 +446,8 @@ function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Project</label>
-            <select 
-              value={projectId} 
+            <select
+              value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
             >
@@ -437,18 +457,18 @@ function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
           </div>
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Name</label>
-            <input 
-              type="text" 
-              placeholder="e.g. production-db" 
+            <input
+              type="text"
+              placeholder="e.g. production-db"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
             />
           </div>
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Engine</label>
-            <select 
-              value={type} 
+            <select
+              value={type}
               onChange={(e) => setType(e.target.value as any)}
               className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
             >
@@ -463,8 +483,8 @@ function CreateDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
 
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-            <button type="submit" disabled={creating || !projectId || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
-              {creating ? 'Creating...' : 'Create Database'}
+            <button type="submit" disabled={isCreating || !projectId || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+              {isCreating ? 'Creating...' : 'Create Database'}
             </button>
           </div>
         </form>

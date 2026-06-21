@@ -8,21 +8,38 @@ function quoteIdentifier(identifier) {
     return `"${identifier.replace(/"/g, '""')}"`;
 }
 async function loadSchemaEntries(client, kind) {
-    const objects = await client.execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+    let rows;
+    if ('execute' in client) {
+        const objects = await client.execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+        rows = objects.rows;
+    }
+    else {
+        rows = await client.readAll(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+    }
     const entries = [];
-    const rows = objects.rows;
     for (const row of rows) {
         const tableName = row.name;
-        const columnsResult = await client.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
-        const foreignKeysResult = await client.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
-        const countResult = await client.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`);
-        const rowCount = Number(countResult.rows[0]?.cnt ?? 0);
+        let columnsResult;
+        let foreignKeysResult;
+        let countResult;
+        if ('execute' in client) {
+            const libClient = client;
+            columnsResult = (await libClient.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`)).rows;
+            foreignKeysResult = (await libClient.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`)).rows;
+            countResult = Number((await libClient.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`)).rows[0]?.cnt ?? 0);
+        }
+        else {
+            const readClient = client;
+            columnsResult = await readClient.readAll(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
+            foreignKeysResult = await readClient.readAll(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
+            countResult = Number((await readClient.readAll(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`))[0]?.cnt ?? 0);
+        }
         entries.push({
             table: tableName,
             kind,
-            rowCount,
-            columns: columnsResult.rows,
-            foreignKeys: foreignKeysResult.rows,
+            rowCount: countResult,
+            columns: columnsResult,
+            foreignKeys: foreignKeysResult,
         });
     }
     return entries;
@@ -51,12 +68,11 @@ class SchemaService {
         }
         const client = pool.getSqliteClient(database);
         try {
-            const tables = await loadSchemaEntries({
-                execute: async (sql) => ({ rows: (await client.all(sql)) }),
-            }, 'table');
-            const views = await loadSchemaEntries({
-                execute: async (sql) => ({ rows: (await client.all(sql)) }),
-            }, 'view');
+            const sqliteReader = {
+                readAll: async (sql) => (await client.all(sql)),
+            };
+            const tables = await loadSchemaEntries(sqliteReader, 'table');
+            const views = await loadSchemaEntries(sqliteReader, 'view');
             return { tables, views };
         }
         catch (error) {

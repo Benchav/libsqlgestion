@@ -5,6 +5,7 @@ import { Role } from '../../../domain/entities/Role';
 import { UserRole } from '../../../domain/entities/UserRole';
 import { invalidateUserPermissionCache } from '../../../application/auth/authorization';
 import { ensurePermission } from '../guards';
+import { assignRoleSchema, parseAndValidate } from '../../../types/validations';
 
 export default async function userRoutes(app: FastifyInstance) {
   const userRepo = AppDataSource.getRepository(User);
@@ -20,8 +21,7 @@ export default async function userRoutes(app: FastifyInstance) {
   app.post('/users/:id/roles', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'users.write'))) return;
     const { id } = request.params as any;
-    const body = request.body as any;
-    if (!body.roleName) return reply.status(400).send({ error: 'roleName required' });
+    const body = parseAndValidate(assignRoleSchema, request.body, 'assign role');
 
     const user = await userRepo.findOneBy({ id });
     const role = await roleRepo.findOneBy({ name: body.roleName });

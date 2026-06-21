@@ -4,6 +4,7 @@ import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { User } from '../../../domain/entities/User';
 import { ensurePermission, ensureProjectAccess } from '../guards';
 import { AuditService } from '../../../application/audit/AuditService';
+import { createProjectSchema, parseAndValidate } from '../../../types/validations';
 
 export default async function projectRoutes(app: FastifyInstance) {
   const projectService = new ProjectService();
@@ -18,9 +19,7 @@ export default async function projectRoutes(app: FastifyInstance) {
 
   app.post('/projects', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'projects.write'))) return;
-    const body = request.body as any;
-    if (!body.name) return reply.status(400).send({ error: 'name required' });
-    if (typeof body.name !== 'string' || !body.name.trim()) return reply.status(400).send({ error: 'invalid name' });
+    const body = parseAndValidate(createProjectSchema, request.body, 'create project');
 
     const userId = (request as any).user?.sub;
     const userRepo = AppDataSource.getRepository(User);

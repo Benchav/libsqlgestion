@@ -13,17 +13,7 @@ function getCookie(name: string) {
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
 }
 
-export function getToken() {
-  return null;
-}
-
-export function getRefreshToken() {
-  return null;
-}
-
-export function setSession(accessToken: string, refreshToken: string) {
-  void accessToken;
-  void refreshToken;
+export function setSession(_accessToken: string, _refreshToken: string) {
   if (typeof window !== 'undefined') {
     window.sessionStorage.setItem(SESSION_KEY, '1');
   }
@@ -102,11 +92,6 @@ function buildHeaders(initHeaders: HeadersInit | undefined, body: BodyInit | nul
     }
   }
 
-  const token = getToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
   return headers;
 }
 
@@ -121,7 +106,6 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     cache: 'no-store',
   });
 
-  // If we get a 401, attempt a silent refresh and retry once
   if (response.status === 401) {
     const refreshed = await tryRefreshToken();
     if (refreshed) {
@@ -136,11 +120,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
 
   if (!response.ok) {
-  if (response.status === 401) {
-    clearSession();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
-    }
+    if (response.status === 401) {
+      clearSession();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
     }
     const text = await response.text().catch(() => '');
     let payload: unknown = text;
@@ -157,4 +141,39 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
 
   return response.json();
+}
+
+export function createApiHooks<TRead, TWrite = Partial<TRead>>(basePath: string) {
+  const listPath = basePath;
+  const itemPath = (id: string) => `${basePath}/${id}`;
+
+  return {
+    listPath,
+    itemPath,
+    list: async (): Promise<TRead[]> => {
+      const result = await apiRequest<Record<string, TRead[]>>(listPath);
+      const key = Object.keys(result).find(k => Array.isArray(result[k]));
+      return (key ? result[key] : []) as TRead[];
+    },
+    get: async (id: string): Promise<TRead> => {
+      const result = await apiRequest<Record<string, TRead>>(itemPath(id));
+      const key = Object.keys(result).find(k => k !== 'ok');
+      return (key ? result[key] : result) as TRead;
+    },
+    create: async (data: TWrite & Record<string, unknown>): Promise<TRead> => {
+      return apiRequest<TRead>(listPath, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    update: async (id: string, data: Partial<TWrite>): Promise<TRead> => {
+      return apiRequest<TRead>(itemPath(id), {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
+    delete: async (id: string): Promise<void> => {
+      return apiRequest(itemPath(id), { method: 'DELETE' });
+    },
+  };
 }

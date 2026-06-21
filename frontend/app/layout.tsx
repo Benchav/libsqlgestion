@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { Manrope, Space_Grotesk, IBM_Plex_Mono } from 'next/font/google';
+import { QueryProvider } from '../lib/query-provider';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import './globals.css';
 
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-sans' });
@@ -14,7 +16,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${manrope.variable} ${spaceGrotesk.variable} ${ibmPlexMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <QueryProvider>
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
+        </QueryProvider>
+      </body>
     </html>
   );
 }

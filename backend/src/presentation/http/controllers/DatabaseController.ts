@@ -6,8 +6,10 @@ import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
 import { buildDatabaseConnectionUrls } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
+import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema } from '../../../types/validations';
+import { ValidationError } from '../../../types/validations';
 
-function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
+function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string | null; subdomain?: string | null }>(database: T) {
   const urls = buildDatabaseConnectionUrls(database);
   const runtime = (database as any).metadata?.runtime as { provider?: unknown } | undefined;
   const runtimeStatus = typeof (database as any).status === 'string' ? (database as any).status : 'inactive';
@@ -30,19 +32,35 @@ function withConnectionUrl<T extends { id: string; name: string; type: string; u
 export default async function databaseRoutes(app: FastifyInstance) {
   const databaseService = new DatabaseService();
 
-  app.get('/databases', { preHandler: [app.authenticate as any] }, async (_request: FastifyRequest, reply: FastifyReply) => {
-    if (!(await ensurePermission(_request, reply, 'databases.read'))) return;
-    const query = (_request.query as any) || {};
-    const databases = await databaseService.listDatabases(query.projectId);
-    return reply.send({ databases: databases.map((database) => withConnectionUrl(database)) });
+  app.get('/databases', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.read'))) return;
+    try {
+      const query = parseAndValidate(pageQuerySchema, request.query || {}, 'query');
+      const databases = await databaseService.listDatabases((request.query as any)?.projectId);
+      const enriched = databases.map((db) => withConnectionUrl(db));
+
+      if (query.page && query.limit) {
+        const start = (query.page - 1) * query.limit;
+        const page = enriched.slice(start, start + query.limit);
+        return reply.send({
+          databases: page,
+          total: enriched.length,
+          page: query.page,
+          limit: query.limit,
+          hasMore: start + query.limit < enriched.length,
+        });
+      }
+
+      return reply.send({ databases: enriched });
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      return reply.status(500).send({ error: 'failed to list databases' });
+    }
   });
 
   app.post('/databases', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
-    const body = request.body as any;
-    if (!body.projectId || !body.name || !body.type) return reply.status(400).send({ error: 'projectId, name and type required' });
-    if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.type !== 'string') return reply.status(400).send({ error: 'invalid payload' });
-    if (!['sqlite', 'libsql', 'remote'].includes(body.type)) return reply.status(400).send({ error: 'invalid database type' });
+    const body = parseAndValidate(createDatabaseSchema, request.body, 'create database');
     try {
       const result = await databaseService.createDatabase(body.projectId, body);
       return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
@@ -53,9 +71,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
 
   app.post('/databases/import-sqlite', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
-    const body = request.body as any;
-    if (!body.projectId || !body.sourcePath) return reply.status(400).send({ error: 'projectId and sourcePath required' });
-    if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string') return reply.status(400).send({ error: 'invalid payload' });
+    const body = parseAndValidate(importSqliteSchema, request.body, 'import sqlite');
     try {
       const result = await databaseService.importExistingSqlite(body.projectId, body);
       return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
@@ -128,7 +144,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.patch('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;
-    const body = request.body as any;
+    const body = parseAndValidate(updateDatabaseSchema, request.body, 'update database');
     const access = await ensureDatabaseAccess(request, reply, id);
     if (!access) return;
     try {
@@ -198,14 +214,11 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.post('/databases/:id/backup', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;
-    const body = request.body as any;
-    if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
-      return reply.status(400).send({ error: 'name is required for the backup database' });
-    }
+    const body = parseAndValidate(backupDatabaseSchema, request.body, 'backup database');
     const access = await ensureDatabaseAccess(request, reply, id);
     if (!access) return;
     try {
-      const result = await databaseService.backupDatabase(id, { name: body.name.trim() });
+      const result = await databaseService.backupDatabase(id, { name: body.name });
       return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to create backup' });

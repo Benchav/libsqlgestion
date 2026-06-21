@@ -6,6 +6,7 @@ import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { UserRole } from '../../../domain/entities/UserRole';
 import { clearSessionCookie, clearCsrfCookie, csrfCookie, parseCookies, sessionCookie } from '../../../infrastructure/security/cookies';
 import { issueCsrfToken } from '../csrf';
+import { parseAndValidate, registerUserSchema, loginSchema } from '../../../types/validations';
 
 const ACCESS_TOKEN_MAX_AGE = 60 * 60 * 24 * 7;
 const REFRESH_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
@@ -28,9 +29,7 @@ export default async function authRoutes(app: FastifyInstance) {
   const auditService = new AuditService();
 
   app.post('/auth/register', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as any;
-    if (!body.email || !body.password) return reply.status(400).send({ error: 'email and password required' });
-    if (typeof body.email !== 'string' || typeof body.password !== 'string') return reply.status(400).send({ error: 'invalid payload' });
+    const body = parseAndValidate(registerUserSchema, request.body, 'register');
     try {
       const user = await authService.register(body.email, body.password);
       const session = await authService.issueSession(user);
@@ -46,9 +45,7 @@ export default async function authRoutes(app: FastifyInstance) {
   });
 
   app.post('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as any;
-    if (!body.email || !body.password) return reply.status(400).send({ error: 'email and password required' });
-    if (typeof body.email !== 'string' || typeof body.password !== 'string') return reply.status(400).send({ error: 'invalid payload' });
+    const body = parseAndValidate(loginSchema, request.body, 'login');
     const user = await authService.authenticate(body.email, body.password);
     if (!user) return reply.status(401).send({ error: 'invalid credentials' });
     const session = await authService.issueSession(user);

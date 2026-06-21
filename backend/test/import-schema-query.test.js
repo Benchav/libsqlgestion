@@ -318,4 +318,66 @@ test.describe('Import → Schema → Query End-to-End Integration', () => {
       assert.deepEqual(nombres, ['Acme Corp', 'Beta LLC', 'Gamma SA']);
     });
   });
+
+  test.describe('Import from live WAL database', () => {
+    test('imports a consistent snapshot while the source database is still open in WAL mode', async () => {
+      const liveWalPath = path.join(tempDir, 'fixtures', 'live-wal.db');
+      const liveClient = new SqliteClient(liveWalPath);
+
+      try {
+        await liveClient.execAtomic(`
+          CREATE TABLE pedidos (
+            id INTEGER PRIMARY KEY,
+            descripcion TEXT NOT NULL
+          );
+          INSERT INTO pedidos (id, descripcion) VALUES (1, 'pedido abierto');
+          INSERT INTO pedidos (id, descripcion) VALUES (2, 'pedido en wal');
+        `);
+
+        const walPath = `${liveWalPath}-wal`;
+        assert.ok(fs.existsSync(walPath), 'debe existir archivo WAL para este escenario');
+
+        const importRes = await app.inject({
+          method: 'POST',
+          url: '/api/v1/databases/import-sqlite',
+          headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+          payload: {
+            projectId: apiProjectId,
+            name: 'wal-importado',
+            sourcePath: liveWalPath,
+          },
+        });
+
+        assert.equal(importRes.statusCode, 201);
+        const importBody = JSON.parse(importRes.payload);
+        const walDbId = importBody.database.id;
+
+        const schemaRes = await app.inject({
+          method: 'GET',
+          url: `/api/v1/databases/${walDbId}/schema`,
+          headers: { cookie: cookieHeader },
+        });
+        assert.equal(schemaRes.statusCode, 200);
+        const schemaBody = JSON.parse(schemaRes.payload);
+        const pedidos = schemaBody.tables.find((t) => t.table === 'pedidos');
+        assert.ok(pedidos, 'la tabla pedidos debe existir tras importar desde WAL');
+        assert.equal(pedidos.rowCount, 2);
+
+        const queryRes = await app.inject({
+          method: 'POST',
+          url: `/api/v1/databases/${walDbId}/query`,
+          headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+          payload: { sql: 'SELECT * FROM pedidos ORDER BY id' },
+        });
+        assert.equal(queryRes.statusCode, 200);
+        const queryBody = JSON.parse(queryRes.payload);
+        assert.equal(queryBody.ok, true);
+        assert.equal(queryBody.rows.length, 2);
+        assert.equal(queryBody.rows[0].descripcion, 'pedido abierto');
+        assert.equal(queryBody.rows[1].descripcion, 'pedido en wal');
+      } finally {
+        await liveClient.close();
+      }
+    });
+  });
 });

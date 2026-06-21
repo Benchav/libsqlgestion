@@ -1,6 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { promises as fsp } from 'fs';
+import { SqliteClient } from '../sqlite/SqliteClient';
+
+function escapeSqliteString(value: string) {
+  return value.replace(/'/g, "''");
+}
 
 export class SqliteStorageService {
   private readonly storageRoot: string;
@@ -35,7 +40,28 @@ export class SqliteStorageService {
   async importDatabaseFile(sourcePath: string, projectId: string, databaseId: string, type?: string) {
     const targetPath = this.managedDatabasePath(projectId, databaseId, type);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    await fsp.copyFile(sourcePath, targetPath);
+
+    const tempTargetPath = `${targetPath}.import-${Date.now()}.tmp`;
+    await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
+
+    try {
+      // Create a consistent snapshot from the live SQLite database.
+      // This captures committed WAL contents as seen by SQLite and avoids
+      // importing a stale/blank main database file from ERP workloads.
+      const client = new SqliteClient(sourcePath);
+      try {
+        await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
+      } finally {
+        await client.close();
+      }
+
+      await fsp.rm(targetPath, { force: true }).catch(() => undefined);
+      await fsp.rename(tempTargetPath, targetPath);
+    } catch (error) {
+      await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+
     return targetPath;
   }
 

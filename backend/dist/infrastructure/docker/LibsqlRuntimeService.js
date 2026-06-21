@@ -64,7 +64,7 @@ class LibsqlRuntimeService {
             const networkName = await this.resolveBackendNetworkName();
             createdContainerId = await this.createAndStartContainer(paths, databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
-            const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
+            const internalUrl = this.buildInternalUrl(paths.subdomain, publicPort);
             const backendUrl = this.buildBackendUrl(publicPort);
             const publicUrl = this.buildCanonicalPublicUrl(paths.subdomain, publicPort);
             const readiness = await this.waitForReady(createdContainerId, {
@@ -119,7 +119,7 @@ class LibsqlRuntimeService {
         try {
             createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
             const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
-            const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
+            const internalUrl = this.buildInternalUrl(paths.subdomain, publicPort);
             const backendUrl = this.buildBackendUrl(publicPort);
             const publicUrl = this.buildCanonicalPublicUrl(paths.subdomain, publicPort);
             const readiness = await this.waitForReady(createdContainerId, {
@@ -218,11 +218,21 @@ class LibsqlRuntimeService {
         }
         return this.buildBackendUrl(publicPort);
     }
-    buildInternalUrl(containerName, publicPort) {
-        if (containerName) {
-            return `http://${containerName}:8080`;
+    buildInternalUrl(subdomain, publicPort) {
+        const stableHost = this.buildStableInternalHost(subdomain);
+        if (stableHost) {
+            return `http://${stableHost}:8080`;
         }
         return this.buildPublicUrl(publicPort);
+    }
+    buildStableInternalHost(subdomain) {
+        const normalized = String(subdomain || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .replace(/-{2,}/g, '-');
+        return normalized ? `libsqlite-${normalized}` : '';
     }
     resolvePaths(database, databasePath) {
         const containerName = `libsqlite-${database.id}`;
@@ -337,7 +347,9 @@ class LibsqlRuntimeService {
             NetworkingConfig: networkName
                 ? {
                     EndpointsConfig: {
-                        [networkName]: {},
+                        [networkName]: {
+                            Aliases: [paths.containerName, this.buildStableInternalHost(paths.subdomain)].filter(Boolean),
+                        },
                     },
                 }
                 : undefined,

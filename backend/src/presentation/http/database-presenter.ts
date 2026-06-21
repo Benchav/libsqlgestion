@@ -21,7 +21,7 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
     ...database,
     effectiveType,
     runtimeProvider: runtimeProvider || (effectiveType === 'sqlite' ? 'local-file' : ''),
-    preferredLocalConnectionUrl: urls.backendUrl || urls.internalUrl || database.url || '',
+    preferredLocalConnectionUrl: urls.internalUrl || urls.backendUrl || database.url || '',
     preferredRemoteConnectionUrl: urls.publicLibsqlUrl || urls.publicHttpsUrl || '',
     connectionUrl: urls.publicLibsqlUrl || urls.publicHttpsUrl || urls.backendUrl,
     publicConnectionUrl: urls.publicHttpsUrl,

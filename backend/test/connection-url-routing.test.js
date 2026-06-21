@@ -55,16 +55,16 @@ test('docker libsql database exposes backend and public urls correctly', () => {
       runtime: {
         provider: 'docker-libsql',
         databasePath: '/app/data/sqlite/projects/p1/databases/db-runtime-1/data',
-        internalUrl: 'http://libsqlite-db-runtime-1:8080',
+        internalUrl: 'http://libsqlite-insumosv1:8080',
         backendUrl: 'http://host.docker.internal:34123',
-        connectionUrl: 'http://libsqlite-db-runtime-1:8080',
+        connectionUrl: 'http://libsqlite-insumosv1:8080',
         publicUrl: 'https://insumosv1.ibarerra.site',
       },
     },
   };
 
   const urls = buildDatabaseConnectionUrls(database);
-  assert.equal(urls.internalUrl, 'http://libsqlite-db-runtime-1:8080');
+  assert.equal(urls.internalUrl, 'http://libsqlite-insumosv1:8080');
   assert.equal(urls.backendUrl, 'http://host.docker.internal:34123');
   assert.equal(urls.publicHttpsUrl, 'https://insumosv1.ibarerra.site');
   assert.equal(urls.publicLibsqlUrl, 'libsql://insumosv1.ibarerra.site');
@@ -72,11 +72,11 @@ test('docker libsql database exposes backend and public urls correctly', () => {
   const presented = presentDatabase(database);
   assert.equal(presented.effectiveType, 'libsql');
   assert.equal(presented.runtimeProvider, 'docker-libsql');
-  assert.equal(presented.preferredLocalConnectionUrl, 'http://host.docker.internal:34123');
+  assert.equal(presented.preferredLocalConnectionUrl, 'http://libsqlite-insumosv1:8080');
   assert.equal(presented.preferredRemoteConnectionUrl, 'libsql://insumosv1.ibarerra.site');
   assert.equal(presented.connectionUrl, 'libsql://insumosv1.ibarerra.site');
   assert.equal(presented.backendConnectionUrl, 'http://host.docker.internal:34123');
-  assert.equal(presented.internalConnectionUrl, 'http://libsqlite-db-runtime-1:8080');
+  assert.equal(presented.internalConnectionUrl, 'http://libsqlite-insumosv1:8080');
   assert.equal(presented.publicHttpsUrl, 'https://insumosv1.ibarerra.site');
   assert.equal(presented.publicLibsqlUrl, 'libsql://insumosv1.ibarerra.site');
 });

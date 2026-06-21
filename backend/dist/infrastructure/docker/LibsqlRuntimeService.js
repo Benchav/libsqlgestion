@@ -376,10 +376,14 @@ class LibsqlRuntimeService {
             await this.requestVoid('DELETE', `/containers/${containerId}?force=true&v=true`);
         }
         catch (error) {
-            if (!String(error?.message || '').includes('404')) {
+            if (!this.isIgnorableContainerRemovalError(error)) {
                 throw error;
             }
         }
+    }
+    isIgnorableContainerRemovalError(error) {
+        const message = String(error?.message || '');
+        return message.includes('404') || message.includes('already in progress');
     }
     async waitForPublishedPort(containerId, containerPort) {
         const portKey = `${containerPort}/tcp`;

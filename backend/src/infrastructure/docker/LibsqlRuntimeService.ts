@@ -402,10 +402,15 @@ export class LibsqlRuntimeService {
     try {
       await this.requestVoid('DELETE', `/containers/${containerId}?force=true&v=true`);
     } catch (error: any) {
-      if (!String(error?.message || '').includes('404')) {
+      if (!this.isIgnorableContainerRemovalError(error)) {
         throw error;
       }
     }
+  }
+
+  private isIgnorableContainerRemovalError(error: unknown) {
+    const message = String((error as any)?.message || '');
+    return message.includes('404') || message.includes('already in progress');
   }
 
   private async waitForPublishedPort(containerId: string, containerPort: number) {

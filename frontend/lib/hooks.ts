@@ -34,6 +34,8 @@ export type DatabaseDetail = {
   subdomain?: string;
   url?: string;
   connectionUrl?: string;
+  preferredLocalConnectionUrl?: string;
+  preferredRemoteConnectionUrl?: string;
   publicConnectionUrl?: string;
   publicHttpsUrl?: string;
   publicLibsqlUrl?: string;

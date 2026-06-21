@@ -18,6 +18,8 @@ type DatabaseDetail = {
   subdomain?: string;
   url?: string;
   connectionUrl?: string;
+  preferredLocalConnectionUrl?: string;
+  preferredRemoteConnectionUrl?: string;
   publicConnectionUrl?: string;
   publicHttpsUrl?: string;
   publicLibsqlUrl?: string;
@@ -150,11 +152,12 @@ export default function DatabaseDetailPage() {
   const publicUrl = database?.publicHttpsUrl || database?.publicConnectionUrl || '';
   const publicLibsqlUrl = database?.publicLibsqlUrl || '';
   const internalUrl = database?.internalLibsqlUrl || database?.internalConnectionUrl || database?.url || '';
-  const backendUrl = database?.backendReachableUrl || database?.backendConnectionUrl || internalUrl || database?.url || '';
-  const serverUrl = publicLibsqlUrl || publicUrl || backendUrl;
+  const backendUrl = database?.preferredLocalConnectionUrl || database?.backendReachableUrl || database?.backendConnectionUrl || internalUrl || database?.url || '';
+  const remoteUrl = database?.preferredRemoteConnectionUrl || publicLibsqlUrl || publicUrl || '';
+  const serverUrl = remoteUrl || backendUrl;
   const runtimeLabel = getRuntimeLabel(database?.metadata);
-  const envSnippet = serverUrl && revealedToken
-    ? `# Preferred libSQL connection\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}${publicUrl ? `\n\n# HTTPS fallback\nDATABASE_HTTPS_URL=${publicUrl}` : ''}`
+  const envSnippet = revealedToken
+    ? `# Same server / Coolify backend\nDATABASE_URL=${backendUrl || 'RECOMMENDED_LOCAL_URL'}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Remote / public clients\nTURSO_DATABASE_URL=${remoteUrl || 'RECOMMENDED_REMOTE_URL'}\nTURSO_AUTH_TOKEN=${revealedToken}${publicUrl ? `\nDATABASE_HTTPS_URL=${publicUrl}` : ''}`
     : '';
 
   if (!database && !error) {
@@ -313,6 +316,49 @@ export default function DatabaseDetailPage() {
 
               <div className="p-6 space-y-4">
                 <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Recommended Endpoints</label>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-emerald-300">Same server / Coolify backend</div>
+                          <div className="mt-1 text-xs text-zinc-400">Use this from your ERP backend if it runs in the same server stack.</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyText(backendUrl, 'preferred-local-url')}
+                          disabled={!backendUrl}
+                          className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                        >
+                          {copiedKey === 'preferred-local-url' ? <Check size={14} /> : <Copy size={14} />}
+                          {copiedKey === 'preferred-local-url' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      <code className="block break-all whitespace-normal rounded-md border border-zinc-800 bg-[#050505] px-3 py-2 font-mono text-xs text-zinc-200">{backendUrl || 'Unavailable'}</code>
+                    </div>
+
+                    <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-blue-300">Remote / public client</div>
+                          <div className="mt-1 text-xs text-zinc-400">Use this from another server or any client outside your Docker network.</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyText(remoteUrl, 'preferred-remote-url')}
+                          disabled={!remoteUrl}
+                          className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                        >
+                          {copiedKey === 'preferred-remote-url' ? <Check size={14} /> : <Copy size={14} />}
+                          {copiedKey === 'preferred-remote-url' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      <code className="block break-all whitespace-normal rounded-md border border-zinc-800 bg-[#050505] px-3 py-2 font-mono text-xs text-zinc-200">{remoteUrl || 'Configure a public runtime URL first'}</code>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Public URL</label>
                   <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
                     <code className="flex-1 break-all whitespace-normal">{publicUrl || 'Configure DATABASE_PUBLIC_DOMAIN, DATABASE_PUBLIC_BASE_URL, or DATABASE_PUBLIC_URL_TEMPLATE'}</code>
@@ -324,6 +370,22 @@ export default function DatabaseDetailPage() {
                     >
                       {copiedKey === 'public-url' ? <Check size={14} /> : <Copy size={14} />}
                       {copiedKey === 'public-url' ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Public libSQL URL</label>
+                  <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                    <code className="flex-1 break-all whitespace-normal">{publicLibsqlUrl || 'Available only when a public libSQL runtime is configured'}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyText(publicLibsqlUrl, 'public-libsql-url')}
+                      disabled={!publicLibsqlUrl}
+                      className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {copiedKey === 'public-libsql-url' ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedKey === 'public-libsql-url' ? 'Copied' : 'Copy'}
                     </button>
                   </div>
                 </div>
@@ -345,7 +407,7 @@ export default function DatabaseDetailPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Backend URL</label>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Backend URL (Same server / Coolify)</label>
                   <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
                     <code className="flex-1 break-all whitespace-normal">{backendUrl || 'Use internal URL'}</code>
                     <button
@@ -425,7 +487,7 @@ export default function DatabaseDetailPage() {
 {envSnippet || 'Reveal the token and configure the public URL from the panel to generate a copy-ready snippet.'}
                   </pre>
                   <p className="mt-2 text-xs text-zinc-500">
-                     Prefer the public libSQL URL only when the effective type is `LIBSQL`. If the runtime shows `local-file`, the base is still operating as a local SQLite database.
+                    Prioridad recomendada: `Backend URL` para backends en el mismo servidor/Coolify y `Public libSQL URL` para clientes remotos por HTTP/libSQL.
                   </p>
                 </div>
               </div>
@@ -437,7 +499,7 @@ export default function DatabaseDetailPage() {
                 <Key size={16} className="text-zinc-400" /> Connecting to your database
               </h3>
               <p className="text-sm text-zinc-400 mb-4">
-                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your Next.js API or server actions, and prefer the public libSQL URL generated by the panel when it is available.
+                Use the <code className="text-blue-400 bg-blue-400/10 px-1 rounded">@libsql/client</code> package in your backend. Prefer <code className="text-emerald-300 bg-emerald-300/10 px-1 rounded">Backend URL</code> when your ERP runs in the same Coolify/server environment, and <code className="text-blue-300 bg-blue-300/10 px-1 rounded">Public libSQL URL</code> for remote deployments.
               </p>
               <pre className="bg-[#050505] border border-zinc-800 p-4 rounded-lg overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar">
 {`import { createClient } from '@libsql/client';

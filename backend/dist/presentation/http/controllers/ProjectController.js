@@ -6,6 +6,7 @@ const data_source_1 = require("../../../infrastructure/db/data-source");
 const User_1 = require("../../../domain/entities/User");
 const guards_1 = require("../guards");
 const AuditService_1 = require("../../../application/audit/AuditService");
+const validations_1 = require("../../../types/validations");
 async function projectRoutes(app) {
     const projectService = new ProjectService_1.ProjectService();
     const auditService = new AuditService_1.AuditService();
@@ -19,11 +20,7 @@ async function projectRoutes(app) {
     app.post('/projects', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'projects.write')))
             return;
-        const body = request.body;
-        if (!body.name)
-            return reply.status(400).send({ error: 'name required' });
-        if (typeof body.name !== 'string' || !body.name.trim())
-            return reply.status(400).send({ error: 'invalid name' });
+        const body = (0, validations_1.parseAndValidate)(validations_1.createProjectSchema, request.body, 'create project');
         const userId = request.user?.sub;
         const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
         const owner = await userRepo.findOneBy({ id: userId });

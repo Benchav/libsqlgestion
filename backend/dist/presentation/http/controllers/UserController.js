@@ -7,6 +7,7 @@ const Role_1 = require("../../../domain/entities/Role");
 const UserRole_1 = require("../../../domain/entities/UserRole");
 const authorization_1 = require("../../../application/auth/authorization");
 const guards_1 = require("../guards");
+const validations_1 = require("../../../types/validations");
 async function userRoutes(app) {
     const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
     const roleRepo = data_source_1.AppDataSource.getRepository(Role_1.Role);
@@ -21,9 +22,7 @@ async function userRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'users.write')))
             return;
         const { id } = request.params;
-        const body = request.body;
-        if (!body.roleName)
-            return reply.status(400).send({ error: 'roleName required' });
+        const body = (0, validations_1.parseAndValidate)(validations_1.assignRoleSchema, request.body, 'assign role');
         const user = await userRepo.findOneBy({ id });
         const role = await roleRepo.findOneBy({ name: body.roleName });
         if (!user || !role)

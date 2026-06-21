@@ -11,6 +11,8 @@ const promises_1 = require("stream/promises");
 const DatabaseService_1 = require("../../../application/databases/DatabaseService");
 const connection_url_1 = require("../../../application/databases/connection-url");
 const guards_1 = require("../guards");
+const validations_1 = require("../../../types/validations");
+const validations_2 = require("../../../types/validations");
 function withConnectionUrl(database) {
     const urls = (0, connection_url_1.buildDatabaseConnectionUrls)(database);
     const runtime = database.metadata?.runtime;
@@ -32,23 +34,36 @@ function withConnectionUrl(database) {
 }
 async function databaseRoutes(app) {
     const databaseService = new DatabaseService_1.DatabaseService();
-    app.get('/databases', { preHandler: [app.authenticate] }, async (_request, reply) => {
-        if (!(await (0, guards_1.ensurePermission)(_request, reply, 'databases.read')))
+    app.get('/databases', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
             return;
-        const query = _request.query || {};
-        const databases = await databaseService.listDatabases(query.projectId);
-        return reply.send({ databases: databases.map((database) => withConnectionUrl(database)) });
+        try {
+            const query = (0, validations_1.parseAndValidate)(validations_1.pageQuerySchema, request.query || {}, 'query');
+            const databases = await databaseService.listDatabases(request.query?.projectId);
+            const enriched = databases.map((db) => withConnectionUrl(db));
+            if (query.page && query.limit) {
+                const start = (query.page - 1) * query.limit;
+                const page = enriched.slice(start, start + query.limit);
+                return reply.send({
+                    databases: page,
+                    total: enriched.length,
+                    page: query.page,
+                    limit: query.limit,
+                    hasMore: start + query.limit < enriched.length,
+                });
+            }
+            return reply.send({ databases: enriched });
+        }
+        catch (error) {
+            if (error instanceof validations_2.ValidationError)
+                throw error;
+            return reply.status(500).send({ error: 'failed to list databases' });
+        }
     });
     app.post('/databases', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
-        const body = request.body;
-        if (!body.projectId || !body.name || !body.type)
-            return reply.status(400).send({ error: 'projectId, name and type required' });
-        if (typeof body.projectId !== 'string' || typeof body.name !== 'string' || typeof body.type !== 'string')
-            return reply.status(400).send({ error: 'invalid payload' });
-        if (!['sqlite', 'libsql', 'remote'].includes(body.type))
-            return reply.status(400).send({ error: 'invalid database type' });
+        const body = (0, validations_1.parseAndValidate)(validations_1.createDatabaseSchema, request.body, 'create database');
         try {
             const result = await databaseService.createDatabase(body.projectId, body);
             return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
@@ -60,11 +75,7 @@ async function databaseRoutes(app) {
     app.post('/databases/import-sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
-        const body = request.body;
-        if (!body.projectId || !body.sourcePath)
-            return reply.status(400).send({ error: 'projectId and sourcePath required' });
-        if (typeof body.projectId !== 'string' || typeof body.sourcePath !== 'string')
-            return reply.status(400).send({ error: 'invalid payload' });
+        const body = (0, validations_1.parseAndValidate)(validations_1.importSqliteSchema, request.body, 'import sqlite');
         try {
             const result = await databaseService.importExistingSqlite(body.projectId, body);
             return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
@@ -136,7 +147,7 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
         const { id } = request.params;
-        const body = request.body;
+        const body = (0, validations_1.parseAndValidate)(validations_1.updateDatabaseSchema, request.body, 'update database');
         const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
         if (!access)
             return;
@@ -212,15 +223,12 @@ async function databaseRoutes(app) {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;
         const { id } = request.params;
-        const body = request.body;
-        if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
-            return reply.status(400).send({ error: 'name is required for the backup database' });
-        }
+        const body = (0, validations_1.parseAndValidate)(validations_1.backupDatabaseSchema, request.body, 'backup database');
         const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
         if (!access)
             return;
         try {
-            const result = await databaseService.backupDatabase(id, { name: body.name.trim() });
+            const result = await databaseService.backupDatabase(id, { name: body.name });
             return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
         }
         catch (err) {

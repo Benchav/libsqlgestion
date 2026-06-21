@@ -8,6 +8,7 @@ const data_source_1 = require("../../../infrastructure/db/data-source");
 const UserRole_1 = require("../../../domain/entities/UserRole");
 const cookies_1 = require("../../../infrastructure/security/cookies");
 const csrf_1 = require("../csrf");
+const validations_1 = require("../../../types/validations");
 const ACCESS_TOKEN_MAX_AGE = 60 * 60 * 24 * 7;
 const REFRESH_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
 const CSRF_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
@@ -26,11 +27,7 @@ async function authRoutes(app) {
     const authService = new AuthService_1.AuthService();
     const auditService = new AuditService_1.AuditService();
     app.post('/auth/register', async (request, reply) => {
-        const body = request.body;
-        if (!body.email || !body.password)
-            return reply.status(400).send({ error: 'email and password required' });
-        if (typeof body.email !== 'string' || typeof body.password !== 'string')
-            return reply.status(400).send({ error: 'invalid payload' });
+        const body = (0, validations_1.parseAndValidate)(validations_1.registerUserSchema, request.body, 'register');
         try {
             const user = await authService.register(body.email, body.password);
             const session = await authService.issueSession(user);
@@ -46,11 +43,7 @@ async function authRoutes(app) {
         }
     });
     app.post('/auth/login', async (request, reply) => {
-        const body = request.body;
-        if (!body.email || !body.password)
-            return reply.status(400).send({ error: 'email and password required' });
-        if (typeof body.email !== 'string' || typeof body.password !== 'string')
-            return reply.status(400).send({ error: 'invalid payload' });
+        const body = (0, validations_1.parseAndValidate)(validations_1.loginSchema, request.body, 'login');
         const user = await authService.authenticate(body.email, body.password);
         if (!user)
             return reply.status(401).send({ error: 'invalid credentials' });

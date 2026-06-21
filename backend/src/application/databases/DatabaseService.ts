@@ -23,116 +23,65 @@ export class DatabaseService {
   async createDatabase(projectId: string, input: { name: string; type: 'sqlite' | 'libsql' | 'remote'; url?: string; token?: string; subdomain?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(input.name, randomToken());
-    let managedPath: string | undefined;
-    let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
-    let managedRuntimeMetadata: Record<string, unknown> | undefined;
-    const canProvisionRuntime = this.isManagedRuntimeRequest(input) && this.runtimeService.isEnabled();
-    const provisionAsync = canProvisionRuntime && this.shouldProvisionAsync();
+    const willProvisionRuntime = this.isManagedRuntimeRequest(input) && this.runtimeService.isEnabled();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
-      type: canProvisionRuntime ? 'libsql' : input.type,
-      url: input.url,
+      type: willProvisionRuntime ? 'libsql' : input.type,
+      status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
-      status: canProvisionRuntime ? 'provisioning' : 'inactive',
       metadata: input.metadata,
       project,
     }));
 
+    let managedPath: string | undefined;
+
     try {
-      if (canProvisionRuntime) {
-        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, database.type);
-        if (provisionAsync) {
-          this.scheduleManagedRuntimeProvisioning({
-            databaseId: database.id,
-            managedPath,
-            auditAction: 'database.create',
-            auditMetadata: { projectId, type: input.type, subdomain: input.subdomain },
-          });
-          return { database };
-        }
-
-        try {
-          managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
-          managedRuntimeMetadata = managedRuntime.metadata;
-
-          database.url = managedPath;
-          database.status = 'active';
-          database.encryptedToken = encrypt(managedRuntime.token);
-          database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
-          await this.databaseRepo.save(database);
-
-          await this.auditService.record({
-            action: 'database.create',
-            resourceType: 'database',
-            resourceId: database.id,
-            metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
-          });
-
-          return { database, token: managedRuntime.token };
-        } catch (error) {
-          await this.markProvisioningError(database, error, managedPath);
-          throw error;
-        }
-      }
-
-      if (input.type === 'sqlite') {
-        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, database.type);
-        await fs.promises.writeFile(managedPath, '');
-        
-        // Initialize the new SQLite file and set WAL mode persistently once
-        const initClient = new SqliteClient(managedPath);
-        try {
-          await initClient.run('PRAGMA journal_mode = WAL;');
-        } finally {
-          await initClient.close();
-        }
-
-        const token = input.token ?? randomToken();
-        database.url = managedPath;
-        database.status = 'active';
-        database.encryptedToken = encrypt(token);
-        database.metadata = mergeRuntimeMetadata(database.metadata, {
-          provider: 'local-file',
-          databasePath: managedPath,
-          connectionUrl: managedPath,
-          internalUrl: managedPath,
-          publicUrl: managedPath,
-        });
-        await this.databaseRepo.save(database);
-
-        await this.auditService.record({
-          action: 'database.create',
-          resourceType: 'database',
-          resourceId: database.id,
-          metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: 'local-file' },
-        });
-
-        return { database, token };
-      }
-
       const token = input.token ?? randomToken();
-      database.encryptedToken = encrypt(token);
 
-      if (input.url) {
-        database.status = 'active';
+      if (input.type === 'sqlite' || willProvisionRuntime) {
+        managedPath = await this.storageService.ensureManagedDatabaseFile(project.id, database.id, database.type);
+
+        if (input.type === 'sqlite') {
+          const initClient = new SqliteClient(managedPath);
+          try {
+            await initClient.run('PRAGMA journal_mode = WAL;');
+          } finally {
+            await initClient.close();
+          }
+        }
       }
 
+      database.url = managedPath || input.url || undefined;
+      database.status = database.type === 'remote' && !managedPath ? (input.url ? 'active' : 'inactive') : willProvisionRuntime ? 'provisioning' : 'active';
+      database.encryptedToken = encrypt(token);
+      database.metadata = mergeRuntimeMetadata(database.metadata, {
+        provider: 'local-file',
+        databasePath: managedPath || null,
+        connectionUrl: managedPath || null,
+        internalUrl: managedPath || null,
+        publicUrl: managedPath || null,
+      });
       await this.databaseRepo.save(database);
 
       await this.auditService.record({
         action: 'database.create',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, type: input.type, subdomain: input.subdomain },
+        metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: 'local-file' },
       });
+
+      if (willProvisionRuntime && managedPath) {
+        this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
+          projectId, type: input.type, subdomain: input.subdomain,
+        }).catch((error) => {
+          console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+        });
+      }
 
       return { database, token };
     } catch (error) {
-      if (database.status === 'error') {
-        throw error;
-      }
-      await this.cleanupCreatedDatabase(database.id, managedPath ? [managedPath] : [], managedRuntimeMetadata);
+      await this.cleanupCreatedDatabase(database.id, managedPath ? [managedPath] : []);
       throw error;
     }
   }
@@ -144,60 +93,24 @@ export class DatabaseService {
     }
     const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(databaseName, randomToken());
-    const canProvisionRuntime = this.runtimeService.isEnabled();
+    const willProvisionRuntime = this.runtimeService.isEnabled();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: databaseName,
-      type: canProvisionRuntime ? 'libsql' : 'sqlite',
-      status: canProvisionRuntime ? 'provisioning' : 'inactive',
+      type: willProvisionRuntime ? 'libsql' : 'sqlite',
+      status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
       project,
     }));
 
     const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id, database.type);
-    let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
-    let managedRuntimeMetadata: Record<string, unknown> | undefined;
 
     try {
-      if (canProvisionRuntime) {
-        if (this.shouldProvisionAsync()) {
-          this.scheduleManagedRuntimeProvisioning({
-            databaseId: database.id,
-            managedPath,
-            auditAction: 'database.import',
-            auditMetadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain },
-          });
-          return { database };
-        }
-
-        try {
-          managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
-          managedRuntimeMetadata = managedRuntime.metadata;
-
-          database.url = managedPath;
-          database.status = 'active';
-          database.encryptedToken = encrypt(managedRuntime.token);
-          database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
-          await this.databaseRepo.save(database);
-
-          await this.auditService.record({
-            action: 'database.import',
-            resourceType: 'database',
-            resourceId: database.id,
-            metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: managedRuntime.metadata.provider },
-          });
-
-          return { database, token: managedRuntime.token };
-        } catch (error) {
-          await this.markProvisioningError(database, error, managedPath);
-          throw error;
-        }
-      }
-
       const token = input.token ?? randomToken();
+
       database.url = managedPath;
-      database.status = 'active';
+      database.status = willProvisionRuntime ? 'provisioning' : 'active';
       database.encryptedToken = encrypt(token);
       database.metadata = mergeRuntimeMetadata(database.metadata, {
         provider: 'local-file',
@@ -215,12 +128,17 @@ export class DatabaseService {
         metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: 'local-file' },
       });
 
+      if (willProvisionRuntime) {
+        this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
+          projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
+        }).catch((error) => {
+          console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+        });
+      }
+
       return { database, token };
     } catch (error) {
-      if (database.status === 'error') {
-        throw error;
-      }
-      await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntimeMetadata);
+      await this.cleanupCreatedDatabase(database.id, [managedPath]);
       throw error;
     }
   }
@@ -238,9 +156,9 @@ export class DatabaseService {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
 
-    // Evict old connection from pool before rotating credentials
     ConnectionPool.getInstance().evict(id);
-    if (this.isManagedRuntime(database)) {
+
+    if (this.isManagedRuntimeEntry(database)) {
       const runtime = await this.runtimeService.rotateDatabase(database);
       if (!runtime) {
         throw new Error('database runtime is missing');
@@ -321,7 +239,6 @@ export class DatabaseService {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
 
-    // Evict connection from pool before removing the database
     ConnectionPool.getInstance().evict(id);
 
     await this.runtimeService.removeDatabase(database);
@@ -357,19 +274,18 @@ export class DatabaseService {
 
     const project = sourceDatabase.project;
 
-    // Resolve the source SQLite file path
     const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id, sourceDatabase.type);
     if (!fs.existsSync(sourcePath)) {
       throw new Error('source database file not found on disk');
     }
 
     const subdomain = ensureSubdomain(input.name, randomToken());
-    const canProvisionRuntime = this.runtimeService.isEnabled();
+    const willProvisionRuntime = this.runtimeService.isEnabled();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
-      type: canProvisionRuntime ? 'libsql' : sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
-      status: canProvisionRuntime ? 'provisioning' : 'inactive',
+      type: willProvisionRuntime ? 'libsql' : sourceDatabase.type as 'sqlite' | 'libsql' | 'remote',
+      status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
       metadata: {
         backup: true,
@@ -380,50 +296,12 @@ export class DatabaseService {
       project,
     }));
 
-    // Copy the SQLite file byte-by-byte to the new managed location
     const managedPath = await this.storageService.importDatabaseFile(sourcePath, project.id, database.id, database.type);
-    let managedRuntime: { token: string; metadata: Record<string, unknown> } | null = null;
-    let managedRuntimeMetadata: Record<string, unknown> | undefined;
 
     try {
-      if (canProvisionRuntime) {
-        if (this.shouldProvisionAsync()) {
-          this.scheduleManagedRuntimeProvisioning({
-            databaseId: database.id,
-            managedPath,
-            auditAction: 'database.backup',
-            auditMetadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id },
-          });
-          return { database };
-        }
-
-        try {
-          managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
-          managedRuntimeMetadata = managedRuntime.metadata;
-
-          database.url = managedPath;
-          database.status = 'active';
-          database.encryptedToken = encrypt(managedRuntime.token);
-          database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
-          await this.databaseRepo.save(database);
-
-          await this.auditService.record({
-            action: 'database.backup',
-            resourceType: 'database',
-            resourceId: database.id,
-            metadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id, runtime: managedRuntime.metadata.provider },
-          });
-
-          return { database, token: managedRuntime.token };
-        } catch (error) {
-          await this.markProvisioningError(database, error, managedPath);
-          throw error;
-        }
-      }
-
       const token = randomToken();
       database.url = managedPath;
-      database.status = 'active';
+      database.status = willProvisionRuntime ? 'provisioning' : 'active';
       database.encryptedToken = encrypt(token);
       database.metadata = mergeRuntimeMetadata(database.metadata, {
         provider: 'local-file',
@@ -441,12 +319,17 @@ export class DatabaseService {
         metadata: { sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id, runtime: 'local-file' },
       });
 
+      if (willProvisionRuntime) {
+        this.attemptRuntimeProvisioning(database.id, managedPath, 'database.backup', {
+          sourceId: sourceDatabase.id, sourceName: sourceDatabase.name, projectId: project.id,
+        }).catch((error) => {
+          console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+        });
+      }
+
       return { database, token };
     } catch (error) {
-      if (database.status === 'error') {
-        throw error;
-      }
-      await this.cleanupCreatedDatabase(database.id, [managedPath], managedRuntimeMetadata);
+      await this.cleanupCreatedDatabase(database.id, [managedPath]);
       throw error;
     }
   }
@@ -461,8 +344,41 @@ export class DatabaseService {
     return isManagedRuntimeType(input);
   }
 
-  private isManagedRuntime(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
+  private isManagedRuntimeEntry(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
     return getManagedRuntimeUrl(database) !== null;
+  }
+
+  private async attemptRuntimeProvisioning(
+    databaseId: string,
+    managedPath: string,
+    auditAction: string,
+    auditMetadata: Record<string, unknown>,
+  ) {
+    const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
+    if (!database) return;
+
+    try {
+      const managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
+      database.url = managedPath;
+      database.status = 'active';
+      database.encryptedToken = encrypt(managedRuntime.token);
+      database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
+      await this.databaseRepo.save(database);
+      await this.auditService.record({
+        action: auditAction,
+        resourceType: 'database',
+        resourceId: database.id,
+        metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned: true },
+      });
+    } catch (error) {
+      database.status = 'error';
+      database.metadata = {
+        ...(database.metadata ?? {}),
+        runtimeError: this.runtimeService.getRuntimeErrorMessage(error),
+        lastProvisioningAttemptAt: new Date().toISOString(),
+      };
+      await this.databaseRepo.save(database);
+    }
   }
 
   private async cleanupCreatedDatabase(databaseId: string, extraPaths: string[] = [], runtimeMetadata?: Record<string, unknown>) {
@@ -487,52 +403,6 @@ export class DatabaseService {
         // Best-effort cleanup.
       }
     }
-  }
-
-  private async markProvisioningError(database: Database, error: unknown, managedPath?: string) {
-    database.status = 'error';
-    database.url = managedPath || database.url;
-    database.metadata = {
-      ...(database.metadata ?? {}),
-      runtimeError: this.runtimeService.getRuntimeErrorMessage(error),
-      lastProvisioningAttemptAt: new Date().toISOString(),
-    };
-    await this.databaseRepo.save(database);
-  }
-
-  private shouldProvisionAsync() {
-    return String(process.env.LIBSQL_PROVISION_ASYNC || 'false').toLowerCase() === 'true';
-  }
-
-  private scheduleManagedRuntimeProvisioning(input: {
-    databaseId: string;
-    managedPath: string;
-    auditAction: string;
-    auditMetadata: Record<string, unknown>;
-  }) {
-    setImmediate(async () => {
-      const database = await this.databaseRepo.findOne({ where: { id: input.databaseId }, relations: ['project'] }).catch(() => null);
-      if (!database) {
-        return;
-      }
-
-      try {
-        const managedRuntime = await this.runtimeService.provisionDatabase(database, input.managedPath);
-        database.url = input.managedPath;
-        database.status = 'active';
-        database.encryptedToken = encrypt(managedRuntime.token);
-        database.metadata = mergeRuntimeMetadata(database.metadata, managedRuntime.metadata);
-        await this.databaseRepo.save(database);
-        await this.auditService.record({
-          action: input.auditAction,
-          resourceType: 'database',
-          resourceId: database.id,
-          metadata: { ...input.auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned: true },
-        });
-      } catch (error) {
-        await this.markProvisioningError(database, error, input.managedPath);
-      }
-    });
   }
 }
 
@@ -559,22 +429,10 @@ function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; ty
     return null;
   }
 
-  if (typeof runtime.connectionUrl === 'string') {
-    return runtime.connectionUrl;
-  }
-
-  if (typeof runtime.internalUrl === 'string') {
-    return runtime.internalUrl;
-  }
-
-  if (typeof runtime.publicUrl === 'string') {
-    return runtime.publicUrl;
-  }
-
-  if (database.type === 'sqlite' && database.url && database.url.startsWith('http')) {
-    return database.url;
-  }
-
+  if (typeof runtime.connectionUrl === 'string') return runtime.connectionUrl;
+  if (typeof runtime.internalUrl === 'string') return runtime.internalUrl;
+  if (typeof runtime.publicUrl === 'string') return runtime.publicUrl;
+  if (database.type === 'sqlite' && database.url && database.url.startsWith('http')) return database.url;
   return null;
 }
 

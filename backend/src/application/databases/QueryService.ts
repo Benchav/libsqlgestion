@@ -2,7 +2,8 @@ import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
-import { isMultiStatementSql, splitSqlStatements } from './sqlScript';
+import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
+import { splitSqlStatements } from './sqlScript';
 
 const READ_ONLY_REGEX = /^\s*(select|pragma|with|explain)\b/i;
 
@@ -45,13 +46,13 @@ export class QueryService {
         return { ok: false, error: 'missing url or token' };
       }
 
-      const client = pool.getClient(database);
+      const client = pool.getClient(database) as LibsqlClient;
       try {
         if (isScript) {
           const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
-          const results = await (client as any).batch(batchArgs, 'write');
+          const results = await client.batch(batchArgs, 'write');
           
-          const statementResults: StatementExecutionResult[] = results.map((result: any, index: number) => {
+          const statementResults: StatementExecutionResult[] = results.map((result, index) => {
             const statement = statements[index];
             const isRead = READ_ONLY_REGEX.test(statement);
             return {
@@ -59,15 +60,14 @@ export class QueryService {
               sql: statement,
               kind: isRead ? 'read' : 'write',
               rows: result.rows,
-              rowsAffected: Number(result.rowsAffected ?? 0),
-              lastInsertRowid: result.lastInsertRowid,
+              rowsAffected: Number((result as any).rowsAffected ?? 0),
+              lastInsertRowid: (result as any).lastInsertRowid,
             };
           });
 
-          // Aggregate values for compatibility with overall query result
           const lastResult = results[results.length - 1];
-          const rowsAffected = results.reduce((acc: number, r: any) => acc + Number(r.rowsAffected ?? 0), 0);
-          const lastInsertRowid = lastResult?.lastInsertRowid;
+          const rowsAffected = results.reduce((acc, r) => acc + Number((r as any).rowsAffected ?? 0), 0);
+          const lastInsertRowid = (lastResult as any)?.lastInsertRowid;
 
           return {
             ok: true,
@@ -79,8 +79,8 @@ export class QueryService {
           };
         }
 
-        const result = await (client as any).execute(sql, params as any);
-        return { ok: true, rows: result.rows, rowsAffected: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
+        const result = await client.execute(sql, params as any);
+        return { ok: true, rows: result.rows, rowsAffected: (result as any).rowsAffected, lastInsertRowid: (result as any).lastInsertRowid };
       } catch (error: any) {
         pool.evictOnError(database.id, error);
         throw new DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
@@ -91,7 +91,6 @@ export class QueryService {
     try {
       client = pool.getSqliteClient(database);
     } catch (error: any) {
-      // File validation errors from the constructor
       throw error instanceof DatabaseError ? error : DatabaseError.from(error);
     }
 
@@ -120,4 +119,3 @@ export class QueryService {
     }
   }
 }
-

@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ensurePermission } from '../guards';
 import { getPublicDatabaseSettings, updatePublicDatabaseSettings } from '../../../application/settings/PlatformSettingsService';
+import { publicDatabaseSettingsSchema, parseAndValidate } from '../../../types/validations';
 
 export default async function settingsRoutes(app: FastifyInstance) {
   app.get('/settings/public-database', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -10,15 +11,8 @@ export default async function settingsRoutes(app: FastifyInstance) {
 
   app.put('/settings/public-database', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'settings.write'))) return;
-    const body = (request.body as any) || {};
-    const settings = await updatePublicDatabaseSettings({
-      domain: body.domain,
-      template: body.template,
-      baseUrl: body.baseUrl,
-      host: body.host,
-      protocol: body.protocol,
-    });
-
+    const body = parseAndValidate(publicDatabaseSettingsSchema, request.body || {}, 'settings');
+    const settings = await updatePublicDatabaseSettings(body);
     return reply.send({ settings });
   });
 }

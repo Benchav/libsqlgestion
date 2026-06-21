@@ -7,26 +7,30 @@ import { apiRequest } from './api';
 export type CurrentUser = {
   sub: string;
   email: string;
+  roles?: string[];
+  permissions?: string[];
 };
 
-/**
- * Auth guard hook. Redirects to /login when there is no active session.
- * Returns the current user payload once loaded.
- */
 export function useAuth() {
   const router = useRouter();
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     apiRequest<{ user: CurrentUser }>('/me')
       .then((result) => {
-        setUser(result.user);
-        setLoading(false);
+        if (!cancelled) {
+          setUser(result.user);
+          setLoading(false);
+        }
       })
       .catch(() => {
-        router.replace('/login');
+        if (!cancelled) {
+          router.replace('/login');
+        }
       });
+    return () => { cancelled = true; };
   }, [router]);
 
   return { user, loading };

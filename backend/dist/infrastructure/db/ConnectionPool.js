@@ -4,18 +4,6 @@ exports.ConnectionPool = void 0;
 const SqliteClient_1 = require("../sqlite/SqliteClient");
 const LibsqlClient_1 = require("../libsql/LibsqlClient");
 const crypto_1 = require("../crypto");
-/**
- * Singleton connection pool that keeps database clients alive across requests.
- *
- * Instead of opening and closing a connection on every single query
- * (which caused the 8-10 second latency), the pool caches clients by
- * database ID and reuses them.
- *
- * Safety:
- * - `evict(id)` MUST be called before deleting a database or rotating its token.
- * - `shutdown()` closes everything cleanly on process exit.
- * - Corrupted connections are automatically evicted on critical errors.
- */
 class ConnectionPool {
     constructor() {
         this.pool = new Map();
@@ -29,10 +17,6 @@ class ConnectionPool {
         }
         return ConnectionPool.instance;
     }
-    /**
-     * Returns a cached client for the given database, or creates one if it
-     * doesn't exist yet. The client is kept alive for future requests.
-     */
     getClient(database) {
         this.sweepIdleConnections();
         const existing = this.pool.get(database.id);
@@ -45,10 +29,6 @@ class ConnectionPool {
         this.pool.set(database.id, entry);
         return entry.client;
     }
-    /**
-     * Returns a typed SQLite client from the pool.
-     * Use this when you need SqliteClient-specific methods (all, get, run, exec).
-     */
     getSqliteClient(database) {
         const client = this.getClient(database);
         if (!(client instanceof SqliteClient_1.SqliteClient)) {
@@ -56,10 +36,6 @@ class ConnectionPool {
         }
         return client;
     }
-    /**
-     * Closes and removes a specific database connection from the pool.
-     * MUST be called before deleting a database or rotating its token.
-     */
     evict(databaseId) {
         const entry = this.pool.get(databaseId);
         if (!entry)
@@ -67,18 +43,11 @@ class ConnectionPool {
         this.pool.delete(databaseId);
         void this.closeClient(entry);
     }
-    /**
-     * Evict a connection only if it's been corrupted or errored fatally.
-     * Called automatically by services when they catch non-recoverable errors.
-     */
     evictOnError(databaseId, error) {
         if (!this.isFatalError(error))
             return;
         this.evict(databaseId);
     }
-    /**
-     * Closes all pooled connections. Called on SIGTERM/SIGINT for clean shutdown.
-     */
     async shutdown() {
         const entries = Array.from(this.pool.entries());
         this.pool.clear();
@@ -86,9 +55,6 @@ class ConnectionPool {
             await this.closeClient(entry);
         }
     }
-    /**
-     * Returns the number of active connections (useful for monitoring).
-     */
     get size() {
         return this.pool.size;
     }
@@ -105,6 +71,9 @@ class ConnectionPool {
     createClient(database) {
         if (database.type === 'sqlite') {
             const filePath = database.url || '';
+            if (!filePath) {
+                throw new Error(`Database ${database.id} has no file path configured`);
+            }
             const client = new SqliteClient_1.SqliteClient(filePath);
             return { client, type: 'sqlite', lastUsed: Date.now() };
         }

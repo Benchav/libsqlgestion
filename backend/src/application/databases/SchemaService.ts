@@ -2,6 +2,7 @@ import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
+import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 
 type SchemaEntry = {
   table: string;
@@ -15,24 +16,41 @@ function quoteIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
 
-async function loadSchemaEntries(client: { execute: (sql: string) => Promise<{ rows: unknown[] }>; all?: (sql: string) => Promise<unknown[]> }, kind: 'table' | 'view') {
-  const objects = await client.execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+async function loadSchemaEntries(client: LibsqlClient | { readAll: (sql: string) => Promise<unknown[]> }, kind: 'table' | 'view') {
+  let rows: Array<{ name: string }>;
+  if ('execute' in client) {
+    const objects = await (client as LibsqlClient).execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+    rows = objects.rows as unknown as Array<{ name: string }>;
+  } else {
+    rows = await (client as { readAll: (sql: string) => Promise<unknown[]> }).readAll(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`) as unknown as Array<{ name: string }>;
+  }
+
   const entries: SchemaEntry[] = [];
-  const rows = objects.rows as Array<{ name: string }>;
 
   for (const row of rows) {
     const tableName = row.name;
-    const columnsResult = await client.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
-    const foreignKeysResult = await client.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
-    const countResult = await client.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`);
-    const rowCount = Number((countResult.rows as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+    let columnsResult: unknown[];
+    let foreignKeysResult: unknown[];
+    let countResult: number;
+
+    if ('execute' in client) {
+      const libClient = client as LibsqlClient;
+      columnsResult = (await libClient.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`)).rows;
+      foreignKeysResult = (await libClient.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`)).rows;
+      countResult = Number(((await libClient.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`)).rows as unknown as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+    } else {
+      const readClient = client as { readAll: (sql: string) => Promise<unknown[]> };
+      columnsResult = await readClient.readAll(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
+      foreignKeysResult = await readClient.readAll(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
+      countResult = Number(((await readClient.readAll(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`)) as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+    }
 
     entries.push({
       table: tableName,
       kind,
-      rowCount,
-      columns: columnsResult.rows,
-      foreignKeys: foreignKeysResult.rows,
+      rowCount: countResult,
+      columns: columnsResult,
+      foreignKeys: foreignKeysResult,
     });
   }
 
@@ -51,10 +69,10 @@ export class SchemaService {
         return { tables: [], note: 'missing url or token' };
       }
 
-      const client = pool.getClient(database);
+      const client = pool.getClient(database) as LibsqlClient;
       try {
-        const tables = await loadSchemaEntries(client as any, 'table');
-        const views = await loadSchemaEntries(client as any, 'view');
+        const tables = await loadSchemaEntries(client, 'table');
+        const views = await loadSchemaEntries(client, 'view');
         return { tables, views };
       } catch (error: any) {
         pool.evictOnError(database.id, error);
@@ -64,19 +82,11 @@ export class SchemaService {
 
     const client = pool.getSqliteClient(database);
     try {
-      const tables = await loadSchemaEntries(
-        {
-          execute: async (sql: string) => ({ rows: (await client.all(sql)) as unknown[] }),
-        },
-        'table',
-      );
-      const views = await loadSchemaEntries(
-        {
-          execute: async (sql: string) => ({ rows: (await client.all(sql)) as unknown[] }),
-        },
-        'view',
-      );
-
+      const sqliteReader = {
+        readAll: async (sql: string) => (await client.all(sql)) as unknown[],
+      };
+      const tables = await loadSchemaEntries(sqliteReader, 'table');
+      const views = await loadSchemaEntries(sqliteReader, 'view');
       return { tables, views };
     } catch (error: any) {
       pool.evictOnError(database.id, error);

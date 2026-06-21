@@ -40,7 +40,6 @@ class QueryService {
                             lastInsertRowid: result.lastInsertRowid,
                         };
                     });
-                    // Aggregate values for compatibility with overall query result
                     const lastResult = results[results.length - 1];
                     const rowsAffected = results.reduce((acc, r) => acc + Number(r.rowsAffected ?? 0), 0);
                     const lastInsertRowid = lastResult?.lastInsertRowid;
@@ -66,7 +65,6 @@ class QueryService {
             client = pool.getSqliteClient(database);
         }
         catch (error) {
-            // File validation errors from the constructor
             throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
         }
         try {

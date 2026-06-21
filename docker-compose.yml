@@ -28,12 +28,14 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     restart: unless-stopped
+    networks:
+      - coolify
     healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:5000/api/v1/health']
-      interval: 30s
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:5000/api/v1/health 2>/dev/null || exit 1']
+      interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 8
+      start_period: 30s
 
   frontend:
     build:
@@ -46,6 +48,11 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api/v1}
       INTERNAL_API_URL: http://backend:5000/api/v1
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     restart: unless-stopped
+    networks:
+      - coolify
+
+networks:
+  coolify:
+    external: true

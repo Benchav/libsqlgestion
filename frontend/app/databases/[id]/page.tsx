@@ -84,9 +84,12 @@ export default function DatabaseDetailPage() {
   async function handleTestConnection() {
     setTestStatus('testing');
     try {
-      const result = await apiRequest<{ ok: boolean; details: string }>(`/databases/${id}/test-connection`, { method: 'POST' });
+      const result = await apiRequest<{ ok: boolean; details: string; routeHealth?: DatabaseDetail['runtimeHealth'] }>(`/databases/${id}/test-connection`, { method: 'POST' });
       setTestStatus(result.ok ? 'success' : 'error');
       setTestMessage(result.details);
+      if (result.routeHealth) {
+        setDatabase((current) => current ? { ...current, runtimeHealth: result.routeHealth } : current);
+      }
     } catch (err: any) {
       setTestStatus('error');
       setTestMessage(err.message);

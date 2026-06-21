@@ -190,17 +190,36 @@ class DatabaseService {
         const runtimeUrl = getManagedRuntimeUrl(database);
         if (runtimeUrl && database.encryptedToken) {
             const token = (0, crypto_1.decrypt)(database.encryptedToken);
-            const libClient = (0, LibsqlClient_1.createLibsqlClient)(runtimeUrl, token);
-            try {
-                await libClient.execute('SELECT 1');
-                return { ok: true, details: 'connection ok' };
-            }
-            catch (error) {
-                return { ok: false, details: error.message };
-            }
-            finally {
-                libClient.close();
-            }
+            const routeHealth = await this.probeRuntimeRoutes(database, token);
+            const anyOk = routeHealth.internalOk || routeHealth.backendOk || routeHealth.publicOk;
+            database.metadata = {
+                ...(database.metadata ?? {}),
+                runtime: {
+                    ...(database.metadata?.runtime ?? {}),
+                    routeHealth: {
+                        checkedAt: new Date().toISOString(),
+                        internalOk: routeHealth.internalOk,
+                        backendOk: routeHealth.backendOk,
+                        publicOk: routeHealth.publicOk,
+                        publicChecked: routeHealth.publicChecked,
+                    },
+                },
+            };
+            await this.databaseRepo.save(database);
+            const details = anyOk
+                ? `connection ok (local=${routeHealth.internalOk ? 'ok' : 'fail'}, backend=${routeHealth.backendOk ? 'ok' : 'fail'}, public=${routeHealth.publicChecked ? (routeHealth.publicOk ? 'ok' : 'fail') : 'skipped'})`
+                : 'runtime routes failed';
+            return {
+                ok: anyOk,
+                details,
+                routeHealth: {
+                    checkedAt: new Date().toISOString(),
+                    internalOk: routeHealth.internalOk,
+                    backendOk: routeHealth.backendOk,
+                    publicOk: routeHealth.publicOk,
+                    publicChecked: routeHealth.publicChecked,
+                },
+            };
         }
         if ((0, database_runtime_1.resolveEffectiveDatabaseType)(database) === 'sqlite') {
             const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
@@ -241,6 +260,30 @@ class DatabaseService {
         }
         finally {
             libClient.close();
+        }
+    }
+    async probeRuntimeRoutes(database, token) {
+        const runtime = database.metadata?.runtime;
+        const internalUrl = typeof runtime?.internalUrl === 'string' ? runtime.internalUrl : '';
+        const backendUrl = typeof runtime?.backendUrl === 'string' ? runtime.backendUrl : '';
+        const publicUrl = typeof runtime?.publicUrl === 'string' ? runtime.publicUrl : '';
+        const publicChecked = Boolean(publicUrl && publicUrl !== internalUrl && publicUrl !== backendUrl);
+        const internalOk = internalUrl ? await this.tryRuntimeUrl(internalUrl, token) : false;
+        const backendOk = backendUrl ? await this.tryRuntimeUrl(backendUrl, token) : false;
+        const publicOk = publicChecked ? await this.tryRuntimeUrl(publicUrl, token) : backendOk || internalOk;
+        return { internalOk, backendOk, publicOk, publicChecked };
+    }
+    async tryRuntimeUrl(url, token) {
+        const client = (0, LibsqlClient_1.createLibsqlClient)(url, token);
+        try {
+            await client.execute('SELECT 1');
+            return true;
+        }
+        catch {
+            return false;
+        }
+        finally {
+            client.close();
         }
     }
     async deleteDatabase(id) {

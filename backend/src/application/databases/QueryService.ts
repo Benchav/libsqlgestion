@@ -40,82 +40,76 @@ export class QueryService {
     }
 
     const pool = ConnectionPool.getInstance();
+    const client = pool.getClient(database);
 
-    if (database.type !== 'sqlite') {
-      if (!database.url || !database.encryptedToken) {
-        return { ok: false, error: 'missing url or token' };
-      }
-
-      const client = pool.getClient(database) as LibsqlClient;
+    if (client instanceof SqliteClient) {
       try {
         if (isScript) {
-          const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
-          const results = await client.batch(batchArgs, 'write');
-          
-          const statementResults: StatementExecutionResult[] = results.map((result, index) => {
-            const statement = statements[index];
-            const isRead = READ_ONLY_REGEX.test(statement);
-            return {
-              index: index + 1,
-              sql: statement,
-              kind: isRead ? 'read' : 'write',
-              rows: result.rows,
-              rowsAffected: Number((result as any).rowsAffected ?? 0),
-              lastInsertRowid: (result as any).lastInsertRowid,
-            };
-          });
-
-          const lastResult = results[results.length - 1];
-          const rowsAffected = results.reduce((acc, r) => acc + Number((r as any).rowsAffected ?? 0), 0);
-          const lastInsertRowid = (lastResult as any)?.lastInsertRowid;
-
-          return {
-            ok: true,
-            statementsExecuted: statements.length,
-            rows: lastResult?.rows,
-            rowsAffected,
-            lastInsertRowid,
-            statementResults,
-          };
+          await client.execAtomic(sql);
+          const statementResults: StatementExecutionResult[] = statements.map((statement, index) => ({
+            index: index + 1,
+            sql: statement,
+            kind: READ_ONLY_REGEX.test(statement) ? 'read' : 'write',
+          }));
+          return { ok: true, statementsExecuted: statements.length, statementResults };
         }
 
-        const result = await client.execute(sql, params as any);
-        return { ok: true, rows: result.rows, rowsAffected: (result as any).rowsAffected, lastInsertRowid: (result as any).lastInsertRowid };
+        if (READ_ONLY_REGEX.test(sql)) {
+          const rows = await client.all(sql, params);
+          return { ok: true, rows };
+        }
+
+        const result = await client.run(sql, params);
+        return { ok: true, result };
       } catch (error: any) {
         pool.evictOnError(database.id, error);
-        throw new DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
+        throw error instanceof DatabaseError ? error : DatabaseError.from(error);
       }
     }
 
-    let client: SqliteClient;
-    try {
-      client = pool.getSqliteClient(database);
-    } catch (error: any) {
-      throw error instanceof DatabaseError ? error : DatabaseError.from(error);
+    const libClient = client as LibsqlClient;
+
+    if (!database.url || !database.encryptedToken) {
+      return { ok: false, error: 'missing url or token' };
     }
 
     try {
       if (isScript) {
-        await client.execAtomic(sql);
-        const statementResults: StatementExecutionResult[] = statements.map((statement, index) => ({
-          index: index + 1,
-          sql: statement,
-          kind: READ_ONLY_REGEX.test(statement) ? 'read' : 'write',
-        }));
+        const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
+        const results = await libClient.batch(batchArgs, 'write');
 
-        return { ok: true, statementsExecuted: statements.length, statementResults };
+        const statementResults: StatementExecutionResult[] = results.map((result, index) => {
+          const statement = statements[index];
+          const isRead = READ_ONLY_REGEX.test(statement);
+          return {
+            index: index + 1,
+            sql: statement,
+            kind: isRead ? 'read' : 'write',
+            rows: result.rows,
+            rowsAffected: Number((result as any).rowsAffected ?? 0),
+            lastInsertRowid: (result as any).lastInsertRowid,
+          };
+        });
+
+        const lastResult = results[results.length - 1];
+        const rowsAffected = results.reduce((acc, r) => acc + Number((r as any).rowsAffected ?? 0), 0);
+        const lastInsertRowid = (lastResult as any)?.lastInsertRowid;
+
+        return {
+          ok: true,
+          statementsExecuted: statements.length,
+          rows: lastResult?.rows,
+          rowsAffected,
+          lastInsertRowid,
+          statementResults,
+        };
       }
 
-      if (READ_ONLY_REGEX.test(sql)) {
-        const rows = await client.all(sql, params);
-        return { ok: true, rows };
-      }
-
-      const result = await client.run(sql, params);
-      return { ok: true, result };
+      const result = await libClient.execute(sql, params as any);
+      return { ok: true, rows: result.rows, rowsAffected: (result as any).rowsAffected, lastInsertRowid: (result as any).lastInsertRowid };
     } catch (error: any) {
       pool.evictOnError(database.id, error);
-      throw error instanceof DatabaseError ? error : DatabaseError.from(error);
+      throw new DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
     }
   }
 }

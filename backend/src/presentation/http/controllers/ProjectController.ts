@@ -5,6 +5,14 @@ import { User } from '../../../domain/entities/User';
 import { ensurePermission, ensureProjectAccess } from '../guards';
 import { AuditService } from '../../../application/audit/AuditService';
 import { createProjectSchema, parseAndValidate } from '../../../types/validations';
+import { presentDatabase } from '../database-presenter';
+
+function presentProject(project: any) {
+  return {
+    ...project,
+    databases: Array.isArray(project?.databases) ? project.databases.map((database: any) => presentDatabase(database)) : project?.databases,
+  };
+}
 
 export default async function projectRoutes(app: FastifyInstance) {
   const projectService = new ProjectService();
@@ -14,7 +22,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     if (!(await ensurePermission(request, reply, 'projects.read'))) return;
     const user = (request as any).user;
     const projects = await projectService.listProjects(user?.sub);
-    return reply.send({ projects });
+    return reply.send({ projects: projects.map((project) => presentProject(project)) });
   });
 
   app.post('/projects', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -28,7 +36,7 @@ export default async function projectRoutes(app: FastifyInstance) {
 
     const project = await projectService.createProject(owner, body.name);
     await auditService.record({ action: 'project.create', resourceType: 'project', resourceId: project.id, actorId: userId });
-    return reply.status(201).send({ project });
+    return reply.status(201).send({ project: presentProject(project) });
   });
 
   app.get('/projects/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -38,7 +46,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     if (!access) return;
     const project = await projectService.getProject(id);
     if (!project) return reply.status(404).send({ error: 'project not found' });
-    return reply.send({ project });
+    return reply.send({ project: presentProject(project) });
   });
 
   app.delete('/projects/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {

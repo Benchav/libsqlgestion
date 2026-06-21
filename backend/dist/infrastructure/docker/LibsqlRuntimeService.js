@@ -42,6 +42,7 @@ const fs_1 = __importDefault(require("fs"));
 const http_1 = __importDefault(require("http"));
 const path_1 = __importDefault(require("path"));
 const PlatformSettingsService_1 = require("../../application/settings/PlatformSettingsService");
+const database_runtime_1 = require("../../application/databases/database-runtime");
 class LibsqlRuntimeService {
     constructor() {
         this.socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
@@ -167,7 +168,7 @@ class LibsqlRuntimeService {
             await this.removeContainer(runtime.containerId);
         }
         const fileCandidates = new Set();
-        if (database.url && database.type === 'sqlite') {
+        if (database.url && (0, database_runtime_1.resolveEffectiveDatabaseType)(database) === 'sqlite') {
             fileCandidates.add(database.url);
         }
         if (runtime?.databasePath) {

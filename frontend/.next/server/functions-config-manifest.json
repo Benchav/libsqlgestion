@@ -1,1 +1,1 @@
-{"version":1,"functions":{"/settings":{},"/databases/[id]":{}}}
+{"version":1,"functions":{"/projects/[id]":{},"/settings":{},"/databases/[id]":{}}}

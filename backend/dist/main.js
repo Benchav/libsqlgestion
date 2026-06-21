@@ -10,6 +10,7 @@ const data_source_1 = require("./infrastructure/db/data-source");
 const server_1 = require("./server");
 const auth_bootstrap_1 = require("./application/auth/auth.bootstrap");
 const DiscoveryService_1 = require("./application/databases/DiscoveryService");
+const DatabaseService_1 = require("./application/databases/DatabaseService");
 const PlatformSettingsService_1 = require("./application/settings/PlatformSettingsService");
 const ConnectionPool_1 = require("./infrastructure/db/ConnectionPool");
 const start = async () => {
@@ -17,6 +18,11 @@ const start = async () => {
     await data_source_1.AppDataSource.runMigrations();
     await (0, auth_bootstrap_1.bootstrapSecurityCatalog)();
     await (0, PlatformSettingsService_1.bootstrapPlatformSettings)();
+    const databaseService = new DatabaseService_1.DatabaseService();
+    const reconciliation = await databaseService.reconcileLegacyDatabases();
+    if (reconciliation.reconciled > 0) {
+        console.log(`Reconciled ${reconciliation.reconciled} legacy database record(s).`);
+    }
     const discoveryProjectId = process.env.SQLITE_DISCOVERY_PROJECT_ID;
     const discoveryPath = process.env.SQLITE_DISCOVERY_PATH;
     if (discoveryProjectId && discoveryPath) {

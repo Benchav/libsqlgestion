@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildDatabaseConnectionUrl = buildDatabaseConnectionUrl;
 exports.buildDatabaseConnectionUrls = buildDatabaseConnectionUrls;
 const PlatformSettingsService_1 = require("../settings/PlatformSettingsService");
+const database_runtime_1 = require("./database-runtime");
 function slugify(value) {
     return value
         .toLowerCase()
@@ -44,7 +45,8 @@ function buildDatabaseConnectionUrls(database) {
     const libsqlPublicUrl = publicDomain && database.subdomain
         ? `libsql://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
         : '';
-    const runtimeProvider = getRuntimeProvider(database);
+    const runtimeProvider = (0, database_runtime_1.getRuntimeProvider)(database);
+    const effectiveType = (0, database_runtime_1.resolveEffectiveDatabaseType)(database);
     if (runtimeUrls) {
         let publicUrl = runtimeUrls.publicUrl;
         if (template) {
@@ -73,7 +75,7 @@ function buildDatabaseConnectionUrls(database) {
             backendUrl: localUrl,
         };
     }
-    if (database.type === 'sqlite' && database.subdomain) {
+    if (effectiveType === 'sqlite' && database.subdomain) {
         if (template) {
             return {
                 publicUrl: applyTemplate(template, database),
@@ -110,7 +112,7 @@ function buildDatabaseConnectionUrls(database) {
         };
     }
     if (database.url) {
-        if (template && (database.type === 'libsql' || database.type === 'remote')) {
+        if (template && (effectiveType === 'libsql' || effectiveType === 'remote')) {
             return {
                 publicUrl: database.url,
                 publicHttpsUrl: database.url,
@@ -161,10 +163,6 @@ function buildDatabaseConnectionUrls(database) {
         internalUrl,
         backendUrl: internalUrl,
     };
-}
-function getRuntimeProvider(database) {
-    const runtime = database.metadata?.runtime;
-    return typeof runtime?.provider === 'string' ? runtime.provider : '';
 }
 function getRuntimeUrls(database) {
     const runtime = database.metadata?.runtime;

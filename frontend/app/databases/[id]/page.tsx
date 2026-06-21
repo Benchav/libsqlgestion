@@ -12,6 +12,8 @@ type DatabaseDetail = {
   id: string;
   name: string;
   type: string;
+  effectiveType?: string;
+  runtimeProvider?: string;
   status: string;
   subdomain?: string;
   url?: string;
@@ -41,6 +43,10 @@ function getRuntimeLabel(metadata?: Record<string, unknown>) {
   const runtime = metadata?.runtime as { provider?: unknown } | undefined;
   if (!runtime || typeof runtime.provider !== 'string') return 'unknown';
   return runtime.provider;
+}
+
+function getDatabaseTypeLabel(database?: Pick<DatabaseDetail, 'type' | 'effectiveType'> | null) {
+  return (database?.effectiveType || database?.type || 'sqlite').toUpperCase();
 }
 
 export default function DatabaseDetailPage() {
@@ -228,7 +234,7 @@ export default function DatabaseDetailPage() {
                 </h1>
                 <div className="text-sm text-zinc-400 mt-1 flex items-center gap-2">
                   <span className="uppercase tracking-wider font-semibold text-[11px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded">
-                    {database?.type}
+                     {getDatabaseTypeLabel(database)}
                   </span>
                   <span className="uppercase tracking-wider font-semibold text-[11px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded">
                     runtime: {runtimeLabel}
@@ -419,7 +425,7 @@ export default function DatabaseDetailPage() {
 {envSnippet || 'Reveal the token and configure the public URL from the panel to generate a copy-ready snippet.'}
                   </pre>
                   <p className="mt-2 text-xs text-zinc-500">
-                    Prefer the public libSQL URL for remote clients. If the runtime shows `local-file`, the base is not exposed as a remote libSQL endpoint.
+                     Prefer the public libSQL URL only when the effective type is `LIBSQL`. If the runtime shows `local-file`, the base is still operating as a local SQLite database.
                   </p>
                 </div>
               </div>

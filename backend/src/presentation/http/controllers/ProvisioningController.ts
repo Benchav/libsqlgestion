@@ -1,18 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ProvisioningService } from '../../../application/provisioning/ProvisioningService';
-import { buildDatabaseConnectionUrls } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureProjectAccess } from '../guards';
-
-function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string; subdomain?: string }>(database: T) {
-  const urls = buildDatabaseConnectionUrls(database);
-  return {
-    ...database,
-    connectionUrl: urls.publicUrl,
-    publicConnectionUrl: urls.publicUrl,
-    internalConnectionUrl: urls.internalUrl,
-    backendConnectionUrl: urls.backendUrl,
-  };
-}
+import { presentDatabase } from '../database-presenter';
 
 export default async function provisioningRoutes(app: FastifyInstance) {
   const provisioningService = new ProvisioningService();
@@ -25,7 +14,7 @@ export default async function provisioningRoutes(app: FastifyInstance) {
     if (!access) return;
     try {
       const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
-      return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+      return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to provision sqlite database' });
     }
@@ -39,7 +28,7 @@ export default async function provisioningRoutes(app: FastifyInstance) {
     if (!access) return;
     try {
       const result = await provisioningService.provisionLibsql(body.projectId, body);
-      return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+      return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to provision libsql database' });
     }

@@ -9,6 +9,10 @@ import { useDatabases, useProjects, useCreateDatabase, DatabaseInfo, ProjectInfo
 import { clearEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../lib/token-cache';
 import { Database, Table2, X, Plus, Search, HardDrive, Upload, RefreshCw } from 'lucide-react';
 
+function getDatabaseTypeLabel(database: DatabaseInfo) {
+  return (database.effectiveType || database.type || 'sqlite').toUpperCase();
+}
+
 export default function DatabasesPage() {
   const router = useRouter();
   const { data: databases = [], isLoading, error, refetch } = useDatabases();
@@ -117,7 +121,7 @@ export default function DatabasesPage() {
                     <td className="py-3 px-4 text-zinc-400">{db.project?.name || '\u2014'}</td>
                     <td className="py-3 px-4">
                       <span className="bg-zinc-800 text-zinc-300 border border-zinc-700/50 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider">
-                        {db.type}
+                        {getDatabaseTypeLabel(db)}
                       </span>
                     </td>
                     <td className="py-3 px-4">

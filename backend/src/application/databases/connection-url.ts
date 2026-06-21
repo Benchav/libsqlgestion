@@ -1,4 +1,5 @@
 import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
+import { getRuntimeProvider, resolveEffectiveDatabaseType } from './database-runtime';
 
 type ConnectionUrlDatabase = {
   id: string;
@@ -64,6 +65,7 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     ? `libsql://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
     : '';
   const runtimeProvider = getRuntimeProvider(database);
+  const effectiveType = resolveEffectiveDatabaseType(database as any);
 
   if (runtimeUrls) {
     let publicUrl = runtimeUrls.publicUrl;
@@ -94,7 +96,7 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     };
   }
 
-  if (database.type === 'sqlite' && database.subdomain) {
+  if (effectiveType === 'sqlite' && database.subdomain) {
     if (template) {
       return {
         publicUrl: applyTemplate(template, database),
@@ -132,7 +134,7 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   }
 
   if (database.url) {
-    if (template && (database.type === 'libsql' || database.type === 'remote')) {
+    if (template && (effectiveType === 'libsql' || effectiveType === 'remote')) {
       return {
         publicUrl: database.url,
         publicHttpsUrl: database.url,
@@ -187,11 +189,6 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
     internalUrl,
     backendUrl: internalUrl,
   };
-}
-
-function getRuntimeProvider(database: ConnectionUrlDatabase) {
-  const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
-  return typeof runtime?.provider === 'string' ? runtime.provider : '';
 }
 
 function getRuntimeUrls(database: ConnectionUrlDatabase) {

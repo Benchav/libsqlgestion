@@ -24,14 +24,6 @@
       "static/chunks/186-789379fa85f6f934.js",
       "static/chunks/app/audit/page-665b099c4b42172b.js"
     ],
-    "/dashboard/page": [
-      "static/chunks/webpack-6acca9cb67075038.js",
-      "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
-      "static/chunks/117-08456a5f73ea6880.js",
-      "static/chunks/main-app-638603c0785d6e9a.js",
-      "static/chunks/186-789379fa85f6f934.js",
-      "static/chunks/app/dashboard/page-eaf0be8c13f73597.js"
-    ],
     "/databases/[id]/studio/page": [
       "static/chunks/webpack-6acca9cb67075038.js",
       "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
@@ -41,6 +33,14 @@
       "static/chunks/186-789379fa85f6f934.js",
       "static/chunks/app/databases/[id]/studio/page-b85d7d40744d5623.js"
     ],
+    "/dashboard/page": [
+      "static/chunks/webpack-6acca9cb67075038.js",
+      "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
+      "static/chunks/117-08456a5f73ea6880.js",
+      "static/chunks/main-app-638603c0785d6e9a.js",
+      "static/chunks/186-789379fa85f6f934.js",
+      "static/chunks/app/dashboard/page-4a6ef1b234c3f3a9.js"
+    ],
     "/databases/page": [
       "static/chunks/webpack-6acca9cb67075038.js",
       "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
@@ -49,15 +49,7 @@
       "static/chunks/20-31eb082251fcd614.js",
       "static/chunks/584-c8f5c964c8fd1757.js",
       "static/chunks/186-789379fa85f6f934.js",
-      "static/chunks/app/databases/page-e8eefee765daa2b9.js"
-    ],
-    "/page": [
-      "static/chunks/webpack-6acca9cb67075038.js",
-      "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
-      "static/chunks/117-08456a5f73ea6880.js",
-      "static/chunks/main-app-638603c0785d6e9a.js",
-      "static/chunks/378-27a1f3dc858df36d.js",
-      "static/chunks/app/page-da8130ce8e8d5a81.js"
+      "static/chunks/app/databases/page-68861d3a74f6a014.js"
     ],
     "/login/page": [
       "static/chunks/webpack-6acca9cb67075038.js",
@@ -65,14 +57,6 @@
       "static/chunks/117-08456a5f73ea6880.js",
       "static/chunks/main-app-638603c0785d6e9a.js",
       "static/chunks/app/login/page-642f76a5f116fffc.js"
-    ],
-    "/projects/[id]/page": [
-      "static/chunks/webpack-6acca9cb67075038.js",
-      "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
-      "static/chunks/117-08456a5f73ea6880.js",
-      "static/chunks/main-app-638603c0785d6e9a.js",
-      "static/chunks/186-789379fa85f6f934.js",
-      "static/chunks/app/projects/[id]/page-91e83e22f030e830.js"
     ],
     "/projects/page": [
       "static/chunks/webpack-6acca9cb67075038.js",
@@ -82,6 +66,14 @@
       "static/chunks/186-789379fa85f6f934.js",
       "static/chunks/app/projects/page-3b475b382534c7bc.js"
     ],
+    "/page": [
+      "static/chunks/webpack-6acca9cb67075038.js",
+      "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
+      "static/chunks/117-08456a5f73ea6880.js",
+      "static/chunks/main-app-638603c0785d6e9a.js",
+      "static/chunks/378-27a1f3dc858df36d.js",
+      "static/chunks/app/page-da8130ce8e8d5a81.js"
+    ],
     "/settings/page": [
       "static/chunks/webpack-6acca9cb67075038.js",
       "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
@@ -90,6 +82,14 @@
       "static/chunks/186-789379fa85f6f934.js",
       "static/chunks/app/settings/page-5d984262c323fe62.js"
     ],
+    "/projects/[id]/page": [
+      "static/chunks/webpack-6acca9cb67075038.js",
+      "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
+      "static/chunks/117-08456a5f73ea6880.js",
+      "static/chunks/main-app-638603c0785d6e9a.js",
+      "static/chunks/186-789379fa85f6f934.js",
+      "static/chunks/app/projects/[id]/page-48914ef1f3fcddc7.js"
+    ],
     "/databases/[id]/page": [
       "static/chunks/webpack-6acca9cb67075038.js",
       "static/chunks/fd9d1056-9fc68d7bb23bdeff.js",
@@ -97,7 +97,7 @@
       "static/chunks/main-app-638603c0785d6e9a.js",
       "static/chunks/917-f96bd697611d59c6.js",
       "static/chunks/186-789379fa85f6f934.js",
-      "static/chunks/app/databases/[id]/page-7444247db97699b4.js"
+      "static/chunks/app/databases/[id]/page-2dcc8a708c809fdf.js"
     ]
   }
 }

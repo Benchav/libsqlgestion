@@ -5,6 +5,7 @@ import { AppDataSource } from './infrastructure/db/data-source';
 import { buildServer } from './server';
 import { bootstrapSecurityCatalog } from './application/auth/auth.bootstrap';
 import { DiscoveryService } from './application/databases/DiscoveryService';
+import { DatabaseService } from './application/databases/DatabaseService';
 import { bootstrapPlatformSettings } from './application/settings/PlatformSettingsService';
 import { ConnectionPool } from './infrastructure/db/ConnectionPool';
 
@@ -13,6 +14,11 @@ const start = async () => {
   await AppDataSource.runMigrations();
   await bootstrapSecurityCatalog();
   await bootstrapPlatformSettings();
+  const databaseService = new DatabaseService();
+  const reconciliation = await databaseService.reconcileLegacyDatabases();
+  if (reconciliation.reconciled > 0) {
+    console.log(`Reconciled ${reconciliation.reconciled} legacy database record(s).`);
+  }
 
   const discoveryProjectId = process.env.SQLITE_DISCOVERY_PROJECT_ID;
   const discoveryPath = process.env.SQLITE_DISCOVERY_PATH;

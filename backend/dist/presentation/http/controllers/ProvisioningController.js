@@ -2,18 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = provisioningRoutes;
 const ProvisioningService_1 = require("../../../application/provisioning/ProvisioningService");
-const connection_url_1 = require("../../../application/databases/connection-url");
 const guards_1 = require("../guards");
-function withConnectionUrl(database) {
-    const urls = (0, connection_url_1.buildDatabaseConnectionUrls)(database);
-    return {
-        ...database,
-        connectionUrl: urls.publicUrl,
-        publicConnectionUrl: urls.publicUrl,
-        internalConnectionUrl: urls.internalUrl,
-        backendConnectionUrl: urls.backendUrl,
-    };
-}
+const database_presenter_1 = require("../database-presenter");
 async function provisioningRoutes(app) {
     const provisioningService = new ProvisioningService_1.ProvisioningService();
     app.post('/provisioning/sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -27,7 +17,7 @@ async function provisioningRoutes(app) {
             return;
         try {
             const result = await provisioningService.provisionSqlite(body.projectId, body.name, body.subdomain);
-            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+            return reply.status(201).send({ ...result, database: (0, database_presenter_1.presentDatabase)(result.database) });
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to provision sqlite database' });
@@ -44,7 +34,7 @@ async function provisioningRoutes(app) {
             return;
         try {
             const result = await provisioningService.provisionLibsql(body.projectId, body);
-            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+            return reply.status(201).send({ ...result, database: (0, database_presenter_1.presentDatabase)(result.database) });
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to provision libsql database' });

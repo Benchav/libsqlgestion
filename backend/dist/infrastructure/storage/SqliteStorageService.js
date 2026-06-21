@@ -7,6 +7,10 @@ exports.SqliteStorageService = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const fs_2 = require("fs");
+const SqliteClient_1 = require("../sqlite/SqliteClient");
+function escapeSqliteString(value) {
+    return value.replace(/'/g, "''");
+}
 class SqliteStorageService {
     constructor(storageRoot) {
         this.storageRoot = storageRoot || process.env.SQLITE_STORAGE_ROOT || path_1.default.join(process.cwd(), 'data', 'sqlite');
@@ -34,7 +38,26 @@ class SqliteStorageService {
     async importDatabaseFile(sourcePath, projectId, databaseId, type) {
         const targetPath = this.managedDatabasePath(projectId, databaseId, type);
         fs_1.default.mkdirSync(path_1.default.dirname(targetPath), { recursive: true });
-        await fs_2.promises.copyFile(sourcePath, targetPath);
+        const tempTargetPath = `${targetPath}.import-${Date.now()}.tmp`;
+        await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
+        try {
+            // Create a consistent snapshot from the live SQLite database.
+            // This captures committed WAL contents as seen by SQLite and avoids
+            // importing a stale/blank main database file from ERP workloads.
+            const client = new SqliteClient_1.SqliteClient(sourcePath);
+            try {
+                await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
+            }
+            finally {
+                await client.close();
+            }
+            await fs_2.promises.rm(targetPath, { force: true }).catch(() => undefined);
+            await fs_2.promises.rename(tempTargetPath, targetPath);
+        }
+        catch (error) {
+            await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
+            throw error;
+        }
         return targetPath;
     }
     async adoptExistingFile(sourcePath, projectId, databaseId, type) {

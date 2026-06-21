@@ -2,7 +2,7 @@ import { Database } from '../../domain/entities/Database';
 import { SqliteClient } from '../sqlite/SqliteClient';
 import { createLibsqlClient } from '../libsql/LibsqlClient';
 import { decrypt } from '../crypto';
-import { resolveEffectiveDatabaseType } from '../../application/databases/database-runtime';
+import { getRuntimeConnectionUrl, resolveEffectiveDatabaseType } from '../../application/databases/database-runtime';
 
 type PooledClient = {
   client: SqliteClient | ReturnType<typeof createLibsqlClient>;
@@ -103,8 +103,13 @@ export class ConnectionPool {
       throw new Error(`Database ${database.id} is missing url or token for libsql connection`);
     }
 
+    const connectionUrl = getRuntimeConnectionUrl(database);
+    if (!connectionUrl) {
+      throw new Error(`Database ${database.id} is missing runtime connection url for libsql connection`);
+    }
+
     const token = decrypt(database.encryptedToken);
-    const client = createLibsqlClient(database.url, token);
+    const client = createLibsqlClient(connectionUrl, token);
     return { client, type: 'libsql', lastUsed: Date.now() };
   }
 

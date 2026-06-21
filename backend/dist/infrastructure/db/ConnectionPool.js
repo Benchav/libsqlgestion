@@ -82,8 +82,12 @@ class ConnectionPool {
         if (!database.url || !database.encryptedToken) {
             throw new Error(`Database ${database.id} is missing url or token for libsql connection`);
         }
+        const connectionUrl = (0, database_runtime_1.getRuntimeConnectionUrl)(database);
+        if (!connectionUrl) {
+            throw new Error(`Database ${database.id} is missing runtime connection url for libsql connection`);
+        }
         const token = (0, crypto_1.decrypt)(database.encryptedToken);
-        const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, token);
+        const client = (0, LibsqlClient_1.createLibsqlClient)(connectionUrl, token);
         return { client, type: 'libsql', lastUsed: Date.now() };
     }
     async closeClient(entry) {

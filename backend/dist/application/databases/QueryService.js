@@ -19,74 +19,68 @@ class QueryService {
             throw new SqliteClient_1.DatabaseError('SQLITE_SCRIPT_PARAMS', 'Parameter binding is not supported for multi-statement scripts.', false);
         }
         const pool = ConnectionPool_1.ConnectionPool.getInstance();
-        if (database.type !== 'sqlite') {
-            if (!database.url || !database.encryptedToken) {
-                return { ok: false, error: 'missing url or token' };
-            }
-            const client = pool.getClient(database);
+        const client = pool.getClient(database);
+        if (client instanceof SqliteClient_1.SqliteClient) {
             try {
                 if (isScript) {
-                    const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
-                    const results = await client.batch(batchArgs, 'write');
-                    const statementResults = results.map((result, index) => {
-                        const statement = statements[index];
-                        const isRead = READ_ONLY_REGEX.test(statement);
-                        return {
-                            index: index + 1,
-                            sql: statement,
-                            kind: isRead ? 'read' : 'write',
-                            rows: result.rows,
-                            rowsAffected: Number(result.rowsAffected ?? 0),
-                            lastInsertRowid: result.lastInsertRowid,
-                        };
-                    });
-                    const lastResult = results[results.length - 1];
-                    const rowsAffected = results.reduce((acc, r) => acc + Number(r.rowsAffected ?? 0), 0);
-                    const lastInsertRowid = lastResult?.lastInsertRowid;
-                    return {
-                        ok: true,
-                        statementsExecuted: statements.length,
-                        rows: lastResult?.rows,
-                        rowsAffected,
-                        lastInsertRowid,
-                        statementResults,
-                    };
+                    await client.execAtomic(sql);
+                    const statementResults = statements.map((statement, index) => ({
+                        index: index + 1,
+                        sql: statement,
+                        kind: READ_ONLY_REGEX.test(statement) ? 'read' : 'write',
+                    }));
+                    return { ok: true, statementsExecuted: statements.length, statementResults };
                 }
-                const result = await client.execute(sql, params);
-                return { ok: true, rows: result.rows, rowsAffected: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
+                if (READ_ONLY_REGEX.test(sql)) {
+                    const rows = await client.all(sql, params);
+                    return { ok: true, rows };
+                }
+                const result = await client.run(sql, params);
+                return { ok: true, result };
             }
             catch (error) {
                 pool.evictOnError(database.id, error);
-                throw new SqliteClient_1.DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
+                throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
             }
         }
-        let client;
-        try {
-            client = pool.getSqliteClient(database);
-        }
-        catch (error) {
-            throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
+        const libClient = client;
+        if (!database.url || !database.encryptedToken) {
+            return { ok: false, error: 'missing url or token' };
         }
         try {
             if (isScript) {
-                await client.execAtomic(sql);
-                const statementResults = statements.map((statement, index) => ({
-                    index: index + 1,
-                    sql: statement,
-                    kind: READ_ONLY_REGEX.test(statement) ? 'read' : 'write',
-                }));
-                return { ok: true, statementsExecuted: statements.length, statementResults };
+                const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
+                const results = await libClient.batch(batchArgs, 'write');
+                const statementResults = results.map((result, index) => {
+                    const statement = statements[index];
+                    const isRead = READ_ONLY_REGEX.test(statement);
+                    return {
+                        index: index + 1,
+                        sql: statement,
+                        kind: isRead ? 'read' : 'write',
+                        rows: result.rows,
+                        rowsAffected: Number(result.rowsAffected ?? 0),
+                        lastInsertRowid: result.lastInsertRowid,
+                    };
+                });
+                const lastResult = results[results.length - 1];
+                const rowsAffected = results.reduce((acc, r) => acc + Number(r.rowsAffected ?? 0), 0);
+                const lastInsertRowid = lastResult?.lastInsertRowid;
+                return {
+                    ok: true,
+                    statementsExecuted: statements.length,
+                    rows: lastResult?.rows,
+                    rowsAffected,
+                    lastInsertRowid,
+                    statementResults,
+                };
             }
-            if (READ_ONLY_REGEX.test(sql)) {
-                const rows = await client.all(sql, params);
-                return { ok: true, rows };
-            }
-            const result = await client.run(sql, params);
-            return { ok: true, result };
+            const result = await libClient.execute(sql, params);
+            return { ok: true, rows: result.rows, rowsAffected: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
         }
         catch (error) {
             pool.evictOnError(database.id, error);
-            throw error instanceof SqliteClient_1.DatabaseError ? error : SqliteClient_1.DatabaseError.from(error);
+            throw new SqliteClient_1.DatabaseError('LIBSQL_ERROR', error.message || 'Remote query failed', true);
         }
     }
 }

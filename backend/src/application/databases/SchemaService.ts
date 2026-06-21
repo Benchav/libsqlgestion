@@ -16,39 +16,45 @@ function quoteIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
 
-async function loadSchemaEntries(client: LibsqlClient | { readAll: (sql: string) => Promise<unknown[]> }, kind: 'table' | 'view') {
-  let rows: Array<{ name: string }>;
-  if ('execute' in client) {
-    const objects = await (client as LibsqlClient).execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
-    rows = objects.rows as unknown as Array<{ name: string }>;
-  } else {
-    rows = await (client as { readAll: (sql: string) => Promise<unknown[]> }).readAll(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`) as unknown as Array<{ name: string }>;
-  }
-
+async function loadSchemaViaLibsql(client: LibsqlClient, kind: 'table' | 'view') {
+  const objects = await client.execute(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`);
+  const rows = objects.rows as unknown as Array<{ name: string }>;
   const entries: SchemaEntry[] = [];
 
   for (const row of rows) {
     const tableName = row.name;
-    let columnsResult: unknown[];
-    let foreignKeysResult: unknown[];
-    let countResult: number;
-
-    if ('execute' in client) {
-      const libClient = client as LibsqlClient;
-      columnsResult = (await libClient.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`)).rows;
-      foreignKeysResult = (await libClient.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`)).rows;
-      countResult = Number(((await libClient.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`)).rows as unknown as Array<{ cnt: number }>)[0]?.cnt ?? 0);
-    } else {
-      const readClient = client as { readAll: (sql: string) => Promise<unknown[]> };
-      columnsResult = await readClient.readAll(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
-      foreignKeysResult = await readClient.readAll(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
-      countResult = Number(((await readClient.readAll(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`)) as Array<{ cnt: number }>)[0]?.cnt ?? 0);
-    }
+    const columnsResult = (await client.execute(`PRAGMA table_info(${quoteIdentifier(tableName)})`)).rows;
+    const foreignKeysResult = (await client.execute(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`)).rows;
+    const countRow = (await client.execute(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`)).rows as unknown as Array<{ cnt: number }>;
+    const rowCount = Number(countRow[0]?.cnt ?? 0);
 
     entries.push({
       table: tableName,
       kind,
-      rowCount: countResult,
+      rowCount,
+      columns: columnsResult,
+      foreignKeys: foreignKeysResult,
+    });
+  }
+
+  return entries;
+}
+
+async function loadSchemaViaSqlite(client: SqliteClient, kind: 'table' | 'view') {
+  const rows = await client.all(`SELECT name FROM sqlite_master WHERE type='${kind}' AND name NOT LIKE 'sqlite_%'`) as Array<{ name: string }>;
+  const entries: SchemaEntry[] = [];
+
+  for (const row of rows) {
+    const tableName = row.name;
+    const columnsResult = await client.all(`PRAGMA table_info(${quoteIdentifier(tableName)})`);
+    const foreignKeysResult = await client.all(`PRAGMA foreign_key_list(${quoteIdentifier(tableName)})`);
+    const countRows = await client.all(`SELECT COUNT(*) as cnt FROM ${quoteIdentifier(tableName)}`) as Array<{ cnt: number }>;
+    const rowCount = Number(countRows[0]?.cnt ?? 0);
+
+    entries.push({
+      table: tableName,
+      kind,
+      rowCount,
       columns: columnsResult,
       foreignKeys: foreignKeysResult,
     });
@@ -63,16 +69,12 @@ export class SchemaService {
   async getSchema(databaseId: string) {
     const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
     const pool = ConnectionPool.getInstance();
+    const client = pool.getClient(database);
 
-    if (database.type !== 'sqlite') {
-      if (!database.url || !database.encryptedToken) {
-        return { tables: [], note: 'missing url or token' };
-      }
-
-      const client = pool.getClient(database) as LibsqlClient;
+    if (client instanceof SqliteClient) {
       try {
-        const tables = await loadSchemaEntries(client, 'table');
-        const views = await loadSchemaEntries(client, 'view');
+        const tables = await loadSchemaViaSqlite(client, 'table');
+        const views = await loadSchemaViaSqlite(client, 'view');
         return { tables, views };
       } catch (error: any) {
         pool.evictOnError(database.id, error);
@@ -80,13 +82,14 @@ export class SchemaService {
       }
     }
 
-    const client = pool.getSqliteClient(database);
+    if (!database.url || !database.encryptedToken) {
+      return { tables: [], note: 'missing url or token' };
+    }
+
+    const libClient = client as LibsqlClient;
     try {
-      const sqliteReader = {
-        readAll: async (sql: string) => (await client.all(sql)) as unknown[],
-      };
-      const tables = await loadSchemaEntries(sqliteReader, 'table');
-      const views = await loadSchemaEntries(sqliteReader, 'view');
+      const tables = await loadSchemaViaLibsql(libClient, 'table');
+      const views = await loadSchemaViaLibsql(libClient, 'view');
       return { tables, views };
     } catch (error: any) {
       pool.evictOnError(database.id, error);

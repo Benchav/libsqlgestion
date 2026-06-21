@@ -651,7 +651,7 @@ export default function StudioPage() {
           </div>
         )}
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           <TableSidebar
             tables={visibleSchemas.map((t) => ({ table: t.table, kind: t.kind, rowCount: t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
@@ -665,7 +665,7 @@ export default function StudioPage() {
             loading={schemaLoading}
           />
 
-          <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a]">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#0a0a0a]">
             {activeTable && currentTableSchema && (
               <div className="flex items-center justify-between border-b border-zinc-800/80 bg-[#09090b] px-4 py-3">
                 <div>
@@ -735,27 +735,29 @@ export default function StudioPage() {
 
             {/* Main Area */}
             {activeTab === 'data' && activeTable && currentTableSchema ? (
-              <DataGrid
-                tableName={activeTable}
-                columns={currentTableSchema.columns}
-                rows={rows}
-                totalRows={totalRows}
-                readOnly={currentTableSchema.kind === 'view'}
-                page={page}
-                pageSize={PAGE_SIZE}
-                onPageChange={setPage}
-                onSort={handleSort}
-                sortColumn={sortColumn}
-                sortDir={sortDir}
-                onCellEdit={handleCellEdit}
-                onEditRow={handleOpenEditRow}
-                onDeleteRow={handleDeleteRow}
-                onAddRow={handleAddRow}
-                onInsertRow={handleOpenInsertRow}
-                loading={gridLoading}
-                onColumnMenu={(column, event) => openContextMenu(event.clientX, event.clientY, { type: 'column', column })}
-                onRowMenu={(rowIndex, event) => openContextMenu(event.clientX, event.clientY, { type: 'row', rowIndex })}
-              />
+              <div className="min-h-0 min-w-0 flex-1">
+                <DataGrid
+                  tableName={activeTable}
+                  columns={currentTableSchema.columns}
+                  rows={rows}
+                  totalRows={totalRows}
+                  readOnly={currentTableSchema.kind === 'view'}
+                  page={page}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setPage}
+                  onSort={handleSort}
+                  sortColumn={sortColumn}
+                  sortDir={sortDir}
+                  onCellEdit={handleCellEdit}
+                  onEditRow={handleOpenEditRow}
+                  onDeleteRow={handleDeleteRow}
+                  onAddRow={handleAddRow}
+                  onInsertRow={handleOpenInsertRow}
+                  loading={gridLoading}
+                  onColumnMenu={(column, event) => openContextMenu(event.clientX, event.clientY, { type: 'column', column })}
+                  onRowMenu={(rowIndex, event) => openContextMenu(event.clientX, event.clientY, { type: 'row', rowIndex })}
+                />
+              </div>
             ) : activeTab === 'data' && !activeTable ? (
               <div className="h-full flex items-center justify-center text-zinc-500 text-sm">
                 Select a table from the sidebar to view data.

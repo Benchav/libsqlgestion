@@ -139,7 +139,7 @@ export function DataGrid({
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a] text-[13px]">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#0a0a0a] text-[13px]">
       {/* Studio Toolbar (Top) */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/80 bg-[#09090b]">
         <div className="flex items-center gap-6">
@@ -204,8 +204,9 @@ export function DataGrid({
       </div>
 
       {/* Grid Area */}
-      <div className="flex-1 overflow-auto custom-scrollbar relative">
-        <table className="min-w-max w-full text-left border-collapse whitespace-nowrap table-auto">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="h-full w-full overflow-x-auto overflow-y-auto custom-scrollbar overscroll-contain">
+          <table className="min-w-max w-max text-left border-collapse whitespace-nowrap table-auto">
           <thead className="sticky top-0 z-10 bg-[#09090b]">
             <tr>
               <th className="w-10 border-b border-r border-zinc-800 py-1.5 px-2 text-center text-zinc-500 font-medium text-xs bg-[#09090b]">
@@ -388,7 +389,8 @@ export function DataGrid({
               ))
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
       <ContextMenu
         open={cellMenu.open}

@@ -16,6 +16,8 @@ export type DatabaseInfo = {
   id: string;
   name: string;
   type: string;
+  effectiveType?: string;
+  runtimeProvider?: string;
   status: string;
   subdomain?: string;
   createdAt: string;
@@ -26,6 +28,8 @@ export type DatabaseDetail = {
   id: string;
   name: string;
   type: string;
+  effectiveType?: string;
+  runtimeProvider?: string;
   status: string;
   subdomain?: string;
   url?: string;
@@ -62,8 +66,12 @@ export type AuditLogEntry = {
 };
 
 export type MetricInfo = {
-  databases: Record<string, unknown>;
-  system: Record<string, unknown>;
+  totalDiskBytes?: number;
+  totalRamBytes?: number;
+  maxRamBytes?: number;
+  cpuUsagePercent?: number;
+  databases: Array<Record<string, unknown>>;
+  system?: Record<string, unknown>;
 };
 
 // ----- Project Hooks -----

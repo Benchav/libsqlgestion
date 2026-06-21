@@ -4,6 +4,7 @@ import http from 'http';
 import path from 'path';
 import { Database } from '../../domain/entities/Database';
 import { getPublicDatabaseSettings } from '../../application/settings/PlatformSettingsService';
+import { resolveEffectiveDatabaseType } from '../../application/databases/database-runtime';
 
 type DockerJson = Record<string, any>;
 
@@ -157,7 +158,7 @@ export class LibsqlRuntimeService {
     }
 
     const fileCandidates = new Set<string>();
-    if (database.url && database.type === 'sqlite') {
+    if (database.url && resolveEffectiveDatabaseType(database as any) === 'sqlite') {
       fileCandidates.add(database.url);
     }
     if (runtime?.databasePath) {

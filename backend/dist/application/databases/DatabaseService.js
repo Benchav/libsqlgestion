@@ -18,6 +18,7 @@ const slug_1 = require("../../infrastructure/security/slug");
 const SqliteStorageService_1 = require("../../infrastructure/storage/SqliteStorageService");
 const LibsqlRuntimeService_1 = require("../../infrastructure/docker/LibsqlRuntimeService");
 const ConnectionPool_1 = require("../../infrastructure/db/ConnectionPool");
+const database_runtime_1 = require("./database-runtime");
 class DatabaseService {
     constructor() {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
@@ -144,6 +145,22 @@ class DatabaseService {
     async getDatabase(id) {
         return this.databaseRepo.findOne({ where: { id }, relations: ['project', 'project.owner'] });
     }
+    async reconcileLegacyDatabases() {
+        const databases = await this.databaseRepo.find();
+        let reconciled = 0;
+        for (const database of databases) {
+            if (!(0, database_runtime_1.shouldReconcileLegacyLocalDatabase)(database)) {
+                continue;
+            }
+            const normalized = (0, database_runtime_1.normalizeLegacyLocalDatabase)(database);
+            database.type = normalized.type;
+            database.status = normalized.status;
+            database.metadata = normalized.metadata;
+            await this.databaseRepo.save(database);
+            reconciled += 1;
+        }
+        return { reconciled };
+    }
     async rotateToken(id) {
         const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
         if (!database)
@@ -185,7 +202,7 @@ class DatabaseService {
                 libClient.close();
             }
         }
-        if (isLocalFileDatabase(database)) {
+        if ((0, database_runtime_1.resolveEffectiveDatabaseType)(database) === 'sqlite') {
             const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
             if (!fs_1.default.existsSync(url)) {
                 return { ok: false, details: 'sqlite file missing', code: 'SQLITE_CANTOPEN' };
@@ -394,30 +411,12 @@ function mergeRuntimeMetadata(existing, runtime) {
         runtime,
     };
 }
-function isLocalFileDatabase(database) {
-    const runtime = database.metadata?.runtime;
-    if (runtime?.provider === 'docker-libsql')
-        return false;
-    if (database.type === 'sqlite')
-        return true;
-    if (!database.url)
-        return true;
-    return !/^(https?|libsql):\/\//.test(database.url);
-}
 function getManagedRuntimeUrl(database) {
-    const runtime = database.metadata?.runtime;
-    if (!runtime || runtime.provider !== 'docker-libsql') {
+    const runtimeUrl = (0, database_runtime_1.getRuntimeConnectionUrl)(database);
+    if ((0, database_runtime_1.resolveEffectiveDatabaseType)(database) !== 'libsql') {
         return null;
     }
-    if (typeof runtime.connectionUrl === 'string')
-        return runtime.connectionUrl;
-    if (typeof runtime.internalUrl === 'string')
-        return runtime.internalUrl;
-    if (typeof runtime.publicUrl === 'string')
-        return runtime.publicUrl;
-    if (database.type === 'sqlite' && database.url && database.url.startsWith('http'))
-        return database.url;
-    return null;
+    return runtimeUrl || null;
 }
 function isManagedRuntimeType(input) {
     if (input.type === 'sqlite')

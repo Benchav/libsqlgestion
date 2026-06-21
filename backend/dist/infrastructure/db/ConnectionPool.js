@@ -4,9 +4,7 @@ exports.ConnectionPool = void 0;
 const SqliteClient_1 = require("../sqlite/SqliteClient");
 const LibsqlClient_1 = require("../libsql/LibsqlClient");
 const crypto_1 = require("../crypto");
-function isRemoteUrl(url) {
-    return /^(https?|libsql):\/\//.test(url);
-}
+const database_runtime_1 = require("../../application/databases/database-runtime");
 class ConnectionPool {
     constructor() {
         this.pool = new Map();
@@ -72,7 +70,7 @@ class ConnectionPool {
     // Private
     // ---------------------------------------------------------------------------
     createClient(database) {
-        const effectiveType = this.resolveEffectiveType(database);
+        const effectiveType = (0, database_runtime_1.resolveEffectiveDatabaseType)(database);
         if (effectiveType === 'sqlite') {
             const filePath = database.url || '';
             if (!filePath) {
@@ -87,23 +85,6 @@ class ConnectionPool {
         const token = (0, crypto_1.decrypt)(database.encryptedToken);
         const client = (0, LibsqlClient_1.createLibsqlClient)(database.url, token);
         return { client, type: 'libsql', lastUsed: Date.now() };
-    }
-    resolveEffectiveType(database) {
-        if (database.type !== 'sqlite' && database.type !== 'libsql') {
-            return database.type;
-        }
-        if (database.type === 'sqlite') {
-            return 'sqlite';
-        }
-        const url = database.url || '';
-        if (!isRemoteUrl(url)) {
-            return 'sqlite';
-        }
-        const runtime = database.metadata?.runtime;
-        if (runtime?.provider !== 'docker-libsql') {
-            return 'sqlite';
-        }
-        return 'libsql';
     }
     async closeClient(entry) {
         try {

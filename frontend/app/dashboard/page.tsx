@@ -14,6 +14,11 @@ function formatBytes(bytes: number) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function getMetricTypeLabel(database: any) {
+  const effectiveType = database?.effectiveType || database?.type || 'sqlite';
+  return effectiveType === 'libsql' ? 'LibSQL Container' : 'SQLite Local';
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [stats, setStats] = useState({ databases: 0, projects: 0 });
@@ -129,7 +134,7 @@ export default function DashboardPage() {
                      return (
                      <div key={db.id} onClick={() => router.push(`/databases/${db.id}`)} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-zinc-800/50 bg-zinc-900/30 hover:bg-zinc-800/40 cursor-pointer transition-all duration-200 group">
                        <div className="flex items-center gap-3 mb-3 sm:mb-0">
-                         <div className={`flex items-center justify-center w-8 h-8 rounded-lg ${db.type === 'libsql' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+                          <div className={`flex items-center justify-center w-8 h-8 rounded-lg ${(db.effectiveType || db.type) === 'libsql' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
                            <Database size={16} />
                          </div>
                          <div>
@@ -137,8 +142,8 @@ export default function DashboardPage() {
                              {db.name}
                            </div>
                            <div className="text-xs text-zinc-500 flex items-center gap-1.5 mt-0.5">
-                             <span className={`w-1.5 h-1.5 rounded-full ${db.type === 'libsql' ? 'bg-blue-500' : 'bg-emerald-500'}`}></span>
-                             {db.type === 'libsql' ? 'LibSQL Container' : 'SQLite Local'}
+                              <span className={`w-1.5 h-1.5 rounded-full ${(db.effectiveType || db.type) === 'libsql' ? 'bg-blue-500' : 'bg-emerald-500'}`}></span>
+                              {getMetricTypeLabel(db)}
                            </div>
                          </div>
                        </div>
@@ -158,13 +163,13 @@ export default function DashboardPage() {
                            <div className="flex justify-between items-center text-xs">
                              <span className="text-zinc-500">RAM</span>
                              <span className="text-zinc-300 font-medium">
-                               {db.type === 'sqlite' 
-                                 ? (db.isRamEstimated && db.ramBytes > 0 ? '~25 MB' : 'Shared') 
-                                 : formatBytes(db.ramBytes)}
+                                {(db.effectiveType || db.type) === 'sqlite' 
+                                  ? (db.isRamEstimated && db.ramBytes > 0 ? '~25 MB' : 'Shared') 
+                                  : formatBytes(db.ramBytes)}
                              </span>
                            </div>
                            <div className="w-full bg-zinc-950 h-1.5 rounded-full overflow-hidden border border-zinc-800/30">
-                             <div className={`h-full rounded-full ${db.type === 'sqlite' ? 'bg-zinc-600/50' : 'bg-amber-500/80'}`} style={{ width: `${db.type === 'sqlite' ? 100 : Math.max(2, ramPercent)}%` }}></div>
+                              <div className={`h-full rounded-full ${(db.effectiveType || db.type) === 'sqlite' ? 'bg-zinc-600/50' : 'bg-amber-500/80'}`} style={{ width: `${(db.effectiveType || db.type) === 'sqlite' ? 100 : Math.max(2, ramPercent)}%` }}></div>
                            </div>
                          </div>
                        </div>

@@ -9,29 +9,10 @@ const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const promises_1 = require("stream/promises");
 const DatabaseService_1 = require("../../../application/databases/DatabaseService");
-const connection_url_1 = require("../../../application/databases/connection-url");
 const guards_1 = require("../guards");
 const validations_1 = require("../../../types/validations");
 const validations_2 = require("../../../types/validations");
-function withConnectionUrl(database) {
-    const urls = (0, connection_url_1.buildDatabaseConnectionUrls)(database);
-    const runtime = database.metadata?.runtime;
-    const runtimeStatus = typeof database.status === 'string' ? database.status : 'inactive';
-    return {
-        ...database,
-        connectionUrl: urls.publicHttpsUrl || urls.publicLibsqlUrl || urls.backendUrl,
-        publicConnectionUrl: urls.publicHttpsUrl,
-        publicHttpsUrl: urls.publicHttpsUrl,
-        publicLibsqlUrl: urls.publicLibsqlUrl,
-        internalConnectionUrl: urls.internalUrl,
-        internalLibsqlUrl: urls.internalUrl,
-        backendConnectionUrl: urls.backendUrl,
-        backendReachableUrl: urls.backendUrl,
-        runtimeStatus,
-        exposureMode: runtime?.provider === 'docker-libsql' ? 'public-runtime' : runtime?.provider === 'local-file' ? 'local-file' : database.type,
-        runtimeHealth: database.metadata?.runtime?.routeHealth,
-    };
-}
+const database_presenter_1 = require("../database-presenter");
 async function databaseRoutes(app) {
     const databaseService = new DatabaseService_1.DatabaseService();
     app.get('/databases', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -40,7 +21,7 @@ async function databaseRoutes(app) {
         try {
             const query = (0, validations_1.parseAndValidate)(validations_1.pageQuerySchema, request.query || {}, 'query');
             const databases = await databaseService.listDatabases(request.query?.projectId);
-            const enriched = databases.map((db) => withConnectionUrl(db));
+            const enriched = databases.map((db) => (0, database_presenter_1.presentDatabase)(db));
             if (query.page && query.limit) {
                 const start = (query.page - 1) * query.limit;
                 const page = enriched.slice(start, start + query.limit);
@@ -66,7 +47,7 @@ async function databaseRoutes(app) {
         const body = (0, validations_1.parseAndValidate)(validations_1.createDatabaseSchema, request.body, 'create database');
         try {
             const result = await databaseService.createDatabase(body.projectId, body);
-            return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+            return reply.status(201).send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to create database' });
@@ -78,7 +59,7 @@ async function databaseRoutes(app) {
         const body = (0, validations_1.parseAndValidate)(validations_1.importSqliteSchema, request.body, 'import sqlite');
         try {
             const result = await databaseService.importExistingSqlite(body.projectId, body);
-            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+            return reply.status(201).send({ ...result, database: (0, database_presenter_1.presentDatabase)(result.database) });
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to import database' });
@@ -119,7 +100,7 @@ async function databaseRoutes(app) {
                 sourcePath: uploadedPath,
                 subdomain: fields.subdomain || undefined,
             });
-            return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+            return reply.status(201).send({ ...result, database: (0, database_presenter_1.presentDatabase)(result.database) });
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to import uploaded database' });
@@ -141,7 +122,7 @@ async function databaseRoutes(app) {
         const database = await databaseService.getDatabase(id);
         if (!database)
             return reply.status(404).send({ error: 'database not found' });
-        return reply.send({ database: withConnectionUrl(database) });
+        return reply.send({ database: (0, database_presenter_1.presentDatabase)(database) });
     });
     app.patch('/databases/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
@@ -153,7 +134,7 @@ async function databaseRoutes(app) {
             return;
         try {
             const database = await databaseService.updateDatabase(id, body);
-            return reply.send({ database: withConnectionUrl(database) });
+            return reply.send({ database: (0, database_presenter_1.presentDatabase)(database) });
         }
         catch (err) {
             return reply.status(404).send({ error: err.message });
@@ -182,7 +163,7 @@ async function databaseRoutes(app) {
         if (!access)
             return;
         const result = await databaseService.rotateToken(id);
-        return reply.send({ database: withConnectionUrl(result.database), token: result.token });
+        return reply.send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
     });
     app.post('/databases/:id/test-connection', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))
@@ -229,7 +210,7 @@ async function databaseRoutes(app) {
             return;
         try {
             const result = await databaseService.backupDatabase(id, { name: body.name });
-            return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+            return reply.status(201).send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to create backup' });

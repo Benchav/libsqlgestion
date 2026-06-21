@@ -14,8 +14,12 @@ type ProjectDetail = {
   createdAt: string;
   owner?: { id: string; email: string };
   members?: Array<{ id: string; user: { id: string; email: string } }>;
-  databases?: Array<{ id: string; name: string; type: string; status: string; subdomain?: string; createdAt: string }>;
+  databases?: Array<{ id: string; name: string; type: string; effectiveType?: string; runtimeProvider?: string; status: string; subdomain?: string; createdAt: string }>;
 };
+
+function getDatabaseTypeLabel(database: { type: string; effectiveType?: string }) {
+  return (database.effectiveType || database.type || 'sqlite').toUpperCase();
+}
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -144,7 +148,7 @@ export default function ProjectDetailPage() {
                           </td>
                           <td className="py-3 px-6">
                             <span className="bg-zinc-800 text-zinc-300 border border-zinc-700/50 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider">
-                              {db.type}
+                              {getDatabaseTypeLabel(db)}
                             </span>
                           </td>
                           <td className="py-3 px-6">

@@ -6,6 +6,7 @@ import { DatabaseMigration } from '../../domain/entities/DatabaseMigration';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { AuditService } from '../audit/AuditService';
+import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 
 export class MigrationService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -56,11 +57,7 @@ export class MigrationService {
     await this.migrationRepo.save(migration);
 
     try {
-      if (database.type === 'sqlite') {
-        await this.applyToSqlite(database, statements);
-      } else {
-        await this.applyToLibsql(database, statements);
-      }
+      await this.applyToDatabase(database, statements);
 
       migration.status = 'applied';
       await this.migrationRepo.save(migration);
@@ -173,45 +170,34 @@ export class MigrationService {
    * Applies migration statements to a SQLite database wrapped in a transaction.
    * If any statement fails, all changes are rolled back.
    */
-  private async applyToSqlite(database: Database, statements: string[]) {
-    const pool = ConnectionPool.getInstance();
-    let client: SqliteClient;
-    try {
-      client = pool.getSqliteClient(database);
-    } catch (error: any) {
-      throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-    }
-
-    try {
-      await client.run('BEGIN TRANSACTION;');
-      for (const statement of statements) {
-        await client.run(statement);
-      }
-      await client.run('COMMIT;');
-    } catch (error: any) {
-      // Attempt rollback — if it fails, the original error is still thrown
-      try { await client.run('ROLLBACK;'); } catch { /* ignore rollback errors */ }
-      pool.evictOnError(database.id, error);
-      throw error instanceof DatabaseError ? error : DatabaseError.from(error);
-    }
-  }
-
-  /**
-   * Applies migration statements to a libSQL database.
-   * Uses the batch API when available for transactional execution.
-   */
-  private async applyToLibsql(database: Database, statements: string[]) {
-    if (!database.url || !database.encryptedToken) throw new Error('missing url or token');
+  private async applyToDatabase(database: Database, statements: string[]) {
     const pool = ConnectionPool.getInstance();
     const client = pool.getClient(database);
-    try {
-      // Attempt batch execution for atomicity
+
+    if (client instanceof SqliteClient) {
       try {
-        await (client as any).batch(statements.map((s: string) => ({ sql: s })), 'write');
-      } catch {
-        // Fallback: execute one by one (older libsql clients)
+        await client.run('BEGIN TRANSACTION;');
         for (const statement of statements) {
-          await (client as any).execute(statement);
+          await client.run(statement);
+        }
+        await client.run('COMMIT;');
+      } catch (error: any) {
+        try { await client.run('ROLLBACK;'); } catch {}
+        pool.evictOnError(database.id, error);
+        throw error instanceof DatabaseError ? error : DatabaseError.from(error);
+      }
+      return;
+    }
+
+    if (!database.url || !database.encryptedToken) throw new Error('missing url or token');
+
+    try {
+      const libClient = client as LibsqlClient;
+      try {
+        await libClient.batch(statements.map((s: string) => ({ sql: s })), 'write');
+      } catch {
+        for (const statement of statements) {
+          await libClient.execute(statement);
         }
       }
     } catch (error: any) {

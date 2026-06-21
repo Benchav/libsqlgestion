@@ -3,6 +3,7 @@ import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
+import { resolveEffectiveDatabaseType } from '../databases/database-runtime';
 
 import os from 'os';
 
@@ -10,6 +11,7 @@ export type DatabaseMetric = {
   id: string;
   name: string;
   type: string;
+  effectiveType: string;
   status: string;
   diskBytes: number;
   ramBytes: number;
@@ -66,10 +68,11 @@ export class SystemMetricsService {
       let diskBytes = 0;
       let ramBytes = 0;
       let isRamEstimated = false;
+      const effectiveType = resolveEffectiveDatabaseType(db);
 
       // 1. Calculate Disk Usage
       const fileCandidates = new Set<string>();
-      if (db.type === 'sqlite' && db.url) {
+      if (effectiveType === 'sqlite' && db.url) {
         fileCandidates.add(db.url);
       }
       
@@ -105,7 +108,7 @@ export class SystemMetricsService {
       }
 
       // 2. Calculate RAM Usage
-      if (db.type === 'sqlite') {
+      if (effectiveType === 'sqlite') {
         isRamEstimated = true;
         // If it's active in the pool, we estimate ~20MB for the PRAGMA cache + SQLite structures
         // If not, we estimate 0MB. The memory is shared in the Node process anyway.
@@ -130,6 +133,7 @@ export class SystemMetricsService {
         id: db.id,
         name: db.name,
         type: db.type,
+        effectiveType,
         status: db.status,
         diskBytes,
         ramBytes,

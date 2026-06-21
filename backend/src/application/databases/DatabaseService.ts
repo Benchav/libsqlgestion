@@ -12,6 +12,7 @@ import { assertValidSubdomainLabel, ensureSubdomain } from '../../infrastructure
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
+import { getRuntimeConnectionUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
 
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -154,6 +155,26 @@ export class DatabaseService {
     return this.databaseRepo.findOne({ where: { id }, relations: ['project', 'project.owner'] });
   }
 
+  async reconcileLegacyDatabases() {
+    const databases = await this.databaseRepo.find();
+    let reconciled = 0;
+
+    for (const database of databases) {
+      if (!shouldReconcileLegacyLocalDatabase(database)) {
+        continue;
+      }
+
+      const normalized = normalizeLegacyLocalDatabase(database);
+      database.type = normalized.type;
+      database.status = normalized.status as any;
+      database.metadata = normalized.metadata;
+      await this.databaseRepo.save(database);
+      reconciled += 1;
+    }
+
+    return { reconciled };
+  }
+
   async rotateToken(id: string) {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
@@ -198,7 +219,7 @@ export class DatabaseService {
       }
     }
 
-    if (isLocalFileDatabase(database)) {
+    if (resolveEffectiveDatabaseType(database) === 'sqlite') {
       const url = database.url || this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
       if (!fs.existsSync(url)) {
         return { ok: false, details: 'sqlite file missing', code: 'SQLITE_CANTOPEN' };
@@ -425,25 +446,13 @@ function mergeRuntimeMetadata(existing: Record<string, unknown> | undefined, run
   };
 }
 
-function isLocalFileDatabase(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
-  const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
-  if (runtime?.provider === 'docker-libsql') return false;
-  if (database.type === 'sqlite') return true;
-  if (!database.url) return true;
-  return !/^(https?|libsql):\/\//.test(database.url);
-}
-
 function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
-  const runtime = database.metadata?.runtime as { provider?: unknown; connectionUrl?: unknown; internalUrl?: unknown; publicUrl?: unknown } | undefined;
-  if (!runtime || runtime.provider !== 'docker-libsql') {
+  const runtimeUrl = getRuntimeConnectionUrl(database);
+  if (resolveEffectiveDatabaseType(database) !== 'libsql') {
     return null;
   }
 
-  if (typeof runtime.connectionUrl === 'string') return runtime.connectionUrl;
-  if (typeof runtime.internalUrl === 'string') return runtime.internalUrl;
-  if (typeof runtime.publicUrl === 'string') return runtime.publicUrl;
-  if (database.type === 'sqlite' && database.url && database.url.startsWith('http')) return database.url;
-  return null;
+  return runtimeUrl || null;
 }
 
 function isManagedRuntimeType(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {

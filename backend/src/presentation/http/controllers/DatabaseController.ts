@@ -4,30 +4,10 @@ import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
-import { buildDatabaseConnectionUrls } from '../../../application/databases/connection-url';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
 import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema } from '../../../types/validations';
 import { ValidationError } from '../../../types/validations';
-
-function withConnectionUrl<T extends { id: string; name: string; type: string; url?: string | null; subdomain?: string | null }>(database: T) {
-  const urls = buildDatabaseConnectionUrls(database);
-  const runtime = (database as any).metadata?.runtime as { provider?: unknown } | undefined;
-  const runtimeStatus = typeof (database as any).status === 'string' ? (database as any).status : 'inactive';
-  return {
-    ...database,
-    connectionUrl: urls.publicHttpsUrl || urls.publicLibsqlUrl || urls.backendUrl,
-    publicConnectionUrl: urls.publicHttpsUrl,
-    publicHttpsUrl: urls.publicHttpsUrl,
-    publicLibsqlUrl: urls.publicLibsqlUrl,
-    internalConnectionUrl: urls.internalUrl,
-    internalLibsqlUrl: urls.internalUrl,
-    backendConnectionUrl: urls.backendUrl,
-    backendReachableUrl: urls.backendUrl,
-    runtimeStatus,
-    exposureMode: runtime?.provider === 'docker-libsql' ? 'public-runtime' : runtime?.provider === 'local-file' ? 'local-file' : database.type,
-    runtimeHealth: (database as any).metadata?.runtime?.routeHealth,
-  };
-}
+import { presentDatabase } from '../database-presenter';
 
 export default async function databaseRoutes(app: FastifyInstance) {
   const databaseService = new DatabaseService();
@@ -37,7 +17,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     try {
       const query = parseAndValidate(pageQuerySchema, request.query || {}, 'query');
       const databases = await databaseService.listDatabases((request.query as any)?.projectId);
-      const enriched = databases.map((db) => withConnectionUrl(db));
+      const enriched = databases.map((db) => presentDatabase(db));
 
       if (query.page && query.limit) {
         const start = (query.page - 1) * query.limit;
@@ -63,7 +43,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const body = parseAndValidate(createDatabaseSchema, request.body, 'create database');
     try {
       const result = await databaseService.createDatabase(body.projectId, body);
-      return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+      return reply.status(201).send({ database: presentDatabase(result.database), token: result.token });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to create database' });
     }
@@ -74,7 +54,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const body = parseAndValidate(importSqliteSchema, request.body, 'import sqlite');
     try {
       const result = await databaseService.importExistingSqlite(body.projectId, body);
-      return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+      return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to import database' });
     }
@@ -120,7 +100,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
         sourcePath: uploadedPath,
         subdomain: fields.subdomain || undefined,
       });
-      return reply.status(201).send({ ...result, database: withConnectionUrl(result.database) });
+      return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to import uploaded database' });
     } finally {
@@ -138,7 +118,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!access) return;
     const database = await databaseService.getDatabase(id);
     if (!database) return reply.status(404).send({ error: 'database not found' });
-    return reply.send({ database: withConnectionUrl(database) });
+    return reply.send({ database: presentDatabase(database) });
   });
 
   app.patch('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -149,7 +129,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!access) return;
     try {
       const database = await databaseService.updateDatabase(id, body);
-      return reply.send({ database: withConnectionUrl(database) });
+      return reply.send({ database: presentDatabase(database) });
     } catch (err: any) {
       return reply.status(404).send({ error: err.message });
     }
@@ -174,7 +154,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const access = await ensureDatabaseAccess(request, reply, id);
     if (!access) return;
     const result = await databaseService.rotateToken(id);
-    return reply.send({ database: withConnectionUrl(result.database), token: result.token });
+    return reply.send({ database: presentDatabase(result.database), token: result.token });
   });
 
   app.post('/databases/:id/test-connection', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -219,7 +199,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     if (!access) return;
     try {
       const result = await databaseService.backupDatabase(id, { name: body.name });
-      return reply.status(201).send({ database: withConnectionUrl(result.database), token: result.token });
+      return reply.status(201).send({ database: presentDatabase(result.database), token: result.token });
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to create backup' });
     }

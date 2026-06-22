@@ -18,6 +18,7 @@ const DiscoveryController_1 = __importDefault(require("./controllers/DiscoveryCo
 const MigrationController_1 = __importDefault(require("./controllers/MigrationController"));
 const SchemaManagementController_1 = __importDefault(require("./controllers/SchemaManagementController"));
 const MetricsController_1 = __importDefault(require("./controllers/MetricsController"));
+const LibsqlProxyController_1 = __importDefault(require("./controllers/LibsqlProxyController"));
 async function routes(app) {
     app.register(HealthController_1.default);
     app.register(AuthController_1.default);
@@ -33,4 +34,5 @@ async function routes(app) {
     app.register(MigrationController_1.default);
     app.register(SchemaManagementController_1.default);
     app.register(MetricsController_1.default);
+    app.register(LibsqlProxyController_1.default);
 }

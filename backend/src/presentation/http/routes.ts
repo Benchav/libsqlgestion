@@ -13,6 +13,7 @@ import discoveryRoutes from './controllers/DiscoveryController';
 import migrationRoutes from './controllers/MigrationController';
 import schemaManagementRoutes from './controllers/SchemaManagementController';
 import metricsRoutes from './controllers/MetricsController';
+import libsqlProxyRoutes from './controllers/LibsqlProxyController';
 
 export default async function routes(app: FastifyInstance) {
   app.register(healthRoutes);
@@ -29,4 +30,5 @@ export default async function routes(app: FastifyInstance) {
   app.register(migrationRoutes);
   app.register(schemaManagementRoutes);
   app.register(metricsRoutes);
+  app.register(libsqlProxyRoutes);
 }

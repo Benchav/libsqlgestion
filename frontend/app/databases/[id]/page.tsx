@@ -319,13 +319,13 @@ export default function DatabaseDetailPage() {
 
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Recommended Endpoints</label>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">How to connect (Proxy Native / LibSQL)</label>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wider text-emerald-300">Same server / Coolify backend</div>
-                          <div className="mt-1 text-xs text-zinc-400">Use this from your ERP backend if it runs in the same server stack.</div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-emerald-300">Internal Coolify Network (Recommended)</div>
+                          <div className="mt-1 text-xs text-zinc-400">If your ERP or backend is deployed in the same Coolify environment, replace 'localhost' with the internal service name of this backend (e.g., <code className="bg-emerald-500/20 px-1 rounded">libsqlite-backend:3000</code>). Extremely fast, no 500 errors.</div>
                         </div>
                         <button
                           type="button"
@@ -343,8 +343,8 @@ export default function DatabaseDetailPage() {
                     <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wider text-blue-300">Remote / public client</div>
-                          <div className="mt-1 text-xs text-zinc-400">Use this from another server or any client outside your Docker network.</div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-blue-300">Public Domain (Universal)</div>
+                          <div className="mt-1 text-xs text-zinc-400">If you set a public domain in Coolify for this panel (e.g., <code className="bg-blue-500/20 px-1 rounded">api.midominio.com</code>), any app in the world can connect using this HTTPS endpoint.</div>
                         </div>
                         <button
                           type="button"

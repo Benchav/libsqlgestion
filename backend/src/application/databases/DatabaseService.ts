@@ -57,12 +57,13 @@ export class DatabaseService {
       database.url = managedPath || input.url || undefined;
       database.status = database.type === 'remote' && !managedPath ? (input.url ? 'active' : 'inactive') : willProvisionRuntime ? 'provisioning' : 'active';
       database.encryptedToken = encrypt(token);
+      const proxyUrl = managedPath ? `http://localhost:${process.env.PORT || 3000}/libsql/${database.id}` : null;
       database.metadata = mergeRuntimeMetadata(database.metadata, {
         provider: 'local-file',
         databasePath: managedPath || null,
-        connectionUrl: managedPath || null,
-        internalUrl: managedPath || null,
-        publicUrl: managedPath || null,
+        connectionUrl: proxyUrl,
+        internalUrl: proxyUrl,
+        publicUrl: proxyUrl,
       });
       await this.databaseRepo.save(database);
 
@@ -115,12 +116,13 @@ export class DatabaseService {
       database.url = managedPath;
       database.status = willProvisionRuntime ? 'provisioning' : 'active';
       database.encryptedToken = encrypt(token);
+      const proxyUrl = managedPath ? `http://localhost:${process.env.PORT || 3000}/libsql/${database.id}` : null;
       database.metadata = mergeRuntimeMetadata(database.metadata, {
         provider: 'local-file',
         databasePath: managedPath,
-        connectionUrl: managedPath,
-        internalUrl: managedPath,
-        publicUrl: managedPath,
+        connectionUrl: proxyUrl,
+        internalUrl: proxyUrl,
+        publicUrl: proxyUrl,
       });
       await this.databaseRepo.save(database);
 
@@ -382,12 +384,13 @@ export class DatabaseService {
       database.url = managedPath;
       database.status = willProvisionRuntime ? 'provisioning' : 'active';
       database.encryptedToken = encrypt(token);
+      const proxyUrl = managedPath ? `http://localhost:${process.env.PORT || 3000}/libsql/${database.id}` : null;
       database.metadata = mergeRuntimeMetadata(database.metadata, {
         provider: 'local-file',
         databasePath: managedPath,
-        connectionUrl: managedPath,
-        internalUrl: managedPath,
-        publicUrl: managedPath,
+        connectionUrl: proxyUrl,
+        internalUrl: proxyUrl,
+        publicUrl: proxyUrl,
       });
       await this.databaseRepo.save(database);
 

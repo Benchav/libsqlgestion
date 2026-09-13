@@ -173,6 +173,7 @@ class LibsqlRuntimeService {
         }
         if (runtime?.databasePath) {
             fileCandidates.add(runtime.databasePath);
+            fileCandidates.add(this.resolveDatabaseRootDir(runtime.databasePath));
         }
         await this.cleanupPaths([...fileCandidates], true);
     }
@@ -253,7 +254,7 @@ class LibsqlRuntimeService {
     }
     generateAuthBundle() {
         const { publicKey, privateKey } = crypto_1.default.generateKeyPairSync('ed25519');
-        const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+        const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString().trim() + '\n';
         const issuedAt = Math.floor(Date.now() / 1000);
         const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
         const payload = {
@@ -305,11 +306,19 @@ class LibsqlRuntimeService {
             return false;
         }
     }
+    resolveDatabaseRootDir(databasePath) {
+        const normalized = path_1.default.normalize(databasePath);
+        const parts = normalized.split(path_1.default.sep);
+        const dbsIndex = parts.lastIndexOf('dbs');
+        if (dbsIndex !== -1) {
+            return parts.slice(0, dbsIndex).join(path_1.default.sep);
+        }
+        return path_1.default.dirname(databasePath);
+    }
     async createAndStartContainer(paths, databasePath, authKeyPem, networkName) {
-        const dbDirName = path_1.default.dirname(databasePath);
-        const databaseDir = path_1.default.basename(dbDirName) || 'data';
-        const hostDirName = await this.resolveHostPath(dbDirName);
-        const authPemPath = path_1.default.join(dbDirName, 'auth.pem');
+        const dbRootDir = this.resolveDatabaseRootDir(databasePath);
+        const hostDirName = await this.resolveHostPath(dbRootDir);
+        const authPemPath = path_1.default.join(dbRootDir, 'auth.pem');
         await fs_1.default.promises.writeFile(authPemPath, authKeyPem, 'utf8');
         const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
             Image: this.image,
@@ -396,24 +405,25 @@ class LibsqlRuntimeService {
                 const logs = await this.fetchContainerLogs(containerId);
                 throw new Error(`libSQL container stopped unexpectedly with exit code ${state.exitCode ?? 'unknown'}${logs ? `: ${logs}` : ''}`);
             }
-            const internalOk = await this.canConnect(urls.internalUrl, token);
-            if (internalOk) {
-                const backendOk = await this.canConnect(urls.backendUrl, token);
-                const publicChecked = urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl;
-                const publicOk = publicChecked ? await this.canConnect(urls.publicUrl, token) : backendOk || internalOk;
+            const internalCheck = await this.checkConnection(urls.internalUrl, token);
+            const backendCheck = await this.checkConnection(urls.backendUrl, token);
+            if (internalCheck.ok || backendCheck.ok) {
+                const chosenUrl = internalCheck.ok ? urls.internalUrl : urls.backendUrl;
+                const publicChecked = Boolean(urls.publicUrl && urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl);
+                const publicCheck = publicChecked ? await this.checkConnection(urls.publicUrl, token) : { ok: backendCheck.ok || internalCheck.ok };
                 return {
-                    connectionUrl: urls.internalUrl,
+                    connectionUrl: chosenUrl,
                     routeHealth: {
                         checkedAt: new Date().toISOString(),
-                        internalOk,
-                        backendOk,
-                        publicOk,
+                        internalOk: internalCheck.ok,
+                        backendOk: backendCheck.ok,
+                        publicOk: publicCheck.ok,
                         publicChecked,
                     },
                 };
             }
-            lastErrorMessage = `internal=${internalOk}`;
-            const delay = Math.min(500 * Math.pow(1.5, attempt), 5000);
+            lastErrorMessage = `internal (${urls.internalUrl}): ${internalCheck.error || 'failed'} | backend (${urls.backendUrl}): ${backendCheck.error || 'failed'}`;
+            const delay = Math.min(500 * Math.pow(1.5, attempt), 3000);
             await new Promise((resolve) => setTimeout(resolve, delay));
         }
         const state = await this.inspectContainerState(containerId);
@@ -423,20 +433,23 @@ class LibsqlRuntimeService {
             .join(' | ');
         throw new Error(`Timed out waiting for libSQL to accept connections${suffix ? `: ${suffix}` : ''}`);
     }
-    async canConnect(url, authToken) {
+    async checkConnection(url, authToken) {
+        if (!url)
+            return { ok: false, error: 'Empty URL' };
         try {
             const client = await Promise.resolve().then(() => __importStar(require('@libsql/client'))).then(({ createClient }) => createClient({ url, authToken }));
             try {
                 await client.execute('SELECT 1');
-                return true;
+                return { ok: true };
             }
             finally {
                 client.close();
             }
         }
         catch (err) {
-            console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${err?.message || err}`);
-            return false;
+            const errMsg = err?.message || String(err);
+            console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${errMsg}`);
+            return { ok: false, error: errMsg };
         }
     }
     getRuntimeErrorMessage(error) {
@@ -531,7 +544,7 @@ class LibsqlRuntimeService {
     async cleanupPaths(paths, ignoreMissing) {
         for (const filePath of paths) {
             try {
-                await fs_1.default.promises.rm(filePath, { force: ignoreMissing });
+                await fs_1.default.promises.rm(filePath, { recursive: true, force: ignoreMissing });
             }
             catch {
                 // Best effort cleanup.

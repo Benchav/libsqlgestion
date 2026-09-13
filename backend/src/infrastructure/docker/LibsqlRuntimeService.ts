@@ -163,6 +163,7 @@ export class LibsqlRuntimeService {
     }
     if (runtime?.databasePath) {
       fileCandidates.add(runtime.databasePath);
+      fileCandidates.add(this.resolveDatabaseRootDir(runtime.databasePath));
     }
 
     await this.cleanupPaths([...fileCandidates], true);
@@ -266,7 +267,7 @@ export class LibsqlRuntimeService {
 
   private generateAuthBundle() {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-    const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+    const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString().trim() + '\n';
     const issuedAt = Math.floor(Date.now() / 1000);
     const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
     const payload = {
@@ -324,12 +325,21 @@ export class LibsqlRuntimeService {
     }
   }
 
-  private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
-    const dbDirName = path.dirname(databasePath);
-    const databaseDir = path.basename(dbDirName) || 'data';
-    const hostDirName = await this.resolveHostPath(dbDirName);
+  private resolveDatabaseRootDir(databasePath: string): string {
+    const normalized = path.normalize(databasePath);
+    const parts = normalized.split(path.sep);
+    const dbsIndex = parts.lastIndexOf('dbs');
+    if (dbsIndex !== -1) {
+      return parts.slice(0, dbsIndex).join(path.sep);
+    }
+    return path.dirname(databasePath);
+  }
 
-    const authPemPath = path.join(dbDirName, 'auth.pem');
+  private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
+    const dbRootDir = this.resolveDatabaseRootDir(databasePath);
+    const hostDirName = await this.resolveHostPath(dbRootDir);
+
+    const authPemPath = path.join(dbRootDir, 'auth.pem');
     await fs.promises.writeFile(authPemPath, authKeyPem, 'utf8');
 
     const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
@@ -427,26 +437,28 @@ export class LibsqlRuntimeService {
         throw new Error(`libSQL container stopped unexpectedly with exit code ${state.exitCode ?? 'unknown'}${logs ? `: ${logs}` : ''}`);
       }
 
-      const internalOk = await this.canConnect(urls.internalUrl, token);
-      if (internalOk) {
-        const backendOk = await this.canConnect(urls.backendUrl, token);
-        const publicChecked = urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl;
-        const publicOk = publicChecked ? await this.canConnect(urls.publicUrl, token) : backendOk || internalOk;
+      const internalCheck = await this.checkConnection(urls.internalUrl, token);
+      const backendCheck = await this.checkConnection(urls.backendUrl, token);
+
+      if (internalCheck.ok || backendCheck.ok) {
+        const chosenUrl = internalCheck.ok ? urls.internalUrl : urls.backendUrl;
+        const publicChecked = Boolean(urls.publicUrl && urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl);
+        const publicCheck = publicChecked ? await this.checkConnection(urls.publicUrl, token) : { ok: backendCheck.ok || internalCheck.ok };
 
         return {
-          connectionUrl: urls.internalUrl,
+          connectionUrl: chosenUrl,
           routeHealth: {
             checkedAt: new Date().toISOString(),
-            internalOk,
-            backendOk,
-            publicOk,
+            internalOk: internalCheck.ok,
+            backendOk: backendCheck.ok,
+            publicOk: publicCheck.ok,
             publicChecked,
           },
         };
       }
 
-      lastErrorMessage = `internal=${internalOk}`;
-      const delay = Math.min(500 * Math.pow(1.5, attempt), 5000);
+      lastErrorMessage = `internal (${urls.internalUrl}): ${internalCheck.error || 'failed'} | backend (${urls.backendUrl}): ${backendCheck.error || 'failed'}`;
+      const delay = Math.min(500 * Math.pow(1.5, attempt), 3000);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
@@ -459,18 +471,20 @@ export class LibsqlRuntimeService {
     throw new Error(`Timed out waiting for libSQL to accept connections${suffix ? `: ${suffix}` : ''}`);
   }
 
-  private async canConnect(url: string, authToken: string) {
+  private async checkConnection(url: string, authToken: string): Promise<{ ok: boolean; error?: string }> {
+    if (!url) return { ok: false, error: 'Empty URL' };
     try {
       const client = await import('@libsql/client').then(({ createClient }) => createClient({ url, authToken }));
       try {
         await client.execute('SELECT 1');
-        return true;
+        return { ok: true };
       } finally {
         client.close();
       }
     } catch (err: any) {
-      console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${err?.message || err}`);
-      return false;
+      const errMsg = err?.message || String(err);
+      console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${errMsg}`);
+      return { ok: false, error: errMsg };
     }
   }
 
@@ -577,7 +591,7 @@ export class LibsqlRuntimeService {
   private async cleanupPaths(paths: string[], ignoreMissing: boolean) {
     for (const filePath of paths) {
       try {
-        await fs.promises.rm(filePath, { force: ignoreMissing });
+        await fs.promises.rm(filePath, { recursive: true, force: ignoreMissing });
       } catch {
         // Best effort cleanup.
       }

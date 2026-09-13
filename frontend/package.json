@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && next build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",

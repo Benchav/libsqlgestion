@@ -1,0 +1,21 @@
+{
+  "name": "libsqlite-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plataforma self-hosted tipo Turso para SQLite y libSQL con panel administrativo y subdominios dedicados",
+  "scripts": {
+    "test": "node scripts/run-all-tests.mjs",
+    "test:backend": "npm --prefix backend test",
+    "test:frontend": "npm --prefix frontend test",
+    "test:runtime": "npm --prefix backend run test:runtime",
+    "test:urls": "npm --prefix backend run test:urls",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build"
+  },
+  "keywords": [
+    "sqlite",
+    "libsql",
+    "turso",
+    "database-management"
+  ],
+  "license": "MIT"
+}

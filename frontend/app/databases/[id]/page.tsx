@@ -79,6 +79,14 @@ export default function DatabaseDetailPage() {
     if (id) loadDatabase();
   }, [id]);
 
+  useEffect(() => {
+    if (!database || database.status !== 'provisioning') return;
+    const interval = setInterval(() => {
+      loadDatabase();
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [id, database?.status]);
+
   async function handleTestConnection() {
     setTestStatus('testing');
     try {
@@ -283,6 +291,36 @@ export default function DatabaseDetailPage() {
         {error && (
           <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {Boolean(database?.metadata?.runtimeError) && (
+          <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm flex flex-col gap-2">
+            <div className="flex items-center gap-2 font-medium text-red-300">
+              <XCircle size={18} />
+              <span>Runtime Provisioning Error</span>
+            </div>
+            <code className="text-xs bg-black/40 p-2.5 rounded-lg border border-red-500/20 break-all font-mono text-red-300">
+              {String(database?.metadata?.runtimeError)}
+            </code>
+            <p className="text-xs text-zinc-400">
+              The container failed to initialize or accept queries. Check container logs or test connection again.
+            </p>
+          </div>
+        )}
+
+        {database?.status === 'provisioning' && (
+          <div className="mb-6 bg-blue-500/10 border border-blue-500/20 text-blue-300 p-4 rounded-xl text-sm flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <RefreshCw size={18} className="animate-spin text-blue-400" />
+              <div>
+                <p className="font-medium text-blue-200">Provisioning in Progress</p>
+                <p className="text-xs text-blue-400/80 mt-0.5">Spawning isolated libSQL Docker container and verifying route health...</p>
+              </div>
+            </div>
+            <span className="text-xs px-2.5 py-1 rounded bg-blue-500/20 border border-blue-500/30 text-blue-200 animate-pulse font-mono">
+              polling active
+            </span>
           </div>
         )}
 

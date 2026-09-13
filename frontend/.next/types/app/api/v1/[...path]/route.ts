@@ -1,4 +1,4 @@
-// File: C:\Users\joshu\Downloads\libsqlite\frontend\app\api\v1\[...path]\route.ts
+// File: C:\Users\joshu\Downloads\Otros\libsqlite\frontend\app\api\v1\[...path]\route.ts
 import * as entry from '../../../../../../app/api/v1/[...path]/route.js'
 import type { NextRequest } from 'next/server.js'
 

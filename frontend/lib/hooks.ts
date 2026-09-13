@@ -111,6 +111,13 @@ export function useDatabases() {
       const result = await apiRequest<{ databases: DatabaseInfo[] }>('/databases');
       return result.databases;
     },
+    refetchInterval: (query) => {
+      const list = query.state.data;
+      if (Array.isArray(list) && list.some((d) => d.status === 'provisioning')) {
+        return 2500;
+      }
+      return false;
+    },
   });
 }
 
@@ -122,6 +129,13 @@ export function useDatabase(id: string | undefined) {
       return result.database;
     },
     enabled: Boolean(id),
+    refetchInterval: (query) => {
+      const db = query.state.data;
+      if (db?.status === 'provisioning') {
+        return 2500;
+      }
+      return false;
+    },
   });
 }
 

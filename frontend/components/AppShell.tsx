@@ -178,6 +178,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const router = useRouter();
+  const pathname = usePathname();
+  const isStudio = pathname?.includes('/studio');
 
   if (loading) {
     return (
@@ -212,7 +214,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col h-full min-w-0">
         <TopBar isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} />
         
-        <main className="flex-1 overflow-auto relative custom-scrollbar">
+        <main className={`flex-1 min-h-0 relative custom-scrollbar ${isStudio ? 'overflow-hidden' : 'overflow-auto'}`}>
           {children}
         </main>
       </div>

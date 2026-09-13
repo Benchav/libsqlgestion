@@ -139,9 +139,9 @@ export function DataGrid({
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a] text-[13px]">
+    <div className="flex-1 flex flex-col min-h-0 bg-[#0a0a0a] text-[13px] overflow-hidden">
       {/* Studio Toolbar (Top) */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/80 bg-[#09090b]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/80 bg-[#09090b] flex-shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <LayoutGrid size={16} className="text-zinc-200" />
@@ -204,7 +204,7 @@ export function DataGrid({
       </div>
 
       {/* Grid Area */}
-      <div className="flex-1 overflow-auto custom-scrollbar relative">
+      <div className="flex-1 min-h-0 overflow-auto custom-scrollbar relative">
         <table className="min-w-max w-full text-left border-collapse whitespace-nowrap table-auto">
           <thead className="sticky top-0 z-10 bg-[#09090b]">
             <tr>

@@ -627,7 +627,7 @@ export default function StudioPage() {
 
   return (
     <AppShell>
-      <div className="flex flex-col h-full bg-[#0a0a0a] text-zinc-300">
+      <div className="flex flex-col h-full bg-[#0a0a0a] text-zinc-300 overflow-hidden">
         {/* Topbar for Studio */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/80 bg-[#09090b] text-sm flex-shrink-0 z-20">
           <div className="flex items-center text-zinc-400">
@@ -651,7 +651,7 @@ export default function StudioPage() {
           </div>
         )}
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex min-h-0 overflow-hidden">
           <TableSidebar
             tables={visibleSchemas.map((t) => ({ table: t.table, kind: t.kind, rowCount: t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
@@ -665,9 +665,9 @@ export default function StudioPage() {
             loading={schemaLoading}
           />
 
-          <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a]">
-            {activeTable && currentTableSchema && (
-              <div className="flex items-center justify-between border-b border-zinc-800/80 bg-[#09090b] px-4 py-3">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0a0a0a] overflow-hidden">
+            {activeTab === 'data' && activeTable && currentTableSchema && (
+              <div className="flex items-center justify-between border-b border-zinc-800/80 bg-[#09090b] px-4 py-3 flex-shrink-0">
                 <div>
                   <div className="text-xs uppercase tracking-wider text-zinc-500">Selected table</div>
                   <div className="text-sm font-medium text-zinc-100">{activeTable}</div>
@@ -698,8 +698,8 @@ export default function StudioPage() {
               </div>
             )}
 
-            {activeTable && currentTableSchema && (
-              <div className="border-b border-zinc-800/80 bg-[#0b0b0d] px-4 py-3">
+            {activeTab === 'data' && activeTable && currentTableSchema && (
+              <div className="border-b border-zinc-800/80 bg-[#0b0b0d] px-4 py-3 flex-shrink-0 max-h-40 overflow-y-auto custom-scrollbar">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <div className="text-xs uppercase tracking-wider text-zinc-500">Columns</div>
@@ -757,7 +757,7 @@ export default function StudioPage() {
                 onRowMenu={(rowIndex, event) => openContextMenu(event.clientX, event.clientY, { type: 'row', rowIndex })}
               />
             ) : activeTab === 'data' && !activeTable ? (
-              <div className="h-full flex items-center justify-center text-zinc-500 text-sm">
+              <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
                 Select a table from the sidebar to view data.
               </div>
             ) : activeTab === 'sql' ? (

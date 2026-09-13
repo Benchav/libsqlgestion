@@ -33,8 +33,8 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
   }, [sql]);
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a] text-[13px]">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/80 bg-[#09090b]">
+    <div className="flex-1 flex flex-col min-h-0 bg-[#0a0a0a] text-[13px] overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/80 bg-[#09090b] flex-shrink-0">
         <div className="flex items-center gap-2">
           <Database size={16} className="text-zinc-400" />
           <span className="font-semibold text-zinc-100">SQL console</span>
@@ -53,7 +53,7 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
         </div>
       </div>
 
-      <div className="p-4 border-b border-zinc-800/80 bg-[#09090b]">
+      <div className="p-4 border-b border-zinc-800/80 bg-[#09090b] flex-shrink-0">
         <textarea
           ref={textareaRef}
           className="w-full bg-[#18181b] border border-zinc-800 rounded-lg p-3 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors custom-scrollbar resize-none"
@@ -72,7 +72,7 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
       </div>
 
       {/* Results */}
-      <div className="flex-1 overflow-auto custom-scrollbar p-4 relative bg-[#0a0a0a]">
+      <div className="flex-1 min-h-0 overflow-auto custom-scrollbar p-4 relative bg-[#0a0a0a]">
         {loading ? (
           <div className="animate-fadeIn space-y-3">
             <div className="flex items-center gap-2 mb-3">

@@ -12,7 +12,7 @@ Diseñar una plataforma autoalojada para administrar múltiples bases de datos d
 6. Ejecutarse en servidor local, VPS o Coolify.
 
 El objetivo es tener una alternativa privada a Turso, pero bajo control total del usuario.
-
+ 
 ## 2. Alcance
 
 ### 2.1 Incluye

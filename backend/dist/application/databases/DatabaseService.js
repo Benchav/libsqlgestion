@@ -165,6 +165,9 @@ class DatabaseService {
         const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
         if (!database)
             throw new Error('database not found');
+        if (database.status === 'provisioning') {
+            throw new Error('Cannot rotate token while database is provisioning');
+        }
         ConnectionPool_1.ConnectionPool.getInstance().evict(id);
         if (this.isManagedRuntimeEntry(database)) {
             const runtime = await this.runtimeService.rotateDatabase(database);
@@ -187,6 +190,13 @@ class DatabaseService {
         const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
         if (!database)
             throw new Error('database not found');
+        if (database.status === 'provisioning') {
+            return { ok: false, details: 'Database is still provisioning. Please wait a moment and try again.' };
+        }
+        if (database.status === 'error') {
+            const errorMsg = database.metadata?.runtimeError || 'Database runtime is in an error state.';
+            return { ok: false, details: `Database runtime error: ${errorMsg}` };
+        }
         const runtimeUrl = getManagedRuntimeUrl(database);
         if (runtimeUrl && database.encryptedToken) {
             const token = (0, crypto_1.decrypt)(database.encryptedToken);
@@ -364,13 +374,20 @@ class DatabaseService {
             });
         }
         catch (error) {
+            const errorMessage = this.runtimeService.getRuntimeErrorMessage(error);
             database.status = 'error';
             database.metadata = {
                 ...(database.metadata ?? {}),
-                runtimeError: this.runtimeService.getRuntimeErrorMessage(error),
+                runtimeError: errorMessage,
                 lastProvisioningAttemptAt: new Date().toISOString(),
             };
             await this.databaseRepo.save(database);
+            await this.auditService.record({
+                action: 'database.provision_failed',
+                resourceType: 'database',
+                resourceId: database.id,
+                metadata: { ...auditMetadata, error: errorMessage },
+            });
         }
     }
     async cleanupCreatedDatabase(databaseId, extraPaths = [], runtimeMetadata) {

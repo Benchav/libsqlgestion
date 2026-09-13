@@ -179,6 +179,10 @@ export class DatabaseService {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
 
+    if (database.status === 'provisioning') {
+      throw new Error('Cannot rotate token while database is provisioning');
+    }
+
     ConnectionPool.getInstance().evict(id);
 
     if (this.isManagedRuntimeEntry(database)) {
@@ -204,6 +208,16 @@ export class DatabaseService {
   async testConnection(id: string) {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
+
+    if (database.status === 'provisioning') {
+      return { ok: false, details: 'Database is still provisioning. Please wait a moment and try again.' };
+    }
+
+    if (database.status === 'error') {
+      const errorMsg = (database.metadata as any)?.runtimeError || 'Database runtime is in an error state.';
+      return { ok: false, details: `Database runtime error: ${errorMsg}` };
+    }
+
     const runtimeUrl = getManagedRuntimeUrl(database);
 
     if (runtimeUrl && database.encryptedToken) {
@@ -396,13 +410,20 @@ export class DatabaseService {
         metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned: true },
       });
     } catch (error) {
+      const errorMessage = this.runtimeService.getRuntimeErrorMessage(error);
       database.status = 'error';
       database.metadata = {
         ...(database.metadata ?? {}),
-        runtimeError: this.runtimeService.getRuntimeErrorMessage(error),
+        runtimeError: errorMessage,
         lastProvisioningAttemptAt: new Date().toISOString(),
       };
       await this.databaseRepo.save(database);
+      await this.auditService.record({
+        action: 'database.provision_failed',
+        resourceType: 'database',
+        resourceId: database.id,
+        metadata: { ...auditMetadata, error: errorMessage },
+      });
     }
   }
 

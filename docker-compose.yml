@@ -9,7 +9,7 @@ services:
     environment:
       PORT: '5000'
       DATABASE_FILE: /app/data/control.db
-      CORS_ORIGIN: http://localhost:3001
+      CORS_ORIGIN: http://localhost:5001
       SQLITE_STORAGE_ROOT: /app/data/sqlite
       SQLITE_DISCOVERY_PATH: /app/data/sqlite
       SQLITE_DISCOVERY_ADOPT: 'false'

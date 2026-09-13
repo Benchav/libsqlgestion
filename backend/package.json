@@ -8,7 +8,8 @@
     "start": "node dist/main.js",
     "test": "npm run build && node --test test/*.test.js",
     "smoke": "npm run build && node scripts/smoke.js",
-    "test:runtime": "npm run build && node scripts/smoke-test-runtime.mjs"
+    "test:runtime": "npm run build && node scripts/smoke-test-runtime.mjs",
+    "test:urls": "node scripts/test-public-and-local-urls.mjs"
   },
   "dependencies": {
     "@fastify/compress": "^7.0.3",

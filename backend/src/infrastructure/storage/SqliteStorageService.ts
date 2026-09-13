@@ -16,9 +16,13 @@ export class SqliteStorageService {
 
   managedDatabasePath(projectId: string, databaseId: string, type?: string) {
     if (type === 'libsql') {
-      return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'data');
+      return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'dbs', 'default', 'data');
     }
     return path.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
+  }
+
+  managedDatabaseDirectory(projectId: string, databaseId: string) {
+    return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId);
   }
 
   managedProjectDirectory(projectId: string) {
@@ -28,6 +32,15 @@ export class SqliteStorageService {
   async ensureManagedDatabaseFile(projectId: string, databaseId: string, type?: string) {
     const filePath = this.managedDatabasePath(projectId, databaseId, type);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+    // Handle legacy migration if a flat file exists at .../databases/<databaseId>/data
+    if (type === 'libsql') {
+      const legacyFlatPath = path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'data');
+      if (fs.existsSync(legacyFlatPath) && fs.statSync(legacyFlatPath).isFile() && !fs.existsSync(filePath)) {
+        fs.renameSync(legacyFlatPath, filePath);
+      }
+    }
+
     // Do NOT create an empty file for libsql — sqld will create a valid SQLite database
     // on first start if the file doesn't exist. A 0-byte file would be treated
     // as corrupt and cause the container to crash.

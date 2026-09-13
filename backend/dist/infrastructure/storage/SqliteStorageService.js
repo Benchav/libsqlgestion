@@ -17,9 +17,12 @@ class SqliteStorageService {
     }
     managedDatabasePath(projectId, databaseId, type) {
         if (type === 'libsql') {
-            return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'data');
+            return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'dbs', 'default', 'data');
         }
         return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
+    }
+    managedDatabaseDirectory(projectId, databaseId) {
+        return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', databaseId);
     }
     managedProjectDirectory(projectId) {
         return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases');
@@ -27,6 +30,13 @@ class SqliteStorageService {
     async ensureManagedDatabaseFile(projectId, databaseId, type) {
         const filePath = this.managedDatabasePath(projectId, databaseId, type);
         fs_1.default.mkdirSync(path_1.default.dirname(filePath), { recursive: true });
+        // Handle legacy migration if a flat file exists at .../databases/<databaseId>/data
+        if (type === 'libsql') {
+            const legacyFlatPath = path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', databaseId, 'data');
+            if (fs_1.default.existsSync(legacyFlatPath) && fs_1.default.statSync(legacyFlatPath).isFile() && !fs_1.default.existsSync(filePath)) {
+                fs_1.default.renameSync(legacyFlatPath, filePath);
+            }
+        }
         // Do NOT create an empty file for libsql — sqld will create a valid SQLite database
         // on first start if the file doesn't exist. A 0-byte file would be treated
         // as corrupt and cause the container to crash.

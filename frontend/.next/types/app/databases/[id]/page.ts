@@ -1,4 +1,4 @@
-// File: C:\Users\joshu\Downloads\Otros\libsqlite\frontend\app\databases\[id]\page.tsx
+// File: /home/jb/libsqlgestion/frontend/app/databases/[id]/page.tsx
 import * as entry from '../../../../../app/databases/[id]/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

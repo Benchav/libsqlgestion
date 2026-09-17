@@ -1,6 +1,11 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConnectionPool = void 0;
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 const SqliteClient_1 = require("../sqlite/SqliteClient");
 const LibsqlClient_1 = require("../libsql/LibsqlClient");
 const crypto_1 = require("../crypto");
@@ -72,9 +77,17 @@ class ConnectionPool {
     createClient(database) {
         const effectiveType = (0, database_runtime_1.resolveEffectiveDatabaseType)(database);
         if (effectiveType === 'sqlite') {
-            const filePath = database.url || '';
-            if (!filePath) {
-                throw new Error(`Database ${database.id} has no file path configured`);
+            let filePath = database.url || '';
+            if (!filePath || !fs_1.default.existsSync(filePath)) {
+                const managed = database.project?.id
+                    ? path_1.default.join(process.cwd(), 'data', 'sqlite', 'projects', database.project.id, 'databases', `${database.id}.db`)
+                    : '';
+                if (managed && fs_1.default.existsSync(managed)) {
+                    filePath = managed;
+                }
+            }
+            if (!filePath || !fs_1.default.existsSync(filePath)) {
+                throw new Error(`Database ${database.id} has no valid file path configured on disk`);
             }
             const client = new SqliteClient_1.SqliteClient(filePath);
             return { client, type: 'sqlite', lastUsed: Date.now() };

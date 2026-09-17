@@ -7,6 +7,7 @@ import { securityPlugin } from './presentation/http/plugins/security';
 import { parseCookies } from './infrastructure/security/cookies';
 import { requireCsrf } from './presentation/http/csrf';
 import { ValidationError } from './types/validations';
+import { getUserRoles } from './application/auth/authorization';
 
 export function buildServer() {
   const app = fastify({ logger: true, trustProxy: true });
@@ -40,7 +41,8 @@ export function buildServer() {
       return reply.code(401).send({ error: 'invalid or expired token' });
     }
 
-    request.user = { sub: user.id, email: user.email };
+    const roles = await getUserRoles(user.id);
+    request.user = { sub: user.id, email: user.email, roles };
   });
 
   app.setErrorHandler((error, _request, reply) => {

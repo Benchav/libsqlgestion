@@ -120,11 +120,9 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
 
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {
       clearSession();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+      window.location.href = '/login';
     }
     const text = await response.text().catch(() => '');
     let payload: unknown = text;

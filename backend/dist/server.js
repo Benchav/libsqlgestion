@@ -13,6 +13,7 @@ const security_1 = require("./presentation/http/plugins/security");
 const cookies_1 = require("./infrastructure/security/cookies");
 const csrf_1 = require("./presentation/http/csrf");
 const validations_1 = require("./types/validations");
+const authorization_1 = require("./application/auth/authorization");
 function buildServer() {
     const app = (0, fastify_1.default)({ logger: true, trustProxy: true });
     const authService = new AuthService_1.AuthService();
@@ -41,7 +42,8 @@ function buildServer() {
         if (!user) {
             return reply.code(401).send({ error: 'invalid or expired token' });
         }
-        request.user = { sub: user.id, email: user.email };
+        const roles = await (0, authorization_1.getUserRoles)(user.id);
+        request.user = { sub: user.id, email: user.email, roles };
     });
     app.setErrorHandler((error, _request, reply) => {
         if (error instanceof validations_1.ValidationError) {

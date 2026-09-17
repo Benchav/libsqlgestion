@@ -40,6 +40,9 @@ export class AuthService {
   }
 
   private async resolveDefaultRoleName() {
+    if (process.env.DEFAULT_USER_ROLE) {
+      return process.env.DEFAULT_USER_ROLE;
+    }
     const adminRole = await this.roleRepo.findOneBy({ name: 'admin' });
     const superadminRole = await this.roleRepo.findOneBy({ name: 'superadmin' });
     const adminCount = adminRole ? await this.userRoleRepo.count({ where: { role: { id: adminRole.id } } }) : 0;

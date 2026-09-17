@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "Plataforma self-hosted tipo Turso para SQLite y libSQL con panel administrativo y subdominios dedicados",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
     "test": "node scripts/run-all-tests.mjs",
     "test:backend": "npm --prefix backend test",

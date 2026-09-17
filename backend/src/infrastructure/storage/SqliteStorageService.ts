@@ -21,6 +21,11 @@ export class SqliteStorageService {
     return path.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
   }
 
+  namespaceDatabasePath(namespace: string) {
+    const sqldRoot = process.env.SQLD_DATA_DIR || path.join(process.cwd(), 'data', 'sqld');
+    return path.join(sqldRoot, 'data', 'dbs', namespace, 'data');
+  }
+
   managedDatabaseDirectory(projectId: string, databaseId: string) {
     return path.join(this.storageRoot, 'projects', projectId, 'databases', databaseId);
   }
@@ -61,6 +66,31 @@ export class SqliteStorageService {
       // Create a consistent snapshot from the live SQLite database.
       // This captures committed WAL contents as seen by SQLite and avoids
       // importing a stale/blank main database file from ERP workloads.
+      const client = new SqliteClient(sourcePath);
+      try {
+        await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
+      } finally {
+        await client.close();
+      }
+
+      await fsp.rm(targetPath, { force: true }).catch(() => undefined);
+      await fsp.rename(tempTargetPath, targetPath);
+    } catch (error) {
+      await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+
+    return targetPath;
+  }
+
+  async importToNamespace(sourcePath: string, namespace: string) {
+    const targetPath = this.namespaceDatabasePath(namespace);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
+    const tempTargetPath = `${targetPath}.import-${Date.now()}.tmp`;
+    await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
+
+    try {
       const client = new SqliteClient(sourcePath);
       try {
         await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);

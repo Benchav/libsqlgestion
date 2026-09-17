@@ -36,7 +36,8 @@ async function ensureProjectAccess(request, reply, projectId) {
     }
     const isOwner = project.owner?.id === user.sub;
     const isMember = project.members?.some((member) => member.user?.id === user.sub);
-    if (!isOwner && !isMember) {
+    const isAdmin = user.roles?.includes('admin') || user.roles?.includes('superadmin') || (await (0, authorization_1.userIsAdmin)(user.sub));
+    if (!isOwner && !isMember && !isAdmin) {
         reply.code(403).send({ error: 'forbidden' });
         return null;
     }
@@ -59,7 +60,8 @@ async function ensureDatabaseAccess(request, reply, databaseId) {
     const project = database.project;
     const isOwner = project?.owner?.id === user.sub;
     const isMember = project?.members?.some((member) => member.user?.id === user.sub);
-    if (!isOwner && !isMember) {
+    const isAdmin = user.roles?.includes('admin') || user.roles?.includes('superadmin') || (await (0, authorization_1.userIsAdmin)(user.sub));
+    if (!isOwner && !isMember && !isAdmin) {
         reply.code(403).send({ error: 'forbidden' });
         return null;
     }

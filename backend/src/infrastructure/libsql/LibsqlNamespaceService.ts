@@ -77,6 +77,29 @@ export class LibsqlNamespaceService {
     return `${signingInput}.${this.base64UrlEncode(signature)}`;
   }
 
+  verifyToken(token: string): { ns: string; a?: string; exp?: number } | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const [headerB64, payloadB64, sigB64] = parts;
+      const signingInput = `${headerB64}.${payloadB64}`;
+      const signature = Buffer.from(sigB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+      const { publicKeyPem } = this.ensureAuthKeys();
+      const publicKey = crypto.createPublicKey(publicKeyPem);
+      const isValid = crypto.verify(null, Buffer.from(signingInput), publicKey, signature);
+      if (!isValid) return null;
+
+      const payloadJson = Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+      const payload = JSON.parse(payloadJson);
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.exp && payload.exp < now) return null;
+      if (payload.nbf && payload.nbf > now) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
       const url = new URL('/health', this.adminUrl);

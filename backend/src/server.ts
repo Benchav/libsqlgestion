@@ -10,7 +10,7 @@ import { ValidationError } from './types/validations';
 import { getUserRoles } from './application/auth/authorization';
 
 export function buildServer() {
-  const app = fastify({ logger: true, trustProxy: true });
+  const app = fastify({ logger: true, trustProxy: true, ignoreTrailingSlash: true });
   const authService = new AuthService();
 
   app.register(compress, { global: true });

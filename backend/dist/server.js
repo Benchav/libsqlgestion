@@ -15,7 +15,7 @@ const csrf_1 = require("./presentation/http/csrf");
 const validations_1 = require("./types/validations");
 const authorization_1 = require("./application/auth/authorization");
 function buildServer() {
-    const app = (0, fastify_1.default)({ logger: true, trustProxy: true });
+    const app = (0, fastify_1.default)({ logger: true, trustProxy: true, ignoreTrailingSlash: true });
     const authService = new AuthService_1.AuthService();
     app.register(compress_1.default, { global: true });
     app.register(multipart_1.default, {

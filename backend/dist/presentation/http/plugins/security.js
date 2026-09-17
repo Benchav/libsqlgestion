@@ -28,7 +28,7 @@ async function securityPlugin(app) {
             reply.header('Access-Control-Allow-Origin', origin);
             reply.header('Vary', 'Origin');
             reply.header('Access-Control-Allow-Credentials', 'true');
-            reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token');
+            reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token, X-CSRF-Token-V2, X-Database-ID');
             reply.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
         }
         if (request.method === 'OPTIONS') {

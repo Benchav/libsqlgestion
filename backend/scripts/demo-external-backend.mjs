@@ -8,6 +8,7 @@
  * ❌ Cero accesos directos a archivos o SQLite local (sin file:...)
  * ✔ Conexión remota por HTTP / Protocolo Hrana Pipeline (/v2/pipeline)
  * ✔ Autenticación estricta con Bearer Auth Token
+ * ✔ Base de datos visible en el panel: `backend-externo-demo`
  * ✔ Simulación de microservicio con operaciones CRUD completas:
  *     - POST   /api/v1/productos
  *     - GET    /api/v1/productos
@@ -15,6 +16,7 @@
  *     - PUT    /api/v1/productos/:id
  *     - DELETE /api/v1/productos/:id
  * ✔ Prueba de Batch / Transacciones remotas
+ * ✔ Persistencia visible en el Studio de la interfaz web
  */
 
 import http from 'http';
@@ -32,24 +34,43 @@ const c = {
   red: '\x1b[31m',
 };
 
-// 1. Parámetros de Conexión Remota a LibSQLGestion
-const DATABASE_ID = process.env.DATABASE_ID || 'cd8c493d-44f1-461e-948e-67463694ec9a';
+// 1. Parámetros de Conexión Remota a la Base de Datos en LibSQLGestion
+// Base de datos dedicada: backend-externo-demo (visible en el panel web)
+const DATABASE_ID = process.argv[2] || process.env.DATABASE_ID || '3140d679-18a4-493d-9f43-fb29f766e24b';
 const BACKEND_BASE = process.env.LIBSQLGESTION_URL || 'http://127.0.0.1:3000';
 const DATABASE_URL = `${BACKEND_BASE}/api/v1/databases/${DATABASE_ID}/`;
-const DATABASE_AUTH_TOKEN = process.env.DATABASE_AUTH_TOKEN || '603bd05b3fe99651c2a8924e0eded07a863943de3f73e9a5add79b2d0e433709';
+const DATABASE_AUTH_TOKEN = process.argv[3] || process.env.DATABASE_AUTH_TOKEN || 'ce3249f93097bacb0fd9092c314679ffc3bffdc6eda920460a38339b4d6330f5';
 
 console.log(`\n${c.cyan}========================================================================${c.reset}`);
 console.log(`${c.bright}${c.green}  PRUEBA E2E: CONEXIÓN REMOTA VÍA TOKEN Y URL (ESTILO TURSO WEB)         ${c.reset}`);
 console.log(`${c.cyan}========================================================================${c.reset}`);
-console.log(`URL de Conexión:    ${c.yellow}${DATABASE_URL}${c.reset}`);
-console.log(`Token Auth:         ${c.yellow}${DATABASE_AUTH_TOKEN.slice(0, 10)}...${DATABASE_AUTH_TOKEN.slice(-6)}${c.reset}`);
-console.log(`Cliente LibSQL:     ${c.cyan}@libsql/client (Driver oficial Turso / Protocolo Hrana)${c.reset}`);
+console.log(`Base de Datos Panel: ${c.bright}${c.yellow}backend-externo-demo${c.reset} (${DATABASE_ID})`);
+console.log(`URL Real:            ${c.yellow}${DATABASE_URL}${c.reset}`);
+console.log(`Token Real:          ${c.yellow}${DATABASE_AUTH_TOKEN}${c.reset}`);
+console.log(`Cliente LibSQL:      ${c.cyan}@libsql/client (Driver oficial Turso / Protocolo Hrana)${c.reset}`);
 console.log(`${c.cyan}------------------------------------------------------------------------${c.reset}\n`);
 
 // ---------------------------------------------------------------------
-// PASO 1: Validación de Seguridad - Rechazo de Token Inválido (401)
+// PASO 1: Conexión Inicial con Token Real y URL Real del Panel
 // ---------------------------------------------------------------------
-console.log(`${c.bright}🔒 PASO 1: Verificando seguridad de autenticación con Token Inválido...${c.reset}`);
+console.log(`${c.bright}🌐 PASO 1: Conectando con Token Real y URL Real de la Base de Datos...${c.reset}`);
+const dbClient = createClient({
+  url: DATABASE_URL,
+  authToken: DATABASE_AUTH_TOKEN,
+});
+
+// Probar handshake y consulta remota con el Token Real
+const pingT0 = performance.now();
+const pingRes = await dbClient.execute("SELECT datetime('now') as server_time, sqlite_version() as version;");
+const pingMs = (performance.now() - pingT0).toFixed(2);
+
+console.log(`   ${c.green}✔ Conexión Exitosa con Token Real en ${pingMs} ms${c.reset}`);
+console.log(`   Versión SQLite: ${c.cyan}${pingRes.rows[0].version}${c.reset} | Hora Servidor: ${c.cyan}${pingRes.rows[0].server_time}${c.reset}\n`);
+
+// ---------------------------------------------------------------------
+// PASO 2: Validación de Seguridad - Rechazo de Token Inválido (401)
+// ---------------------------------------------------------------------
+console.log(`${c.bright}🔒 PASO 2: Verificando que tokens falsos sean rechazados con 401 Unauthorized...${c.reset}`);
 const invalidClient = createClient({
   url: DATABASE_URL,
   authToken: 'token_falso_y_no_autorizado_xyz_123',
@@ -60,31 +81,16 @@ try {
   console.error(`${c.red}❌ ERROR DE SEGURIDAD: El servidor aceptó un token inválido.${c.reset}`);
   process.exit(1);
 } catch (err) {
-  console.log(`   ${c.green}✔ Correcto: Conexión rechazada con error de autenticación 401:${c.reset}`);
+  console.log(`   ${c.green}✔ Correcto: Rechazado con 401 Unauthorized al usar token no autorizado:${c.reset}`);
   console.log(`   ${c.yellow}${err.message}${c.reset}\n`);
 } finally {
   await invalidClient.close();
 }
 
 // ---------------------------------------------------------------------
-// PASO 2: Conexión con Token Válido y Creación Remota de Tablas
+// PASO 3: Inicialización y Creación de Tablas con el Cliente Autorizado
 // ---------------------------------------------------------------------
-console.log(`${c.bright}🌐 PASO 2: Conectando con Token y URL autorizados en LibSQLGestion...${c.reset}`);
-const dbClient = createClient({
-  url: DATABASE_URL,
-  authToken: DATABASE_AUTH_TOKEN,
-});
-
-// Probar handshake y consulta de prueba remota
-const pingT0 = performance.now();
-const pingRes = await dbClient.execute('SELECT datetime(\'now\') as server_time, sqlite_version() as version;');
-const pingMs = (performance.now() - pingT0).toFixed(2);
-
-console.log(`   ${c.green}✔ Conectado exitosamente por HTTP en ${pingMs} ms${c.reset}`);
-console.log(`   Versión del motor: ${c.cyan}${pingRes.rows[0].version}${c.reset} | Hora Servidor: ${c.cyan}${pingRes.rows[0].server_time}${c.reset}\n`);
-
-// Crear tabla de demostración
-console.log(`${c.bright}🛠  PASO 3: Creando tabla de demostración 'productos_demo' remotamente...${c.reset}`);
+console.log(`${c.bright}🛠  PASO 3: Inicializando tabla y datos en la base de datos remota...${c.reset}`);
 await dbClient.execute(`
   CREATE TABLE IF NOT EXISTS productos_demo (
     id TEXT PRIMARY KEY,
@@ -96,7 +102,17 @@ await dbClient.execute(`
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
-console.log(`   ${c.green}✔ Tabla 'productos_demo' verificada/creada en la base de datos remota.${c.reset}\n`);
+
+// Insertar datos de catálogo persistentes para que sean visibles en el Studio del panel web
+await dbClient.execute(`
+  INSERT OR IGNORE INTO productos_demo (id, nombre, precio, stock, categoria) VALUES
+    ('CAT-001', 'Pastel Red Velvet Imperial', 420.00, 15, 'Repostería Fina'),
+    ('CAT-002', 'Cheesecake de Maracuyá', 360.00, 20, 'Postres Fríos'),
+    ('CAT-003', 'Tiramisú Clásico Italiano', 390.00, 18, 'Cafetería Gourmet');
+`);
+
+const catalogCount = await dbClient.execute(`SELECT COUNT(*) as total FROM productos_demo;`);
+console.log(`   ${c.green}✔ Tabla 'productos_demo' lista con ${catalogCount.rows[0].total} registros disponibles en el panel web.${c.reset}\n`);
 
 // ---------------------------------------------------------------------
 // PASO 4: Servidor del Backend Externo (Simulando API REST de E-Commerce)
@@ -252,7 +268,7 @@ externalServer.listen(0, '127.0.0.1', async () => {
   console.log(`${c.bright}🚀 PASO 4: Servidor Backend Externo iniciado en ${c.green}${baseUrl}${c.reset}\n`);
 
   try {
-    // 1. [POST] Crear un nuevo producto
+    // 1. [POST] Crear un nuevo producto dinámico
     console.log(`${c.bright}▶ 1. [POST] Creando un nuevo producto a través del Backend Externo...${c.reset}`);
     const t0 = performance.now();
     const createRes = await fetch(`${baseUrl}/api/v1/productos`, {
@@ -281,7 +297,7 @@ externalServer.listen(0, '127.0.0.1', async () => {
     const tList = (performance.now() - t1).toFixed(2);
 
     console.log(`   ${c.green}✔ HTTP ${listRes.status} OK (${tList} ms)${c.reset}`);
-    console.log(`   Total de registros recuperados: ${c.cyan}${listData.total}${c.reset}\n`);
+    console.log(`   Total de registros en catálogo: ${c.cyan}${listData.total}${c.reset}\n`);
 
     // 3. [GET BY ID] Consultar producto por ID
     console.log(`${c.bright}▶ 3. [GET BY ID] Consultando producto individual por ID: ${c.cyan}${productId}${c.reset}...`);
@@ -314,8 +330,8 @@ externalServer.listen(0, '127.0.0.1', async () => {
     console.log(`   Nuevo Stock:   ${c.green}${updateData.data.stock}${c.reset} (Antes: 12)`);
     console.log(`   Nueva Categoría: ${c.green}${updateData.data.categoria}${c.reset}\n`);
 
-    // 5. [DELETE] Eliminar el producto
-    console.log(`${c.bright}▶ 5. [DELETE] Eliminando el producto de la base de datos...${c.reset}`);
+    // 5. [DELETE] Eliminar el producto de prueba dinámico
+    console.log(`${c.bright}▶ 5. [DELETE] Eliminando el producto dinámico de prueba...${c.reset}`);
     const t4 = performance.now();
     const delRes = await fetch(`${baseUrl}/api/v1/productos/${productId}`, {
       method: 'DELETE',
@@ -326,23 +342,23 @@ externalServer.listen(0, '127.0.0.1', async () => {
     console.log(`   ${c.green}✔ HTTP ${delRes.status} OK (${tDel} ms)${c.reset}`);
     console.log(`   Mensaje: ${delData.message}\n`);
 
-    // 6. [VERIFY 404] Confirmar eliminación física
-    console.log(`${c.bright}▶ 6. [VERIFY 404] Comprobando que el producto ya no existe en la base de datos...${c.reset}`);
+    // 6. [VERIFY 404] Confirmar eliminación física del producto dinámico
+    console.log(`${c.bright}▶ 6. [VERIFY 404] Comprobando que el producto de prueba ya no existe...${c.reset}`);
     const notFoundRes = await fetch(`${baseUrl}/api/v1/productos/${productId}`);
-    console.log(`   ${c.green}✔ HTTP ${notFoundRes.status} Not Found (Eliminación confirmada en BD remota)${c.reset}\n`);
+    console.log(`   ${c.green}✔ HTTP ${notFoundRes.status} Not Found (Eliminación confirmada en BD remota)\n`);
 
     // -----------------------------------------------------------------
     // PASO 6: Demostración de Batch Atómico Remoto (Transacciones LibSQL)
     // -----------------------------------------------------------------
-    console.log(`${c.bright}⚡ PASO 7: Probando BATCH Atómico Remoto mediante @libsql/client...${c.reset}`);
+    console.log(`${c.bright}⚡ PASO 6: Probando BATCH Atómico Remoto mediante @libsql/client...${c.reset}`);
     const batchT0 = performance.now();
     const batchResults = await dbClient.batch([
       {
-        sql: `INSERT INTO productos_demo (id, nombre, precio, stock, categoria) VALUES (?, ?, ?, ?, ?)`,
+        sql: `INSERT OR REPLACE INTO productos_demo (id, nombre, precio, stock, categoria) VALUES (?, ?, ?, ?, ?)`,
         args: ['BATCH-001', 'Galletas de Mantequilla Holandesa', 85.00, 50, 'Gourmet'],
       },
       {
-        sql: `INSERT INTO productos_demo (id, nombre, precio, stock, categoria) VALUES (?, ?, ?, ?, ?)`,
+        sql: `INSERT OR REPLACE INTO productos_demo (id, nombre, precio, stock, categoria) VALUES (?, ?, ?, ?, ?)`,
         args: ['BATCH-002', 'Croissant de Almendras Tostadas', 110.00, 30, 'Panadería'],
       },
       {
@@ -353,23 +369,28 @@ externalServer.listen(0, '127.0.0.1', async () => {
 
     const countRow = batchResults[2].rows[0];
     console.log(`   ${c.green}✔ Batch de 3 operaciones ejecutado exitosamente en ${batchMs} ms${c.reset}`);
-    console.log(`   Registros creados en la transacción: ${c.cyan}${countRow.total}${c.reset}\n`);
+    console.log(`   Registros batch persistidos: ${c.cyan}${countRow.total}${c.reset}\n`);
 
-    // Limpiar registros del batch
-    await dbClient.execute(`DELETE FROM productos_demo WHERE id LIKE 'BATCH-%'`);
+    // Comprobar total final de productos en la base de datos
+    const finalTotalRes = await dbClient.execute(`SELECT COUNT(*) as total FROM productos_demo;`);
+    const finalTotal = finalTotalRes.rows[0].total;
 
     // -----------------------------------------------------------------
     // RESUMEN FINAL
     // -----------------------------------------------------------------
     console.log(`${c.cyan}========================================================================${c.reset}`);
-    console.log(`${c.bright}${c.green}  🎉 TODAS LAS PRUEBAS COMPLETADAS CON ÉXITO ABSOLUTO                   ${c.reset}`);
+    console.log(`${c.bright}${c.green}  🎉 PRUEBAS COMPLETADAS CON ÉXITO Y PERSISTIDAS EN EL PANEL             ${c.reset}`);
     console.log(`${c.cyan}========================================================================${c.reset}`);
+    console.log(`• Base de Datos:         ${c.bright}${c.yellow}backend-externo-demo${c.reset} (${DATABASE_ID})`);
     console.log(`• Método de Conexión:    100% Remoto vía URL (${DATABASE_URL})`);
     console.log(`• Autenticación:         Bearer Token verificado por LibSQLGestion`);
     console.log(`• Seguridad Token:       Tokens inválidos rechazados con HTTP 401`);
-    console.log(`• Protocolo:             Turso Hrana Pipeline v2 (@libsql/client)`);
-    console.log(`• Operaciones CRUD:      POST, GET, GET by ID, PUT, DELETE, 404 (Aprobadas)`);
-    console.log(`• Batch Atómico:         Transacción de múltiples sentencias (Aprobada)`);
+    console.log(`• Total Filas en BD:     ${c.green}${finalTotal} productos almacenados permanentemente${c.reset}`);
+    console.log(`\n${c.magenta}💡 PARA VER LOS DATOS EN TU NAVEGADOR:${c.reset}`);
+    console.log(`   1. Abre el panel en: ${c.cyan}http://localhost:3001/databases${c.reset}`);
+    console.log(`   2. Verás la base de datos ${c.yellow}backend-externo-demo${c.reset} en estado ${c.green}active${c.reset}`);
+    console.log(`   3. Haz clic en ella y presiona el botón ${c.bright}${c.cyan}[Studio]${c.reset}`);
+    console.log(`   4. Ejecuta: ${c.yellow}SELECT * FROM productos_demo;${c.reset} para ver los registros insertados.`);
     console.log(`${c.cyan}========================================================================${c.reset}\n`);
 
   } catch (error) {

@@ -87,12 +87,14 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
   }
 
   if (runtimeProvider === 'local-file') {
+    const defaultApiBase = baseUrl || process.env.API_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const httpEndpoint = `${defaultApiBase.replace(/\/$/, '')}/api/v1/databases/${database.id}/`;
     return {
-      publicUrl: '',
-      publicHttpsUrl: '',
+      publicUrl: httpEndpoint,
+      publicHttpsUrl: httpEndpoint,
       publicLibsqlUrl: '',
       internalUrl: localUrl,
-      backendUrl: localUrl,
+      backendUrl: httpEndpoint,
     };
   }
 

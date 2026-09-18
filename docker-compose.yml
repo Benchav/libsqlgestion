@@ -8,8 +8,9 @@ services:
       - --admin-listen-addr=0.0.0.0:9090
       - --auth-jwt-key-file=/var/lib/sqld/auth.pem
       - --db-path=/var/lib/sqld/data
-    ports:
-      - '${SQLD_PORT_BIND:-8080}:8080'
+    expose:
+      - '8080'
+      - '9090'
     volumes:
       - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/var/lib/sqld
     restart: unless-stopped

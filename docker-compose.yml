@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   sqld:
     image: ${LIBSQL_SERVER_IMAGE:-ghcr.io/tursodatabase/libsql-server:latest}
@@ -11,9 +9,9 @@ services:
       - --auth-jwt-key-file=/var/lib/sqld/auth.pem
       - --db-path=/var/lib/sqld/data
     ports:
-      - '8080:8080'
+      - '${SQLD_PORT_BIND:-8080}:8080'
     volumes:
-      - ./backend/data/sqld:/var/lib/sqld
+      - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/var/lib/sqld
     restart: unless-stopped
     networks:
       - coolify
@@ -26,30 +24,31 @@ services:
     build:
       context: ./backend
     ports:
-      - '5000:5000'
+      - '${BACKEND_PORT_BIND:-5000}:5000'
     environment:
       PORT: '5000'
       DATABASE_FILE: /app/data/control.db
-      CORS_ORIGIN: http://localhost:5001
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5001}
       SQLITE_STORAGE_ROOT: /app/data/sqlite
       SQLITE_DISCOVERY_PATH: /app/data/sqlite
-      SQLITE_DISCOVERY_ADOPT: 'false'
-      DATABASE_PUBLIC_HOST: host.docker.internal
-      DATABASE_PUBLIC_PROTOCOL: http
+      SQLITE_DISCOVERY_ADOPT: ${SQLITE_DISCOVERY_ADOPT:-false}
+      DATABASE_PUBLIC_HOST: ${DATABASE_PUBLIC_HOST:-host.docker.internal}
+      DATABASE_PUBLIC_PROTOCOL: ${DATABASE_PUBLIC_PROTOCOL:-http}
+      DATABASE_PUBLIC_DOMAIN: ${DATABASE_PUBLIC_DOMAIN:-localhost}
       LIBSQL_ENABLE_NAMESPACES: 'true'
       LIBSQL_ADMIN_URL: http://sqld:9090
       LIBSQL_INTERNAL_URL: http://sqld:8080
       SQLD_DATA_DIR: /app/data/sqld
       LIBSQL_AUTH_DIR: /app/data/sqld
-      LIBSQL_SERVER_IMAGE: ghcr.io/tursodatabase/libsql-server:latest
+      LIBSQL_SERVER_IMAGE: ${LIBSQL_SERVER_IMAGE:-ghcr.io/tursodatabase/libsql-server:latest}
       LIBSQL_PROVISION_ASYNC: 'false'
-      DB_CONNECTION_POOL_MAX_SIZE: '256'
-      DB_CONNECTION_POOL_IDLE_TTL_MS: '1800000'
-      SQLITE_PERFORMANCE_PROFILE: 'performance'
+      DB_CONNECTION_POOL_MAX_SIZE: ${DB_CONNECTION_POOL_MAX_SIZE:-256}
+      DB_CONNECTION_POOL_IDLE_TTL_MS: ${DB_CONNECTION_POOL_IDLE_TTL_MS:-1800000}
+      SQLITE_PERFORMANCE_PROFILE: ${SQLITE_PERFORMANCE_PROFILE:-performance}
     env_file:
       - ./backend/.env
     volumes:
-      - ./backend/data:/app/data
+      - ${BACKEND_DATA_DIR_HOST:-./backend/data}:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - 'host.docker.internal:host-gateway'
@@ -71,10 +70,10 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api/v1}
     ports:
-      - '5001:5001'
+      - '${FRONTEND_PORT_BIND:-5001}:5001'
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api/v1}
-      INTERNAL_API_URL: http://backend:5000/api/v1
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://backend:5000/api/v1}
     depends_on:
       - backend
     restart: unless-stopped

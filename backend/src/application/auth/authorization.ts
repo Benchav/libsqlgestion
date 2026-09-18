@@ -40,6 +40,17 @@ export async function userHasPermission(userId: string, permissionCode: string) 
   return permissions.has(permissionCode);
 }
 
+export async function getUserRoles(userId: string): Promise<string[]> {
+  const userRoleRepo = AppDataSource.getRepository(UserRole);
+  const roles = await userRoleRepo.find({ where: { user: { id: userId } }, relations: ['role'] });
+  return roles.map((entry) => entry.role.name);
+}
+
+export async function userIsAdmin(userId: string): Promise<boolean> {
+  const roles = await getUserRoles(userId);
+  return roles.includes('admin') || roles.includes('superadmin');
+}
+
 export function invalidateUserPermissionCache(userId?: string) {
   if (!userId) {
     permissionCache.clear();

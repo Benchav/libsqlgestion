@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 
-const BACKEND_URL = process.env.INTERNAL_API_URL || 'http://backend:5000/api/v1';
+const BACKEND_URL = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3000/api/v1';
 
 async function proxy(request: NextRequest, params: { path: string[] }) {
   const targetUrl = `${BACKEND_URL}/${params.path.join('/')}${request.nextUrl.search}`;
@@ -10,7 +10,10 @@ async function proxy(request: NextRequest, params: { path: string[] }) {
   const response = await fetch(targetUrl, {
     method: request.method,
     headers,
-    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer(),
+    // Stream request body directly to prevent high memory spikes during database imports
+    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : (request.body as any),
+    // @ts-ignore
+    duplex: 'half',
     redirect: 'manual',
   });
 

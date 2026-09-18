@@ -1,5 +1,5 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
-import { userHasPermission } from '../../application/auth/authorization';
+import { userHasPermission, userIsAdmin } from '../../application/auth/authorization';
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Project } from '../../domain/entities/Project';
 import { Database } from '../../domain/entities/Database';
@@ -39,7 +39,8 @@ export async function ensureProjectAccess(request: FastifyRequest, reply: Fastif
 
   const isOwner = project.owner?.id === user.sub;
   const isMember = project.members?.some((member) => member.user?.id === user.sub);
-  if (!isOwner && !isMember) {
+  const isAdmin = user.roles?.includes('admin') || user.roles?.includes('superadmin') || (await userIsAdmin(user.sub));
+  if (!isOwner && !isMember && !isAdmin) {
     reply.code(403).send({ error: 'forbidden' });
     return null;
   }
@@ -67,7 +68,8 @@ export async function ensureDatabaseAccess(request: FastifyRequest, reply: Fasti
   const project = database.project;
   const isOwner = project?.owner?.id === user.sub;
   const isMember = project?.members?.some((member) => member.user?.id === user.sub);
-  if (!isOwner && !isMember) {
+  const isAdmin = user.roles?.includes('admin') || user.roles?.includes('superadmin') || (await userIsAdmin(user.sub));
+  if (!isOwner && !isMember && !isAdmin) {
     reply.code(403).send({ error: 'forbidden' });
     return null;
   }

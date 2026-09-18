@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
@@ -54,6 +55,7 @@ export default function DatabaseDetailPage() {
   const router = useRouter();
   const id = params?.id as string;
 
+  const queryClient = useQueryClient();
   const [database, setDatabase] = useState<DatabaseDetail | null>(null);
   const [error, setError] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -117,7 +119,13 @@ export default function DatabaseDetailPage() {
     setIsDeleting(true);
     try {
       await apiRequest(`/databases/${id}`, { method: 'DELETE' });
-      router.push('/databases');
+      queryClient.setQueryData(['databases'], (old: any) => 
+        Array.isArray(old) ? old.filter((d: any) => d.id !== id) : old
+      );
+      await queryClient.invalidateQueries({ queryKey: ['databases'] });
+      queryClient.removeQueries({ queryKey: ['database', id] });
+      await queryClient.invalidateQueries({ queryKey: ['metrics'] });
+      router.replace('/databases');
     } catch (err: any) {
       setError(err.message);
     } finally {

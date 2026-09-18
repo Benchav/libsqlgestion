@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { Database } from '../../domain/entities/Database';
 import { SqliteClient } from '../sqlite/SqliteClient';
 import { createLibsqlClient } from '../libsql/LibsqlClient';
@@ -91,9 +93,17 @@ export class ConnectionPool {
     const effectiveType = resolveEffectiveDatabaseType(database);
 
     if (effectiveType === 'sqlite') {
-      const filePath = database.url || '';
-      if (!filePath) {
-        throw new Error(`Database ${database.id} has no file path configured`);
+      let filePath = database.url || '';
+      if (!filePath || !fs.existsSync(filePath)) {
+        const managed = database.project?.id
+          ? path.join(process.cwd(), 'data', 'sqlite', 'projects', database.project.id, 'databases', `${database.id}.db`)
+          : '';
+        if (managed && fs.existsSync(managed)) {
+          filePath = managed;
+        }
+      }
+      if (!filePath || !fs.existsSync(filePath)) {
+        throw new Error(`Database ${database.id} has no valid file path configured on disk`);
       }
       const client = new SqliteClient(filePath);
       return { client, type: 'sqlite', lastUsed: Date.now() };

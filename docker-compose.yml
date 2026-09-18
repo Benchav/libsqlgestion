@@ -1,6 +1,27 @@
 version: '3.8'
 
 services:
+  sqld:
+    image: ${LIBSQL_SERVER_IMAGE:-ghcr.io/tursodatabase/libsql-server:latest}
+    command:
+      - /bin/sqld
+      - --enable-namespaces
+      - --http-listen-addr=0.0.0.0:8080
+      - --admin-listen-addr=0.0.0.0:9090
+      - --auth-jwt-key-file=/var/lib/sqld/auth.pem
+      - --db-path=/var/lib/sqld/data
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./backend/data/sqld:/var/lib/sqld
+    restart: unless-stopped
+    networks:
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${DATABASE_PUBLIC_DOMAIN:-localhost}`)"
+      - "traefik.http.services.sqld.loadbalancer.server.port=8080"
+
   backend:
     build:
       context: ./backend
@@ -15,8 +36,13 @@ services:
       SQLITE_DISCOVERY_ADOPT: 'false'
       DATABASE_PUBLIC_HOST: host.docker.internal
       DATABASE_PUBLIC_PROTOCOL: http
+      LIBSQL_ENABLE_NAMESPACES: 'true'
+      LIBSQL_ADMIN_URL: http://sqld:9090
+      LIBSQL_INTERNAL_URL: http://sqld:8080
+      SQLD_DATA_DIR: /app/data/sqld
+      LIBSQL_AUTH_DIR: /app/data/sqld
       LIBSQL_SERVER_IMAGE: ghcr.io/tursodatabase/libsql-server:latest
-      LIBSQL_PROVISION_ASYNC: 'true'
+      LIBSQL_PROVISION_ASYNC: 'false'
       DB_CONNECTION_POOL_MAX_SIZE: '256'
       DB_CONNECTION_POOL_IDLE_TTL_MS: '1800000'
       SQLITE_PERFORMANCE_PROFILE: 'performance'
@@ -27,6 +53,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    depends_on:
+      - sqld
     restart: unless-stopped
     networks:
       - libsqlite-net

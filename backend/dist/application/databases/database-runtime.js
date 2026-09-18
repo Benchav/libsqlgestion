@@ -31,7 +31,7 @@ function getRuntimeConnectionUrl(database) {
 function resolveEffectiveDatabaseType(database) {
     const runtimeProvider = getRuntimeProvider(database);
     const runtimeUrl = getRuntimeConnectionUrl(database);
-    if (runtimeProvider === 'docker-libsql' && isRemoteDatabaseUrl(runtimeUrl)) {
+    if ((runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace') && isRemoteDatabaseUrl(runtimeUrl)) {
         return 'libsql';
     }
     if (database.type === 'remote' && isRemoteDatabaseUrl(database.url)) {

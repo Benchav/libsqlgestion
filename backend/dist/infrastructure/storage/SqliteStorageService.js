@@ -21,6 +21,10 @@ class SqliteStorageService {
         }
         return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', `${databaseId}.db`);
     }
+    namespaceDatabasePath(namespace) {
+        const sqldRoot = process.env.SQLD_DATA_DIR || path_1.default.join(process.cwd(), 'data', 'sqld');
+        return path_1.default.join(sqldRoot, 'data', 'dbs', namespace, 'data');
+    }
     managedDatabaseDirectory(projectId, databaseId) {
         return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases', databaseId);
     }
@@ -54,6 +58,28 @@ class SqliteStorageService {
             // Create a consistent snapshot from the live SQLite database.
             // This captures committed WAL contents as seen by SQLite and avoids
             // importing a stale/blank main database file from ERP workloads.
+            const client = new SqliteClient_1.SqliteClient(sourcePath);
+            try {
+                await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
+            }
+            finally {
+                await client.close();
+            }
+            await fs_2.promises.rm(targetPath, { force: true }).catch(() => undefined);
+            await fs_2.promises.rename(tempTargetPath, targetPath);
+        }
+        catch (error) {
+            await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
+            throw error;
+        }
+        return targetPath;
+    }
+    async importToNamespace(sourcePath, namespace) {
+        const targetPath = this.namespaceDatabasePath(namespace);
+        fs_1.default.mkdirSync(path_1.default.dirname(targetPath), { recursive: true });
+        const tempTargetPath = `${targetPath}.import-${Date.now()}.tmp`;
+        await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
+        try {
             const client = new SqliteClient_1.SqliteClient(sourcePath);
             try {
                 await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);

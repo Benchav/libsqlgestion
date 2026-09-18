@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getUserPermissions = getUserPermissions;
 exports.userHasPermission = userHasPermission;
+exports.getUserRoles = getUserRoles;
+exports.userIsAdmin = userIsAdmin;
 exports.invalidateUserPermissionCache = invalidateUserPermissionCache;
 const data_source_1 = require("../../infrastructure/db/data-source");
 const UserRole_1 = require("../../domain/entities/UserRole");
@@ -29,6 +31,15 @@ async function getUserPermissions(userId) {
 async function userHasPermission(userId, permissionCode) {
     const permissions = await getUserPermissions(userId);
     return permissions.has(permissionCode);
+}
+async function getUserRoles(userId) {
+    const userRoleRepo = data_source_1.AppDataSource.getRepository(UserRole_1.UserRole);
+    const roles = await userRoleRepo.find({ where: { user: { id: userId } }, relations: ['role'] });
+    return roles.map((entry) => entry.role.name);
+}
+async function userIsAdmin(userId) {
+    const roles = await getUserRoles(userId);
+    return roles.includes('admin') || roles.includes('superadmin');
 }
 function invalidateUserPermissionCache(userId) {
     if (!userId) {

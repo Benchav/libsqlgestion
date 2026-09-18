@@ -24,6 +24,10 @@ function requireCsrf(request, reply) {
         return true;
     if (CSRF_EXEMPT_PATHS.some((path) => request.url.startsWith(path)))
         return true;
+    if (request.headers.authorization?.startsWith('Bearer '))
+        return true;
+    if (request.url.includes('/pipeline'))
+        return true;
     const cookies = (0, cookies_1.parseCookies)(request.headers.cookie);
     const cookieToken = cookies[CSRF_COOKIE_NAME] || cookies['libsqlite.csrfToken'];
     const headerToken = request.headers['x-csrf-token-v2'] || request.headers['x-csrf-token'];

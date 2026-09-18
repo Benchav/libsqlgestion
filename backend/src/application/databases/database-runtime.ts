@@ -47,7 +47,7 @@ export function resolveEffectiveDatabaseType(database: DatabaseLike): EffectiveD
   const runtimeProvider = getRuntimeProvider(database);
   const runtimeUrl = getRuntimeConnectionUrl(database);
 
-  if (runtimeProvider === 'docker-libsql' && isRemoteDatabaseUrl(runtimeUrl)) {
+  if ((runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace') && isRemoteDatabaseUrl(runtimeUrl)) {
     return 'libsql';
   }
 

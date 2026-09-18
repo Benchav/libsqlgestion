@@ -1,1 +1,1 @@
-self.__NEXT_FONT_MANIFEST='{"pages":{},"app":{},"appUsingSizeAdjust":false,"pagesUsingSizeAdjust":false}';
+self.__NEXT_FONT_MANIFEST='{"pages":{},"app":{"/home/jb/libsqlgestion/frontend/app/layout":["static/media/d3ebbfd689654d3a-s.p.woff2","static/media/98e207f02528a563-s.p.woff2","static/media/4c9affa5bc8f420e-s.p.woff2","static/media/36966cca54120369-s.p.woff2"]},"appUsingSizeAdjust":true,"pagesUsingSizeAdjust":false}';

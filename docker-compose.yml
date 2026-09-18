@@ -57,7 +57,7 @@ services:
       - sqld
     restart: unless-stopped
     networks:
-      - libsqlite-net
+      - coolify
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:5000/api/v1/health 2>/dev/null || exit 1']
       interval: 15s
@@ -79,9 +79,8 @@ services:
       - backend
     restart: unless-stopped
     networks:
-      - libsqlite-net
+      - coolify
 
 networks:
-  libsqlite-net:
-    name: ${DOCKER_NETWORK:-libsqlite-net}
-    driver: bridge
+  coolify:
+    external: true

@@ -72,7 +72,7 @@ async function databaseRoutes(app) {
             return reply.status(201).send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
         }
         catch (err) {
-            return reply.status(500).send({ error: err?.message || 'failed to create database' });
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to create database' });
         }
     });
     app.post('/databases/import-sqlite', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -84,7 +84,7 @@ async function databaseRoutes(app) {
             return reply.status(201).send({ ...result, database: (0, database_presenter_1.presentDatabase)(result.database) });
         }
         catch (err) {
-            return reply.status(500).send({ error: err?.message || 'failed to import database' });
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to import database' });
         }
     });
     app.post('/databases/import-upload', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -125,7 +125,7 @@ async function databaseRoutes(app) {
             return reply.status(201).send({ ...result, database: (0, database_presenter_1.presentDatabase)(result.database) });
         }
         catch (err) {
-            return reply.status(500).send({ error: err?.message || 'failed to import uploaded database' });
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to import uploaded database' });
         }
         finally {
             if (uploadedPath) {
@@ -195,6 +195,10 @@ async function databaseRoutes(app) {
         if (!access)
             return;
         const result = await databaseService.testConnection(id);
+        if (!result.ok) {
+            request.log.warn({ databaseId: id, details: result.details }, '[DatabaseController] test-connection failed');
+            return reply.status(503).send({ ...result, error: result.details });
+        }
         return reply.send(result);
     });
     app.get('/databases/:id/download', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -220,6 +224,21 @@ async function databaseRoutes(app) {
         }
         catch (err) {
             return reply.status(500).send({ error: err?.message || 'failed to download database file' });
+        }
+    });
+    app.post('/databases/:id/convert-to-local', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
+        try {
+            const database = await databaseService.convertNamespaceDatabaseToLocal(id);
+            return reply.send({ database: (0, database_presenter_1.presentDatabase)(database) });
+        }
+        catch (err) {
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to local file' });
         }
     });
     app.post('/databases/:id/backup', { preHandler: [app.authenticate] }, async (request, reply) => {

@@ -15,6 +15,16 @@ import { LibsqlNamespaceService } from '../../infrastructure/libsql/LibsqlNamesp
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { getRuntimeConnectionUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
 
+export class NamespaceUnavailableError extends Error {
+  statusCode = 503;
+  code = 'SQLD_UNAVAILABLE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'NamespaceUnavailableError';
+  }
+}
+
 export class DatabaseService {
   private databaseRepo = AppDataSource.getRepository(Database);
   private projectRepo = AppDataSource.getRepository(Project);
@@ -29,9 +39,16 @@ export class DatabaseService {
     const isNamespace = this.namespaceService.isEnabled() && (input.type === 'libsql' || (!input.url && process.env.SQLITE_PREFER_NAMESPACE === 'true'));
 
     if (isNamespace) {
-      await this.namespaceService.createNamespace(subdomain);
+      const namespace = await this.namespaceService.createNamespace(subdomain);
+      if (!namespace.ok) {
+        throw new NamespaceUnavailableError(
+          `No se pudo crear el namespace "${subdomain}" en sqld: ${namespace.error || 'error desconocido'}`,
+        );
+      }
+
       const token = input.token ?? this.namespaceService.generateToken(subdomain);
       const urls = this.namespaceService.buildNamespaceUrls(subdomain);
+      await this.verifyNamespaceConnection(subdomain, token);
 
       const database = await this.databaseRepo.save(this.databaseRepo.create({
         name: input.name,
@@ -66,6 +83,12 @@ export class DatabaseService {
     }
 
     const willProvisionRuntime = this.isManagedRuntimeRequest(input) && this.runtimeService.isEnabled();
+
+    if (input.type === 'libsql' && !input.url && !willProvisionRuntime) {
+      throw new NamespaceUnavailableError(
+        'No se puede crear una base libSQL sin runtime ni URL. Configura los namespaces de sqld, habilita el socket Docker o proporciona una URL remota.',
+      );
+    }
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
       name: input.name,
@@ -137,15 +160,25 @@ export class DatabaseService {
     const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(databaseName, randomToken());
 
-    if (this.namespaceService.isEnabled()) {
+    const useNamespace = await this.shouldUseNamespaceForImport();
+
+    if (useNamespace) {
       try {
         await this.storageService.importToNamespace(input.sourcePath, subdomain);
-      } catch (err) {
-        console.warn('[DatabaseService] Failed to copy SQLite file to namespace directory:', err);
+      } catch (error: any) {
+        throw new Error(`No se pudo copiar la base al namespace "${subdomain}": ${error?.message || error}`);
       }
-      await this.namespaceService.createNamespace(subdomain);
+
+      const namespace = await this.namespaceService.createNamespace(subdomain);
+      if (!namespace.ok) {
+        throw new NamespaceUnavailableError(
+          `No se pudo crear el namespace "${subdomain}" en sqld: ${namespace.error || 'error desconocido'}`,
+        );
+      }
+
       const token = input.token ?? this.namespaceService.generateToken(subdomain);
       const urls = this.namespaceService.buildNamespaceUrls(subdomain);
+      await this.verifyNamespaceConnection(subdomain, token);
 
       const database = await this.databaseRepo.save(this.databaseRepo.create({
         name: databaseName,
@@ -181,7 +214,7 @@ export class DatabaseService {
       return { database, token };
     }
 
-    const willProvisionRuntime = this.runtimeService.isEnabled();
+    const willProvisionRuntime = this.shouldProvisionRuntimeForImport();
     const storageType = willProvisionRuntime ? 'libsql' : 'sqlite';
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
@@ -239,6 +272,56 @@ export class DatabaseService {
 
   async getDatabase(id: string) {
     return this.databaseRepo.findOne({ where: { id }, relations: ['project', 'project.owner'] });
+  }
+
+  async convertNamespaceDatabaseToLocal(id: string) {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) {
+      const error: any = new Error('database not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
+    if (runtime?.provider !== 'sqld-namespace' || !database.subdomain) {
+      const error: any = new Error('database is not a sqld namespace database');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const sourcePath = this.storageService.namespaceDatabasePath(database.subdomain);
+    if (!fs.existsSync(sourcePath)) {
+      const error: any = new Error(`namespace database file not found at ${sourcePath}`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const targetPath = await this.storageService.importDatabaseFile(sourcePath, database.project.id, database.id, 'sqlite');
+
+    database.type = 'sqlite';
+    database.status = 'active';
+    database.url = targetPath;
+    database.metadata = {
+      ...mergeRuntimeMetadata(database.metadata, {
+        provider: 'local-file',
+        databasePath: targetPath,
+        connectionUrl: targetPath,
+        internalUrl: targetPath,
+        publicUrl: targetPath,
+      }),
+      convertedFromNamespace: database.subdomain,
+    };
+    await this.databaseRepo.save(database);
+    ConnectionPool.getInstance().evict(database.id);
+
+    await this.auditService.record({
+      action: 'database.convert_to_local',
+      resourceType: 'database',
+      resourceId: database.id,
+      metadata: { projectId: database.project.id, namespace: database.subdomain, targetPath },
+    });
+
+    return database;
   }
 
   async reconcileLegacyDatabases() {
@@ -500,6 +583,59 @@ export class DatabaseService {
     if (!database) throw new Error('database not found');
     const managedPath = this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
     return (database.url && fs.existsSync(database.url)) ? database.url : managedPath;
+  }
+
+  private async verifyNamespaceConnection(subdomain: string, token: string) {
+    const urls = this.namespaceService.buildNamespaceUrls(subdomain);
+    const client = createLibsqlClient(urls.connectionUrl, token);
+    try {
+      await client.execute('SELECT 1');
+    } catch (error: any) {
+      throw new NamespaceUnavailableError(
+        `El namespace "${subdomain}" se creó pero no responde en ${urls.connectionUrl}: ${error?.message || error}`,
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  private async shouldUseNamespaceForImport(): Promise<boolean> {
+    const mode = String(process.env.LIBSQL_NAMESPACE_IMPORTS || 'auto').trim().toLowerCase();
+    const strict = mode === 'true' || mode === 'namespace' || mode === 'required';
+
+    if (mode === 'false' || mode === 'local' || mode === 'off') {
+      return false;
+    }
+
+    if (!this.namespaceService.isEnabled()) {
+      if (strict) {
+        throw new NamespaceUnavailableError(
+          'La importación por namespace está habilitada, pero los namespaces no están configurados. Define LIBSQL_ADMIN_URL o LIBSQL_ENABLE_NAMESPACES=true.',
+        );
+      }
+      return false;
+    }
+
+    if (await this.namespaceService.isAvailable()) {
+      return true;
+    }
+
+    if (strict) {
+      throw new NamespaceUnavailableError(
+        'sqld no está disponible para crear el namespace. Verifica que el contenedor sqld esté corriendo, que LIBSQL_ADMIN_URL sea accesible desde el backend y que ambos compartan la misma red Docker.',
+      );
+    }
+
+    console.warn('[DatabaseService] sqld no está disponible; se usará importación local para esta base.');
+    return false;
+  }
+
+  private shouldProvisionRuntimeForImport(): boolean {
+    const mode = String(process.env.LIBSQL_IMPORT_RUNTIME || 'false').trim().toLowerCase();
+    if (mode !== 'true' && mode !== '1' && mode !== 'yes') {
+      return false;
+    }
+    return this.runtimeService.isEnabled();
   }
 
   private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {

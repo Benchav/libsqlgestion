@@ -66,7 +66,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
       const result = await databaseService.createDatabase(body.projectId, body);
       return reply.status(201).send({ database: presentDatabase(result.database), token: result.token });
     } catch (err: any) {
-      return reply.status(500).send({ error: err?.message || 'failed to create database' });
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to create database' });
     }
   });
 
@@ -77,7 +77,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
       const result = await databaseService.importExistingSqlite(body.projectId, body);
       return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
-      return reply.status(500).send({ error: err?.message || 'failed to import database' });
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to import database' });
     }
   });
 
@@ -123,7 +123,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
       });
       return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
-      return reply.status(500).send({ error: err?.message || 'failed to import uploaded database' });
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to import uploaded database' });
     } finally {
       if (uploadedPath) {
         const tempDir = path.dirname(uploadedPath);
@@ -184,6 +184,10 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const access = await ensureDatabaseAccess(request, reply, id);
     if (!access) return;
     const result = await databaseService.testConnection(id);
+    if (!result.ok) {
+      request.log.warn({ databaseId: id, details: result.details }, '[DatabaseController] test-connection failed');
+      return reply.status(503).send({ ...result, error: result.details });
+    }
     return reply.send(result);
   });
 
@@ -209,6 +213,19 @@ export default async function databaseRoutes(app: FastifyInstance) {
       return reply.send(stream);
     } catch (err: any) {
       return reply.status(500).send({ error: err?.message || 'failed to download database file' });
+    }
+  });
+
+  app.post('/databases/:id/convert-to-local', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    try {
+      const database = await databaseService.convertNamespaceDatabaseToLocal(id);
+      return reply.send({ database: presentDatabase(database) });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to local file' });
     }
   });
 

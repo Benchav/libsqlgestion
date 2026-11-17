@@ -15,11 +15,39 @@ services:
       - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/var/lib/sqld
     restart: unless-stopped
     networks:
-      - coolify
+      coolify:
+        aliases:
+          - sqld
+    depends_on:
+      sqld-auth-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/9090' && timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${DATABASE_PUBLIC_DOMAIN:-localhost}`)"
       - "traefik.http.services.sqld.loadbalancer.server.port=8080"
+
+  sqld-auth-init:
+    image: node:20-alpine
+    command:
+      - /bin/sh
+      - -c
+      - node /scripts/init-sqld-auth.mjs /data && (chown -R "${SQLD_UID:-666}:${SQLD_GID:-666}" /data 2>/dev/null || true)
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/data
+      - ./backend/scripts/init-sqld-auth.mjs:/scripts/init-sqld-auth.mjs:ro
+    restart: 'no'
+    networks:
+      - coolify
 
   backend:
     build:
@@ -50,11 +78,13 @@ services:
       - ./backend/.env
     volumes:
       - ${BACKEND_DATA_DIR_HOST:-./backend/data}:/app/data
+      - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/app/data/sqld
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     depends_on:
-      - sqld
+      sqld:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - coolify

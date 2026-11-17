@@ -13,11 +13,21 @@ const DiscoveryService_1 = require("./application/databases/DiscoveryService");
 const DatabaseService_1 = require("./application/databases/DatabaseService");
 const PlatformSettingsService_1 = require("./application/settings/PlatformSettingsService");
 const ConnectionPool_1 = require("./infrastructure/db/ConnectionPool");
+const LibsqlNamespaceService_1 = require("./infrastructure/libsql/LibsqlNamespaceService");
 const start = async () => {
     await data_source_1.AppDataSource.initialize();
     await data_source_1.AppDataSource.runMigrations();
     await (0, auth_bootstrap_1.bootstrapSecurityCatalog)();
     await (0, PlatformSettingsService_1.bootstrapPlatformSettings)();
+    const namespaceService = new LibsqlNamespaceService_1.LibsqlNamespaceService();
+    if (namespaceService.isEnabled()) {
+        try {
+            namespaceService.ensureAuthKeys();
+        }
+        catch (error) {
+            console.warn('[main] Could not prepare sqld auth keys:', error?.message || error);
+        }
+    }
     const databaseService = new DatabaseService_1.DatabaseService();
     const reconciliation = await databaseService.reconcileLegacyDatabases();
     if (reconciliation.reconciled > 0) {

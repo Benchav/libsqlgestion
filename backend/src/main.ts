@@ -8,12 +8,23 @@ import { DiscoveryService } from './application/databases/DiscoveryService';
 import { DatabaseService } from './application/databases/DatabaseService';
 import { bootstrapPlatformSettings } from './application/settings/PlatformSettingsService';
 import { ConnectionPool } from './infrastructure/db/ConnectionPool';
+import { LibsqlNamespaceService } from './infrastructure/libsql/LibsqlNamespaceService';
 
 const start = async () => {
   await AppDataSource.initialize();
   await AppDataSource.runMigrations();
   await bootstrapSecurityCatalog();
   await bootstrapPlatformSettings();
+
+  const namespaceService = new LibsqlNamespaceService();
+  if (namespaceService.isEnabled()) {
+    try {
+      namespaceService.ensureAuthKeys();
+    } catch (error: any) {
+      console.warn('[main] Could not prepare sqld auth keys:', error?.message || error);
+    }
+  }
+
   const databaseService = new DatabaseService();
   const reconciliation = await databaseService.reconcileLegacyDatabases();
   if (reconciliation.reconciled > 0) {

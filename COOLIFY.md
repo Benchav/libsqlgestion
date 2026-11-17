@@ -51,6 +51,13 @@ LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
 LIBSQL_RUNTIME_MEMORY_BYTES=0
 LIBSQL_RUNTIME_CPU_NANO=0
 LIBSQL_RUNTIME_PIDS_LIMIT=0
+
+# Import strategy for SQLite files
+# auto  = use the sqld namespace when reachable, otherwise store a local .db
+# true  = require sqld and fail the import when it is unavailable
+# false = always store imported files as local .db files
+LIBSQL_NAMESPACE_IMPORTS=auto
+LIBSQL_IMPORT_RUNTIME=false
 ```
 
 Notes:
@@ -67,6 +74,8 @@ Notes:
 - `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
+- `LIBSQL_NAMESPACE_IMPORTS=auto` makes imports fall back to a local `.db` when `sqld` is unreachable. Use `true` only when `sqld` is part of the same deployment and must be required for every import.
+- If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume. Otherwise imports will fail or fall back to local storage depending on `LIBSQL_NAMESPACE_IMPORTS`.
 - The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.
 
 ## 4. Volumes

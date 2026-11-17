@@ -70,6 +70,8 @@ Body fields:
 
 Imports an existing SQLite file from a server-side path.
 
+With `LIBSQL_NAMESPACE_IMPORTS=auto` (default), the import uses the `sqld` namespace when it is reachable and falls back to a local `.db` when it is not. Set `LIBSQL_NAMESPACE_IMPORTS=true` to require the namespace, or `false` to always store a local file.
+
 ### `GET /databases/:id`
 
 Returns a single database record.
@@ -80,7 +82,13 @@ Rotates the stored token.
 
 ### `POST /databases/:id/test-connection`
 
-Tests the registered connection.
+Tests the registered connection. Returns `503` with the failure details when the connection is not healthy.
+
+### `POST /databases/:id/convert-to-local`
+
+Repairs an existing `sqld-namespace` database by copying its file from the namespace volume into managed local storage. The database record is updated to `type: "sqlite"` and `runtime.provider: "local-file"`.
+
+Use this when an import was registered as a namespace database but `sqld` is no longer available and the namespace file still exists on disk.
 
 ## Schema and query
 

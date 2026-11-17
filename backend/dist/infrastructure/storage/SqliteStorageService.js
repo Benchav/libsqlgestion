@@ -89,6 +89,7 @@ class SqliteStorageService {
             }
             await fs_2.promises.rm(targetPath, { force: true }).catch(() => undefined);
             await fs_2.promises.rename(tempTargetPath, targetPath);
+            this.applySqldOwnership(path_1.default.dirname(targetPath), targetPath);
         }
         catch (error) {
             await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
@@ -103,6 +104,23 @@ class SqliteStorageService {
         const normalizedRoot = path_1.default.normalize(this.storageRoot) + path_1.default.sep;
         const normalizedPath = path_1.default.normalize(filePath);
         return normalizedPath.startsWith(normalizedRoot);
+    }
+    applySqldOwnership(directory, file) {
+        if (process.platform === 'win32') {
+            return;
+        }
+        const uid = Number(process.env.SQLD_UID || 666);
+        const gid = Number(process.env.SQLD_GID || 666);
+        if (!Number.isInteger(uid) || !Number.isInteger(gid)) {
+            return;
+        }
+        try {
+            fs_1.default.chownSync(directory, uid, gid);
+            fs_1.default.chownSync(file, uid, gid);
+        }
+        catch (error) {
+            console.warn(`[SqliteStorageService] Could not set sqld ownership on ${file}: ${error?.message || error}`);
+        }
     }
 }
 exports.SqliteStorageService = SqliteStorageService;

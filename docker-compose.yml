@@ -82,6 +82,10 @@ services:
       LIBSQL_AUTH_DIR: /app/data/sqld
       LIBSQL_SERVER_IMAGE: ${LIBSQL_SERVER_IMAGE:-ghcr.io/tursodatabase/libsql-server:latest}
       LIBSQL_PROVISION_ASYNC: 'false'
+      # Imports default to local SQLite files. Set to auto/true only when the
+      # namespace public DNS/TLS setup is ready.
+      LIBSQL_NAMESPACE_IMPORTS: ${LIBSQL_NAMESPACE_IMPORTS:-false}
+      LIBSQL_IMPORT_RUNTIME: ${LIBSQL_IMPORT_RUNTIME:-false}
       DB_CONNECTION_POOL_MAX_SIZE: ${DB_CONNECTION_POOL_MAX_SIZE:-256}
       DB_CONNECTION_POOL_IDLE_TTL_MS: ${DB_CONNECTION_POOL_IDLE_TTL_MS:-1800000}
       SQLITE_PERFORMANCE_PROFILE: ${SQLITE_PERFORMANCE_PROFILE:-performance}

@@ -11,6 +11,7 @@ process.env.LIBSQL_AUTH_DIR = tempDir;
 process.env.MASTER_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 const { LibsqlNamespaceService } = require('../dist/infrastructure/libsql/LibsqlNamespaceService');
+const { getRuntimeConnectionUrl } = require('../dist/application/databases/database-runtime');
 
 test.describe('LibsqlNamespaceService Multitenancy Tests', () => {
   let namespaceService;
@@ -119,5 +120,22 @@ test.describe('LibsqlNamespaceService Multitenancy Tests', () => {
     assert.ok(urls.internalUrl.includes('/dev/mi-tienda'));
     assert.ok(urls.backendUrl.includes('/dev/mi-tienda'));
     assert.ok(urls.publicUrl.includes('mi-tienda'));
+    assert.ok(urls.internalUrl.endsWith('/dev/mi-tienda/'), 'internal URL must end with / for @libsql/client path joining');
+    assert.ok(urls.backendUrl.endsWith('/dev/mi-tienda/'));
+  });
+
+  test('normalizes legacy namespace URLs without a trailing slash', () => {
+    const url = getRuntimeConnectionUrl({
+      type: 'libsql',
+      url: 'http://sqld:8080/dev/legacy-namespace',
+      metadata: {
+        runtime: {
+          provider: 'sqld-namespace',
+          connectionUrl: 'http://sqld:8080/dev/legacy-namespace',
+        },
+      },
+    });
+
+    assert.equal(url, 'http://sqld:8080/dev/legacy-namespace/');
   });
 });

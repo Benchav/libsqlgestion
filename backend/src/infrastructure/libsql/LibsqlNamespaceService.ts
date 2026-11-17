@@ -163,7 +163,7 @@ export class LibsqlNamespaceService {
     const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim() || 'localhost';
     const publicHost = settings.host || process.env.DATABASE_PUBLIC_HOST?.trim() || 'localhost';
 
-    const internalUrl = `${this.internalBaseUrl.replace(/\/$/, '')}/dev/${namespace}`;
+    const internalUrl = `${this.internalBaseUrl.replace(/\/$/, '')}/dev/${namespace}/`;
     const backendUrl = internalUrl;
 
     const publicUrl = publicDomain && publicDomain !== 'localhost'

@@ -37,10 +37,18 @@ export function getRuntimeConnectionUrl(database: Pick<DatabaseLike, 'metadata' 
   const candidates = [runtime?.connectionUrl, runtime?.internalUrl, runtime?.backendUrl, runtime?.publicUrl, database.url];
   for (const candidate of candidates) {
     if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate;
+      return normalizeRuntimeConnectionUrl(candidate);
     }
   }
   return '';
+}
+
+function normalizeRuntimeConnectionUrl(url: string) {
+  const trimmed = url.trim();
+  // @libsql/client resolves `v2/pipeline` relative to the base URL. For the
+  // namespace path route (/dev/<namespace>) the base must end with a slash,
+  // otherwise the namespace segment is replaced and sqld returns 404.
+  return /\/dev\/[^/]+$/.test(trimmed) ? `${trimmed}/` : trimmed;
 }
 
 export function resolveEffectiveDatabaseType(database: DatabaseLike): EffectiveDatabaseType {

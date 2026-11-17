@@ -69,7 +69,7 @@ LIBSQL_ADMIN_URL=
 LIBSQL_NAMESPACE_IMPORTS=false
 ```
 
-With `LIBSQL_NAMESPACE_IMPORTS=auto` (the default), an import falls back to a local SQLite file when `sqld` is unreachable instead of silently registering a broken database.
+The Compose stack defaults `LIBSQL_NAMESPACE_IMPORTS` to `false`, so imports are stored locally. With `auto`, an import falls back to a local SQLite file when `sqld` is unreachable instead of silently registering a broken database.
 
 If a database was already registered as a namespace database and `sqld` is still unavailable, repair it from the API:
 

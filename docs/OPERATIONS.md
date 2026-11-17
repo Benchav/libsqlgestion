@@ -107,8 +107,8 @@ Operational advice:
 - import copies the database into the managed storage tree
 - after import, treat the managed copy as the source of truth
 - keep the original file untouched if you still need it as a fallback
-- with `LIBSQL_NAMESPACE_IMPORTS=auto` (default), the import uses the `sqld` namespace when it is reachable and falls back to a local `.db` otherwise
-- if you do not run `sqld`, set `LIBSQL_NAMESPACE_IMPORTS=false` so imports always stay local
+- `LIBSQL_NAMESPACE_IMPORTS=false` (the Compose default) stores imports as local `.db` files
+- set `LIBSQL_NAMESPACE_IMPORTS=auto` to use the `sqld` namespace when it is reachable, or `true` to require it
 
 ### Consume a LOCAL-FILE database from another backend
 

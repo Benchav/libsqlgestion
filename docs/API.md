@@ -70,7 +70,7 @@ Body fields:
 
 Imports an existing SQLite file from a server-side path.
 
-With `LIBSQL_NAMESPACE_IMPORTS=auto` (default), the import uses the `sqld` namespace when it is reachable and falls back to a local `.db` when it is not. Set `LIBSQL_NAMESPACE_IMPORTS=true` to require the namespace, or `false` to always store a local file.
+With `LIBSQL_NAMESPACE_IMPORTS=false` (the Compose default), imports are stored as local `.db` files. Set `auto` to use the `sqld` namespace when it is reachable and fall back to local otherwise, or `true` to require the namespace.
 
 ### `GET /databases/:id`
 

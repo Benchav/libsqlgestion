@@ -53,10 +53,10 @@ LIBSQL_RUNTIME_CPU_NANO=0
 LIBSQL_RUNTIME_PIDS_LIMIT=0
 
 # Import strategy for SQLite files
-# auto  = use the sqld namespace when reachable, otherwise store a local .db
+# false = always store imported files as local .db files (Compose default)
+# auto  = use the sqld namespace when reachable, otherwise local
 # true  = require sqld and fail the import when it is unavailable
-# false = always store imported files as local .db files
-LIBSQL_NAMESPACE_IMPORTS=auto
+LIBSQL_NAMESPACE_IMPORTS=false
 LIBSQL_IMPORT_RUNTIME=false
 ```
 
@@ -74,7 +74,7 @@ Notes:
 - `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
-- `LIBSQL_NAMESPACE_IMPORTS=auto` makes imports fall back to a local `.db` when `sqld` is unreachable. Use `true` only when `sqld` is part of the same deployment and must be required for every import.
+- `LIBSQL_NAMESPACE_IMPORTS=false` keeps imports local by default. Use `auto` to try the namespace when `sqld` is reachable, or `true` to require it.
 - If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume. Otherwise imports will fail or fall back to local storage depending on `LIBSQL_NAMESPACE_IMPORTS`.
 - If you use `sqld` namespaces, set **both** `DATABASE_PUBLIC_DOMAIN` and `SQLD_PUBLIC_DOMAIN` to a dedicated parent domain for databases (for example `db.example.com`) and keep that domain separate from the domains used by applications.
 - For `LOCAL-FILE` databases, set `DATABASE_PUBLIC_BASE_URL` (or the panel's **Base URL** field) to the public HTTPS base URL of the backend so the generated URL is reachable by external clients.

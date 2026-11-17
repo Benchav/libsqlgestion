@@ -34,17 +34,21 @@ services:
       - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${DATABASE_PUBLIC_DOMAIN:-localhost}`)"
       - "traefik.http.services.sqld.loadbalancer.server.port=8080"
 
+  # Keep the auth bootstrap script inside the image. Bind-mounting it from the
+  # repo can fail under Coolify because compose runs from /artifacts inside the
+  # helper container while Docker resolves bind-mount paths on the host.
   sqld-auth-init:
-    image: node:20-alpine
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.auth-init
     command:
       - /bin/sh
       - -c
-      - node /scripts/init-sqld-auth.mjs /data && (chown -R "${SQLD_UID:-666}:${SQLD_GID:-666}" /data 2>/dev/null || true)
+      - node /scripts/init-sqld-auth.mjs /data && (chown -R "$${SQLD_UID:-666}:$${SQLD_GID:-666}" /data 2>/dev/null || true)
     env_file:
       - ./backend/.env
     volumes:
       - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/data
-      - ./backend/scripts/init-sqld-auth.mjs:/scripts/init-sqld-auth.mjs:ro
     restart: 'no'
     networks:
       - coolify
@@ -84,7 +88,7 @@ services:
       - 'host.docker.internal:host-gateway'
     depends_on:
       sqld:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
     networks:
       - coolify

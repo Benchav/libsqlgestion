@@ -78,7 +78,11 @@ Returns a single database record.
 
 ### `PATCH /databases/:id/rotate-token`
 
-Rotates the stored token.
+Rotates the stored token. The previous token is invalidated immediately; update every client that uses it.
+
+### `POST /databases/:id/reveal-token`
+
+Reveals the current token for an authorized administrator. It requires `databases.write`, checks project access, returns `Cache-Control: no-store`, and records a `database.reveal_token` audit entry. The token is never written to the logs.
 
 ### `POST /databases/:id/test-connection`
 

@@ -7,7 +7,7 @@ import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
 import { clearEphemeralDatabaseToken, consumeEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../../lib/token-cache';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive, Zap, Download } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Archive, Zap, Download, Eye } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -72,6 +72,8 @@ export default function DatabaseDetailPage() {
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
   const [revealedToken, setRevealedToken] = useState('');
+  const [tokenStatus, setTokenStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [tokenMessage, setTokenMessage] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
@@ -137,15 +139,36 @@ export default function DatabaseDetailPage() {
     }
   }
 
+  async function handleRevealToken() {
+    setTokenStatus('loading');
+    setTokenMessage('Revealing current token...');
+    try {
+      const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/reveal-token`, { method: 'POST' });
+      setDatabase(result.database);
+      setEphemeralDatabaseToken(id, result.token, result.database.name);
+      setRevealedToken(result.token);
+      setTokenStatus('success');
+      setTokenMessage('Current token revealed. Copy it now.');
+    } catch (err: any) {
+      setTokenStatus('error');
+      setTokenMessage(err.message || 'failed to reveal token');
+    }
+  }
+
   async function handleRotateToken() {
-    if (!confirm('Rotate token? Active connections using the old token will be dropped.')) return;
+    if (!confirm('Create a new token? The current token will stop working immediately.')) return;
+    setTokenStatus('loading');
+    setTokenMessage('Creating a new token...');
     try {
       const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/rotate-token`, { method: 'PATCH' });
       setEphemeralDatabaseToken(id, result.token, result.database.name);
       setRevealedToken(result.token);
       setDatabase(result.database);
+      setTokenStatus('success');
+      setTokenMessage('New token created. Copy it now; the previous token is no longer valid.');
     } catch (err: any) {
-      setError(err.message);
+      setTokenStatus('error');
+      setTokenMessage(err.message || 'failed to rotate token');
     }
   }
 
@@ -505,22 +528,54 @@ export default function DatabaseDetailPage() {
                   {revealedToken ? (
                     <TokenReveal
                       token={revealedToken}
+                      badge="current token"
+                      description="This token remains valid until you create a new one. Copy it now if you need it."
                       onDismiss={() => {
                         clearEphemeralDatabaseToken(id);
                         setRevealedToken('');
+                        setTokenStatus('idle');
+                        setTokenMessage('');
                       }}
                     />
                   ) : (
-                    <div className="flex items-center justify-between border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300">
-                      <span className="blur-[4px] select-none">Token is only shown once after create/import/rotate</span>
-                      <div className="flex items-center gap-3 ml-4">
-                        <button onClick={() => setIsBackupOpen(true)} className="text-emerald-400 hover:text-emerald-300 font-sans flex items-center gap-1.5">
+                    <div className="border border-zinc-800 bg-[#050505] rounded-lg p-4 space-y-3">
+                      <p className="text-xs text-zinc-400">
+                        The token is not stored in the browser. Reveal the current token or create a new one.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          onClick={handleRevealToken}
+                          disabled={tokenStatus === 'loading'}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 font-sans text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                        >
+                          <Eye size={14} /> Show current token
+                        </button>
+                        <button
+                          onClick={handleRotateToken}
+                          disabled={tokenStatus === 'loading'}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 font-sans text-xs font-medium text-blue-300 hover:bg-blue-500/20 disabled:opacity-50"
+                        >
+                          <RefreshCw size={14} /> Create new token
+                        </button>
+                        <button
+                          onClick={() => setIsBackupOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-sans text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+                        >
                           <Archive size={14} /> Backup
                         </button>
-                        <button onClick={handleRotateToken} className="text-blue-400 hover:text-blue-300 font-sans flex items-center gap-1.5">
-                          <RefreshCw size={14} /> Rotate
-                        </button>
                       </div>
+                      {tokenStatus === 'loading' && (
+                        <p className="text-xs text-zinc-400">{tokenMessage || 'Working...'}</p>
+                      )}
+                      {tokenStatus === 'error' && (
+                        <p className="text-xs text-red-400">{tokenMessage}</p>
+                      )}
+                      {tokenStatus === 'success' && (
+                        <p className="text-xs text-emerald-400">{tokenMessage}</p>
+                      )}
+                      <p className="text-xs text-zinc-500">
+                        Creating a new token immediately invalidates the current one for active clients.
+                      </p>
                     </div>
                   )}
                 </div>

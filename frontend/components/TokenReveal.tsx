@@ -6,10 +6,12 @@ import { Copy, Check, Eye, X } from 'lucide-react';
 type TokenRevealProps = {
   token: string;
   label?: string;
+  badge?: string;
+  description?: string;
   onDismiss?: () => void;
 };
 
-export function TokenReveal({ token, label = 'Auth Token', onDismiss }: TokenRevealProps) {
+export function TokenReveal({ token, label = 'Auth Token', badge = 'shown once', description, onDismiss }: TokenRevealProps) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -23,7 +25,7 @@ export function TokenReveal({ token, label = 'Auth Token', onDismiss }: TokenRev
       <div className="flex items-center justify-between gap-3 text-amber-300 text-sm font-medium">
         <div className="flex items-center gap-2">
           <Eye size={14} />
-          {label} shown once
+          {label} {badge}
         </div>
         {onDismiss && (
           <button
@@ -49,7 +51,7 @@ export function TokenReveal({ token, label = 'Auth Token', onDismiss }: TokenRev
         </button>
       </div>
       <p className="text-xs text-zinc-400">
-        Save this token now. It will not be shown again after you leave this screen.
+        {description ?? 'Save this token now. It will not be shown again after you leave this screen.'}
       </p>
     </div>
   );

@@ -156,6 +156,51 @@ test.describe('External @libsql/client compatibility', () => {
     assert.equal(Number(afterRollback.rows[0].cnt), 4);
   });
 
+  test('reveals the current token and rotates it invalidating the old one', async () => {
+    const revealRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${databaseId}/reveal-token`,
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+    });
+    assert.equal(revealRes.statusCode, 200, revealRes.payload);
+    assert.equal(JSON.parse(revealRes.payload).token, databaseToken);
+
+    const rotateRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/databases/${databaseId}/rotate-token`,
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+    });
+    assert.equal(rotateRes.statusCode, 200, rotateRes.payload);
+    const newToken = JSON.parse(rotateRes.payload).token;
+    assert.notEqual(newToken, databaseToken);
+
+    const oldTokenRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${databaseId}/v2/pipeline`,
+      headers: { authorization: `Bearer ${databaseToken}` },
+      payload: { requests: [{ type: 'execute', stmt: { sql: 'SELECT 1' } }] },
+    });
+    assert.equal(oldTokenRes.statusCode, 401, oldTokenRes.payload);
+
+    const newTokenRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${databaseId}/v2/pipeline`,
+      headers: { authorization: `Bearer ${newToken}` },
+      payload: { requests: [{ type: 'execute', stmt: { sql: 'SELECT 1' } }] },
+    });
+    assert.equal(newTokenRes.statusCode, 200, newTokenRes.payload);
+
+    const revealAfterRotate = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${databaseId}/reveal-token`,
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+    });
+    assert.equal(revealAfterRotate.statusCode, 200, revealAfterRotate.payload);
+    assert.equal(JSON.parse(revealAfterRotate.payload).token, newToken);
+
+    databaseToken = newToken;
+  });
+
   test('convert-to-runtime fails cleanly when Docker is unavailable', async () => {
     const convertRes = await app.inject({
       method: 'POST',

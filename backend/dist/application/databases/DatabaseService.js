@@ -265,6 +265,35 @@ class DatabaseService {
     async getDatabase(id) {
         return this.databaseRepo.findOne({ where: { id }, relations: ['project', 'project.owner'] });
     }
+    async revealToken(id) {
+        const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+        if (!database) {
+            const error = new Error('database not found');
+            error.statusCode = 404;
+            throw error;
+        }
+        if (!database.encryptedToken) {
+            const error = new Error('database has no token');
+            error.statusCode = 409;
+            throw error;
+        }
+        let token;
+        try {
+            token = (0, crypto_1.decrypt)(database.encryptedToken);
+        }
+        catch (error) {
+            const wrapped = new Error(`Failed to decrypt database token: ${error?.message || error}. Check MASTER_KEY.`);
+            wrapped.statusCode = 500;
+            throw wrapped;
+        }
+        await this.auditService.record({
+            action: 'database.reveal_token',
+            resourceType: 'database',
+            resourceId: database.id,
+            metadata: { projectId: database.project?.id },
+        });
+        return { database, token };
+    }
     async convertNamespaceDatabaseToLocal(id) {
         const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
         if (!database) {

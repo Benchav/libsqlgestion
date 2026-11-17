@@ -185,8 +185,31 @@ async function databaseRoutes(app) {
         const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
         if (!access)
             return;
-        const result = await databaseService.rotateToken(id);
-        return reply.send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
+        try {
+            const result = await databaseService.rotateToken(id);
+            return reply.send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
+        }
+        catch (err) {
+            request.log.error({ err, databaseId: id }, '[DatabaseController] rotate-token failed');
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to rotate token' });
+        }
+    });
+    app.post('/databases/:id/reveal-token', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
+        try {
+            const result = await databaseService.revealToken(id);
+            reply.header('Cache-Control', 'no-store');
+            return reply.send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
+        }
+        catch (err) {
+            request.log.error({ err, databaseId: id }, '[DatabaseController] reveal-token failed');
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to reveal token' });
+        }
     });
     app.post('/databases/:id/test-connection', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.read')))

@@ -15,6 +15,7 @@ export default async function schemaRoutes(app: FastifyInstance) {
     try {
       return reply.send(await schemaService.getSchema(id));
     } catch (error: any) {
+      request.log.error({ err: error, databaseId: id }, `[SchemaController] Failed to get schema: ${error?.message || error}`);
       if (error instanceof DatabaseError) {
         return reply.status(error.recoverable ? 503 : 500).send({
           error: error.message,

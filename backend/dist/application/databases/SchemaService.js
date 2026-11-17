@@ -52,7 +52,12 @@ class SchemaService {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
     }
     async getSchema(databaseId) {
-        const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+        const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
+        if (!database) {
+            const err = new Error('Database not found');
+            err.name = 'EntityNotFoundError';
+            throw err;
+        }
         const pool = ConnectionPool_1.ConnectionPool.getInstance();
         const client = pool.getClient(database);
         if (client instanceof SqliteClient_1.SqliteClient) {

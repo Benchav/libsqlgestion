@@ -31,7 +31,12 @@ export class QueryService {
   private databaseRepo = AppDataSource.getRepository(Database);
 
   async execute(databaseId: string, sql: string, params: unknown[] = []): Promise<QueryExecutionResult> {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
+    if (!database) {
+      const err = new Error('Database not found');
+      err.name = 'EntityNotFoundError';
+      throw err;
+    }
     const statements = splitSqlStatements(sql);
     const isScript = statements.length > 1;
 

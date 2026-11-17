@@ -67,7 +67,12 @@ export class SchemaService {
   private databaseRepo = AppDataSource.getRepository(Database);
 
   async getSchema(databaseId: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
+    if (!database) {
+      const err = new Error('Database not found');
+      err.name = 'EntityNotFoundError';
+      throw err;
+    }
     const pool = ConnectionPool.getInstance();
     const client = pool.getClient(database);
 

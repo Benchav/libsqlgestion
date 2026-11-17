@@ -67,6 +67,9 @@ class SqliteStorageService {
             }
             await fs_2.promises.rm(targetPath, { force: true }).catch(() => undefined);
             await fs_2.promises.rename(tempTargetPath, targetPath);
+            if (type === 'libsql') {
+                this.applySqldOwnership(path_1.default.dirname(targetPath), targetPath);
+            }
         }
         catch (error) {
             await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);

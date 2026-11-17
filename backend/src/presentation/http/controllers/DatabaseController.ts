@@ -6,7 +6,7 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
-import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema } from '../../../types/validations';
+import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema, convertToRuntimeSchema } from '../../../types/validations';
 import { ValidationError } from '../../../types/validations';
 import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { Database } from '../../../domain/entities/Database';
@@ -227,6 +227,20 @@ export default async function databaseRoutes(app: FastifyInstance) {
       return reply.send({ database: presentDatabase(database) });
     } catch (err: any) {
       return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to local file' });
+    }
+  });
+
+  app.post('/databases/:id/convert-to-runtime', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    const body = parseAndValidate(convertToRuntimeSchema, request.body || {}, 'convert to runtime');
+    try {
+      const result = await databaseService.convertLocalDatabaseToRuntime(id, body);
+      return reply.send({ database: presentDatabase(result.database), token: result.token });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to libSQL runtime' });
     }
   });
 

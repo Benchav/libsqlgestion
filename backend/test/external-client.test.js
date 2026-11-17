@@ -155,4 +155,24 @@ test.describe('External @libsql/client compatibility', () => {
     const afterRollback = await libsqlClient.execute('SELECT COUNT(*) AS cnt FROM clientes');
     assert.equal(Number(afterRollback.rows[0].cnt), 4);
   });
+
+  test('convert-to-runtime fails cleanly when Docker is unavailable', async () => {
+    const convertRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${databaseId}/convert-to-runtime`,
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+      payload: { subdomain: 'external-client-runtime' },
+    });
+
+    assert.equal(convertRes.statusCode, 503, convertRes.payload);
+
+    const detailRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/databases/${databaseId}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(detailRes.statusCode, 200, detailRes.payload);
+    const detail = JSON.parse(detailRes.payload).database;
+    assert.equal(detail.runtimeProvider, 'local-file');
+  });
 });

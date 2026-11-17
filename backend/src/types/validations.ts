@@ -29,6 +29,10 @@ export const updateDatabaseSchema = z.object({
   status: z.enum(['active', 'inactive', 'error']).optional(),
 });
 
+export const convertToRuntimeSchema = z.object({
+  subdomain: optionalString,
+});
+
 export const executeQuerySchema = z.object({
   sql: z.string().min(1).max(65536),
   params: z.array(z.unknown()).default([]),

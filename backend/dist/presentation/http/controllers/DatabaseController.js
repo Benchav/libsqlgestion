@@ -242,6 +242,22 @@ async function databaseRoutes(app) {
             return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to local file' });
         }
     });
+    app.post('/databases/:id/convert-to-runtime', { preHandler: [app.authenticate] }, async (request, reply) => {
+        if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
+            return;
+        const { id } = request.params;
+        const access = await (0, guards_1.ensureDatabaseAccess)(request, reply, id);
+        if (!access)
+            return;
+        const body = (0, validations_1.parseAndValidate)(validations_1.convertToRuntimeSchema, request.body || {}, 'convert to runtime');
+        try {
+            const result = await databaseService.convertLocalDatabaseToRuntime(id, body);
+            return reply.send({ database: (0, database_presenter_1.presentDatabase)(result.database), token: result.token });
+        }
+        catch (err) {
+            return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to libSQL runtime' });
+        }
+    });
     app.post('/databases/:id/backup', { preHandler: [app.authenticate] }, async (request, reply) => {
         if (!(await (0, guards_1.ensurePermission)(request, reply, 'databases.write')))
             return;

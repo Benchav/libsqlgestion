@@ -50,6 +50,17 @@ function getDatabaseTypeLabel(database?: Pick<DatabaseDetail, 'type' | 'effectiv
   return (database?.effectiveType || database?.type || 'sqlite').toUpperCase();
 }
 
+function suggestSubdomain(name: string) {
+  const slug = name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return `${slug || 'database'}-db`;
+}
+
 export default function DatabaseDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -65,6 +76,10 @@ export default function DatabaseDetailPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [isConvertOpen, setIsConvertOpen] = useState(false);
+  const [convertSubdomain, setConvertSubdomain] = useState('');
+  const [isConverting, setIsConverting] = useState(false);
+  const [convertError, setConvertError] = useState('');
 
   async function loadDatabase() {
     try {
@@ -98,6 +113,27 @@ export default function DatabaseDetailPage() {
     } catch (err: any) {
       setTestStatus('error');
       setTestMessage(err.message);
+    }
+  }
+
+  async function handleConvertToRuntime(event: React.FormEvent) {
+    event.preventDefault();
+    setConvertError('');
+    setIsConverting(true);
+    try {
+      const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/convert-to-runtime`, {
+        method: 'POST',
+        body: JSON.stringify({ subdomain: convertSubdomain.trim() || undefined }),
+      });
+      setDatabase(result.database);
+      setEphemeralDatabaseToken(id, result.token, result.database.name);
+      setRevealedToken(result.token);
+      setIsConvertOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['databases'] });
+    } catch (err: any) {
+      setConvertError(err.message || 'failed to convert database');
+    } finally {
+      setIsConverting(false);
     }
   }
 
@@ -267,6 +303,18 @@ export default function DatabaseDetailPage() {
             </div>
 
             <div className="flex items-center gap-3">
+              {database?.runtimeProvider === 'local-file' && (
+                <button
+                  onClick={() => {
+                    setConvertSubdomain(suggestSubdomain(database.name));
+                    setConvertError('');
+                    setIsConvertOpen(true);
+                  }}
+                  className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                >
+                  <Zap size={16} /> Make public libSQL
+                </button>
+              )}
               <button
                 onClick={() => setIsEditOpen(true)}
                 className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
@@ -379,6 +427,23 @@ export default function DatabaseDetailPage() {
                     </p>
                   )}
                 </div>
+
+                {publicLibsqlUrl && (
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Public libSQL URL</label>
+                    <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                      <code className="flex-1 break-all whitespace-normal">{publicLibsqlUrl}</code>
+                      <button
+                        type="button"
+                        onClick={() => copyText(publicLibsqlUrl, 'public-libsql-url')}
+                        className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors"
+                      >
+                        {copiedKey === 'public-libsql-url' ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedKey === 'public-libsql-url' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Internal URL</label>
@@ -607,6 +672,72 @@ await client.execute(\`
             router.push(`/databases/${newDbId}`);
           }}
         />
+      )}
+
+      {isConvertOpen && database && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px] modal-backdrop">
+          <div className="w-full max-w-[560px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl modal-content">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-100">Make database public libSQL</h2>
+                <p className="mt-1 text-sm text-zinc-400">
+                  Creates a dedicated libsql-server, returns a libsql:// URL and JWT, and keeps the current local file as a backup.
+                </p>
+              </div>
+              <button onClick={() => setIsConvertOpen(false)} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300">
+                <X size={20} />
+              </button>
+            </div>
+
+            {convertError && (
+              <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                {convertError}
+              </div>
+            )}
+
+            <form onSubmit={handleConvertToRuntime} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-2">Subdomain</label>
+                <input
+                  type="text"
+                  value={convertSubdomain}
+                  onChange={(e) => setConvertSubdomain(e.target.value)}
+                  placeholder="mydb-db"
+                  className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                />
+                <p className="mt-2 text-xs text-zinc-500">
+                  The final URL is built from the backend's DATABASE_PUBLIC_DOMAIN. Use a fixed subdomain such as mydb-db.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-[#050505] p-3 text-xs text-zinc-400">
+                <p className="font-medium text-zinc-300">Before converting:</p>
+                <ul className="mt-2 list-disc space-y-1 pl-4">
+                  <li>Configure DATABASE_PUBLIC_DOMAIN and DNS/TLS for the host.</li>
+                  <li>The current local file is kept as a backup.</li>
+                  <li>Clients must switch to the new libsql:// URL and JWT.</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsConvertOpen(false)}
+                  className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isConverting}
+                  className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-white disabled:opacity-50"
+                >
+                  {isConverting ? 'Creating libSQL runtime...' : 'Convert to libSQL'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </AppShell>
   );

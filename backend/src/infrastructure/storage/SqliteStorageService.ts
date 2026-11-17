@@ -75,6 +75,9 @@ export class SqliteStorageService {
 
       await fsp.rm(targetPath, { force: true }).catch(() => undefined);
       await fsp.rename(tempTargetPath, targetPath);
+      if (type === 'libsql') {
+        this.applySqldOwnership(path.dirname(targetPath), targetPath);
+      }
     } catch (error) {
       await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
       throw error;

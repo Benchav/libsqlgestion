@@ -308,6 +308,75 @@ class DatabaseService {
         });
         return database;
     }
+    async convertLocalDatabaseToRuntime(id, input = {}) {
+        const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+        if (!database) {
+            const error = new Error('database not found');
+            error.statusCode = 404;
+            throw error;
+        }
+        if (!this.runtimeService.isEnabled()) {
+            const error = new Error('Docker socket is not available; cannot provision a libSQL runtime');
+            error.statusCode = 503;
+            throw error;
+        }
+        if ((0, database_runtime_1.resolveEffectiveDatabaseType)(database) !== 'sqlite') {
+            const error = new Error('Only LOCAL-FILE SQLite databases can be converted to a libSQL runtime');
+            error.statusCode = 409;
+            throw error;
+        }
+        const sourcePath = (database.url && fs_1.default.existsSync(database.url))
+            ? database.url
+            : this.storageService.managedDatabasePath(database.project.id, database.id, 'sqlite');
+        if (!fs_1.default.existsSync(sourcePath)) {
+            const error = new Error(`local SQLite file not found at ${sourcePath}`);
+            error.statusCode = 404;
+            throw error;
+        }
+        const subdomain = input.subdomain
+            ? (0, slug_1.assertValidSubdomainLabel)(input.subdomain)
+            : database.subdomain || (0, slug_1.ensureSubdomain)(database.name, (0, tokens_1.randomToken)());
+        const existing = await this.databaseRepo.findOne({ where: { subdomain } });
+        if (existing && existing.id !== database.id) {
+            const error = new Error(`subdomain "${subdomain}" is already in use`);
+            error.statusCode = 409;
+            throw error;
+        }
+        const targetPath = await this.storageService.importDatabaseFile(sourcePath, database.project.id, database.id, 'libsql');
+        database.subdomain = subdomain;
+        try {
+            const runtime = await this.runtimeService.provisionDatabase(database, targetPath);
+            database.type = 'libsql';
+            database.status = 'active';
+            database.url = targetPath;
+            database.encryptedToken = (0, crypto_1.encrypt)(runtime.token);
+            database.metadata = {
+                ...mergeRuntimeMetadata(database.metadata, runtime.metadata),
+                convertedFromLocal: true,
+                convertedAt: new Date().toISOString(),
+                previousLocalPath: sourcePath,
+            };
+            await this.databaseRepo.save(database);
+            ConnectionPool_1.ConnectionPool.getInstance().evict(database.id);
+            await this.auditService.record({
+                action: 'database.convert_to_runtime',
+                resourceType: 'database',
+                resourceId: database.id,
+                metadata: {
+                    projectId: database.project.id,
+                    subdomain,
+                    sourcePath,
+                    targetPath,
+                    runtime: 'docker-libsql',
+                },
+            });
+            return { database, token: runtime.token };
+        }
+        catch (error) {
+            // The original local database record and file are left untouched.
+            throw error;
+        }
+    }
     async reconcileLegacyDatabases() {
         const databases = await this.databaseRepo.find();
         let reconciled = 0;

@@ -48,7 +48,8 @@ services:
       - -c
       - node /scripts/init-sqld-auth.mjs /data && (chown -R "$${SQLD_UID:-666}:$${SQLD_GID:-666}" /data 2>/dev/null || true)
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     volumes:
       - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/data
     restart: 'no'
@@ -81,7 +82,8 @@ services:
       DB_CONNECTION_POOL_IDLE_TTL_MS: ${DB_CONNECTION_POOL_IDLE_TTL_MS:-1800000}
       SQLITE_PERFORMANCE_PROFILE: ${SQLITE_PERFORMANCE_PROFILE:-performance}
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     volumes:
       - ${BACKEND_DATA_DIR_HOST:-./backend/data}:/app/data
       - ${SQLD_DATA_DIR_HOST:-./backend/data/sqld}:/app/data/sqld

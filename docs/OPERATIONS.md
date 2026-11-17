@@ -110,6 +110,45 @@ Operational advice:
 - with `LIBSQL_NAMESPACE_IMPORTS=auto` (default), the import uses the `sqld` namespace when it is reachable and falls back to a local `.db` otherwise
 - if you do not run `sqld`, set `LIBSQL_NAMESPACE_IMPORTS=false` so imports always stay local
 
+### Consume a LOCAL-FILE database from another backend
+
+A `LOCAL-FILE` database is exposed through the backend's HTTP Hrana proxy. To use it from another server or container:
+
+1. Assign a public HTTPS domain to the LibSQLite backend.
+2. Set the public base URL in the panel:
+
+   `Settings -> Public Database Routing -> Base URL`
+
+   Example:
+
+   ```text
+   https://libsql.example.com
+   ```
+
+   You can also set `DATABASE_PUBLIC_BASE_URL=https://libsql.example.com` in the backend environment.
+
+3. Open the database detail page and copy:
+   - **Public URL**, for example `https://libsql.example.com/api/v1/databases/<id>/`
+   - **Auth Token**
+
+4. In the consuming backend, use the URL exactly as shown, including the trailing slash, and the token as a Bearer token. Do not use `libsql://` for `LOCAL-FILE`; use `https://`.
+
+Example with `@libsql/client`:
+
+```js
+import { createClient } from '@libsql/client';
+
+const client = createClient({
+  url: 'https://libsql.example.com/api/v1/databases/<id>/',
+  authToken: '<token>',
+});
+
+const result = await client.execute('SELECT 1 AS ok');
+```
+
+The endpoint supports positional and named parameters, `RETURNING`, batches and simple transactions. For high concurrency or full libSQL compatibility, use a `libsql` namespace or a dedicated `libsql-server` container instead of `LOCAL-FILE`.
+
+
 ## 6. Discover mounted SQLite files
 
 Use this when a directory is mounted inside the backend container or VM.

@@ -76,6 +76,8 @@ Notes:
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - `LIBSQL_NAMESPACE_IMPORTS=auto` makes imports fall back to a local `.db` when `sqld` is unreachable. Use `true` only when `sqld` is part of the same deployment and must be required for every import.
 - If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume. Otherwise imports will fail or fall back to local storage depending on `LIBSQL_NAMESPACE_IMPORTS`.
+- If you use `sqld` namespaces, set **both** `DATABASE_PUBLIC_DOMAIN` and `SQLD_PUBLIC_DOMAIN` to a dedicated parent domain for databases (for example `db.example.com`) and keep that domain separate from the domains used by applications.
+- For `LOCAL-FILE` databases, set `DATABASE_PUBLIC_BASE_URL` (or the panel's **Base URL** field) to the public HTTPS base URL of the backend so the generated URL is reachable by external clients.
 - The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.
 
 ## 4. Volumes

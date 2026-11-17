@@ -23,6 +23,25 @@ Remember:
 - import copies the `.db` file into managed storage
 - changes should be made through queries or migrations against the managed copy
 
+## Public URL still points to localhost
+
+For `LOCAL-FILE` databases the panel builds the public URL from `DATABASE_PUBLIC_BASE_URL`, or from the **Base URL** field in `Settings -> Public Database Routing`.
+
+Set it to the public HTTPS base URL of the backend, for example:
+
+```env
+DATABASE_PUBLIC_BASE_URL=https://libsql.example.com
+DATABASE_PUBLIC_PROTOCOL=https
+```
+
+The generated URL must look like:
+
+```text
+https://libsql.example.com/api/v1/databases/<id>/
+```
+
+The wildcard domain setting is only used by `sqld` namespaces, not by `LOCAL-FILE` databases.
+
 ## Imports fail with `fetch failed: getaddrinfo EAI_AGAIN sqld`
 
 This means the backend tried to reach the `sqld` namespace service but Docker DNS could not resolve the hostname `sqld`.

@@ -29,11 +29,17 @@ type UserRecord = {
 type PublicDatabaseSettings = {
   domain: string;
   protocol: string;
+  baseUrl: string;
+  template: string;
+  host: string;
 };
 
 const DEFAULT_PUBLIC_DATABASE_SETTINGS: PublicDatabaseSettings = {
   domain: '',
   protocol: 'https',
+  baseUrl: '',
+  template: '',
+  host: '',
 };
 
 export default function SettingsPage() {
@@ -87,9 +93,9 @@ export default function SettingsPage() {
         body: JSON.stringify({
           domain: publicDatabaseSettings.domain,
           protocol: publicDatabaseSettings.protocol,
-          template: '',
-          baseUrl: '',
-          host: '',
+          template: publicDatabaseSettings.template,
+          baseUrl: publicDatabaseSettings.baseUrl,
+          host: publicDatabaseSettings.host,
         }),
       });
       setPublicDatabaseSettings({ ...DEFAULT_PUBLIC_DATABASE_SETTINGS, ...result.settings });
@@ -152,6 +158,22 @@ export default function SettingsPage() {
                       <option value="http">http (development only)</option>
                     </select>
                   </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="w-40 text-sm font-medium text-zinc-300">Base URL</label>
+                    <input
+                      type="url"
+                      placeholder="https://libsql.example.com"
+                      value={publicDatabaseSettings.baseUrl}
+                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, baseUrl: e.target.value }))}
+                      className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+                  <p className="-mt-2 ml-44 text-xs text-zinc-500">
+                    For LOCAL-FILE databases, this is the public base URL of the backend. It generates
+                    {' '}
+                    <code>{publicDatabaseSettings.baseUrl || 'https://your-domain'}/api/v1/databases/&lt;id&gt;/</code>.
+                  </p>
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <p className="text-xs text-zinc-500">

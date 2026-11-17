@@ -31,7 +31,9 @@ services:
       start_period: 20s
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${DATABASE_PUBLIC_DOMAIN:-localhost}`)"
+      # Namespace routing uses its own domain so it never captures the root
+      # domain used by the apps or by single-database libSQL containers.
+      - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${SQLD_PUBLIC_DOMAIN:-localhost}`)"
       - "traefik.http.services.sqld.loadbalancer.server.port=8080"
 
   # Keep the auth bootstrap script inside the image. Bind-mounting it from the

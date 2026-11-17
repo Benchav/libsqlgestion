@@ -372,6 +372,12 @@ export default function DatabaseDetailPage() {
                       {copiedKey === 'public-url' ? 'Copied' : 'Copy'}
                     </button>
                   </div>
+                  {publicUrl && /localhost|127\.0\.0\.1/.test(publicUrl) && (
+                    <p className="mt-2 text-xs text-amber-400">
+                      This URL is not reachable from another server. Set the public Base URL in{' '}
+                      <a href="/settings" className="underline hover:text-amber-300">Settings</a>.
+                    </p>
+                  )}
                 </div>
 
                 <div>

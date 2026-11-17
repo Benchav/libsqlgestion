@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -291,29 +292,39 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const sql = stmt?.sql || (stmt?.sql_id != null && sqlMap ? sqlMap.get(stmt.sql_id) : undefined);
     if (!sql) throw new Error('missing sql statement');
 
-    let args: any[] = [];
-    if (Array.isArray(stmt.args)) {
-      args = stmt.args.map(parseHranaValue);
-    } else if (Array.isArray(stmt.named_args)) {
+    let args: any = [];
+    if (Array.isArray(stmt.named_args) && stmt.named_args.length > 0) {
       const named: Record<string, any> = {};
-      for (const na of stmt.named_args) {
-        if (na && na.name) {
-          named[na.name] = parseHranaValue(na.value);
-        }
+      const sqlNamedParams = new Set<string>();
+      for (const match of sql.matchAll(/([:@$])([A-Za-z_][A-Za-z0-9_]*)/g)) {
+        sqlNamedParams.add(`${match[1]}${match[2]}`);
       }
-      args = [named];
+
+      for (const na of stmt.named_args) {
+        if (!na || !na.name) continue;
+        const value = parseHranaValue(na.value);
+        const name = String(na.name);
+        const baseName = name.replace(/^[:@$]/, '');
+        const candidates = [name, `:${baseName}`, `@${baseName}`, `$${baseName}`];
+        const bindingName = candidates.find((candidate) => sqlNamedParams.has(candidate)) || name;
+        named[bindingName] = value;
+      }
+      args = named;
+    } else if (Array.isArray(stmt.args)) {
+      args = stmt.args.map(parseHranaValue);
     }
 
     if (client instanceof SqliteClient) {
       const isSelect = /^\s*(WITH\b[\s\S]*?\bSELECT|SELECT|PRAGMA|EXPLAIN)\b/i.test(sql);
-      if (isSelect) {
+      const isReturning = /\bRETURNING\b/i.test(sql);
+      if (isSelect || isReturning) {
         const rows = await client.all(sql, args);
         const cols = rows.length > 0 ? Object.keys(rows[0] as object).map((k) => ({ name: k })) : [];
         const hranaRows = rows.map((row: any) => Object.values(row).map(formatHranaValue));
         return {
           cols,
           rows: hranaRows,
-          affected_row_count: 0,
+          affected_row_count: isReturning ? rows.length : 0,
           last_insert_rowid: null,
         };
       } else {
@@ -335,6 +346,63 @@ export default async function databaseRoutes(app: FastifyInstance) {
         affected_row_count: res.rowsAffected || 0,
         last_insert_rowid: res.lastInsertRowid != null ? String(res.lastInsertRowid) : null,
       };
+    }
+  }
+
+  type PipelineBatonState = {
+    client: SqliteClient;
+    databaseId: string;
+    lastUsed: number;
+    transactionOpen: boolean;
+    sqlMap: Map<number, string>;
+  };
+
+  const pipelineBatons = new Map<string, PipelineBatonState>();
+
+  function getRequestSql(reqItem: any, sqlMap: Map<number, string>): string[] {
+    const sqls: string[] = [];
+    const add = (stmt: any) => {
+      const sql = stmt?.sql || (stmt?.sql_id != null ? sqlMap.get(stmt.sql_id) : undefined);
+      if (typeof sql === 'string' && sql.trim()) sqls.push(sql);
+    };
+
+    if (reqItem?.type === 'execute') add(reqItem.stmt);
+    if (reqItem?.type === 'sequence') {
+      const sql = reqItem.sql || (reqItem.sql_id != null ? sqlMap.get(reqItem.sql_id) : undefined);
+      if (typeof sql === 'string' && sql.trim()) sqls.push(sql);
+    }
+    if (reqItem?.type === 'batch') {
+      for (const step of reqItem.batch?.steps || []) add(step?.stmt);
+    }
+
+    return sqls;
+  }
+
+  function pipelineStartsTransaction(requests: any[], sqlMap: Map<number, string>) {
+    return requests.some((item) => getRequestSql(item, sqlMap).some((sql) => /^\s*BEGIN(?:\s+TRANSACTION)?\b/i.test(sql)));
+  }
+
+  function pipelineEndsTransaction(requests: any[], sqlMap: Map<number, string>) {
+    return requests.some((item) => getRequestSql(item, sqlMap).some((sql) => /^\s*(?:COMMIT|END|ROLLBACK)\b/i.test(sql)));
+  }
+
+  async function closeBatonState(state: PipelineBatonState) {
+    try {
+      if (state.transactionOpen) {
+        await state.client.exec('ROLLBACK;');
+      }
+    } catch {}
+    try {
+      await state.client.close();
+    } catch {}
+  }
+
+  function sweepPipelineBatons() {
+    const now = Date.now();
+    for (const [id, state] of pipelineBatons) {
+      if (now - state.lastUsed <= 5 * 60_000) continue;
+      pipelineBatons.delete(id);
+      void closeBatonState(state);
     }
   }
 
@@ -415,27 +483,69 @@ export default async function databaseRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: 'unauthorized: invalid database token' });
     }
 
-    const body = (request.body || {}) as { requests?: any[] };
+    const body = (request.body || {}) as { requests?: any[]; baton?: unknown };
     const requests = Array.isArray(body.requests) ? body.requests : [];
     const results: any[] = [];
-    const sqlMap = new Map<number, string>();
+    const requestedBaton = typeof body.baton === 'string' ? body.baton : undefined;
 
-    const client = ConnectionPool.getInstance().getClient(database);
+    sweepPipelineBatons();
+
+    let batonState = requestedBaton ? pipelineBatons.get(requestedBaton) : undefined;
+    if (requestedBaton && (!batonState || batonState.databaseId !== database.id)) {
+      return reply.code(400).send({ error: 'invalid baton' });
+    }
+
+    const requestSqlMap = new Map<number, string>();
+    for (const reqItem of requests) {
+      if (reqItem.type === 'store_sql' && reqItem.sql_id != null && reqItem.sql) {
+        requestSqlMap.set(reqItem.sql_id, reqItem.sql);
+      }
+    }
+
+    let client: any = ConnectionPool.getInstance().getClient(database);
+    let responseBaton: string | null = requestedBaton ?? null;
+
+    if (client instanceof SqliteClient) {
+      if (batonState) {
+        client = batonState.client;
+        for (const [sqlId, sql] of requestSqlMap) {
+          batonState.sqlMap.set(sqlId, sql);
+        }
+        batonState.lastUsed = Date.now();
+      } else if (pipelineStartsTransaction(requests, requestSqlMap)) {
+        const dedicatedClient = ConnectionPool.getInstance().createDedicatedSqliteClient(database);
+        const batonId = crypto.randomUUID();
+        batonState = {
+          client: dedicatedClient,
+          databaseId: database.id,
+          lastUsed: Date.now(),
+          transactionOpen: true,
+          sqlMap: requestSqlMap,
+        };
+        pipelineBatons.set(batonId, batonState);
+        client = dedicatedClient;
+        responseBaton = batonId;
+      }
+    } else if (requestedBaton) {
+      return reply.code(400).send({ error: 'baton transactions are only supported for local SQLite databases' });
+    }
+
+    const activeSqlMap = batonState ? batonState.sqlMap : requestSqlMap;
 
     for (const reqItem of requests) {
       if (reqItem.type === 'store_sql') {
         if (reqItem.sql_id != null && reqItem.sql) {
-          sqlMap.set(reqItem.sql_id, reqItem.sql);
+          activeSqlMap.set(reqItem.sql_id, reqItem.sql);
         }
         results.push({ type: 'ok', response: { type: 'store_sql' } });
       } else if (reqItem.type === 'close_sql') {
         if (reqItem.sql_id != null) {
-          sqlMap.delete(reqItem.sql_id);
+          activeSqlMap.delete(reqItem.sql_id);
         }
         results.push({ type: 'ok', response: { type: 'close_sql' } });
       } else if (reqItem.type === 'execute') {
         try {
-          const stmtResult = await executeHranaStmt(client, reqItem.stmt, sqlMap);
+          const stmtResult = await executeHranaStmt(client, reqItem.stmt, activeSqlMap);
           results.push({
             type: 'ok',
             response: {
@@ -466,7 +576,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
           }
 
           try {
-            const stmtResult = await executeHranaStmt(client, step.stmt, sqlMap);
+            const stmtResult = await executeHranaStmt(client, step.stmt, activeSqlMap);
             stepResults.push(stmtResult);
             stepErrors.push(null);
           } catch (err: any) {
@@ -488,12 +598,13 @@ export default async function databaseRoutes(app: FastifyInstance) {
           },
         });
       } else if (reqItem.type === 'sequence') {
+        const sequenceSql = reqItem.sql || (reqItem.sql_id != null ? activeSqlMap.get(reqItem.sql_id) : undefined);
         try {
-          if (reqItem.sql) {
+          if (sequenceSql) {
             if (client instanceof SqliteClient) {
-              await client.exec(reqItem.sql);
+              await client.exec(sequenceSql);
             } else {
-              await (client as any).execute(reqItem.sql);
+              await (client as any).execute(sequenceSql);
             }
           }
           results.push({ type: 'ok', response: { type: 'sequence' } });
@@ -513,8 +624,23 @@ export default async function databaseRoutes(app: FastifyInstance) {
       }
     }
 
+    if (batonState) {
+      batonState.lastUsed = Date.now();
+      if (pipelineEndsTransaction(requests, activeSqlMap)) {
+        batonState.transactionOpen = false;
+      }
+
+      if (requests.some((item: any) => item.type === 'close')) {
+        if (responseBaton) {
+          pipelineBatons.delete(responseBaton);
+        }
+        await closeBatonState(batonState);
+        responseBaton = null;
+      }
+    }
+
     return reply.send({
-      baton: null,
+      baton: responseBaton,
       base_url: null,
       results,
     });

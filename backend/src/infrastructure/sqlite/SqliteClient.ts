@@ -113,11 +113,13 @@ export class DatabaseError extends Error {
   }
 }
 
+type SqliteParams = unknown[] | Record<string, unknown>;
+
 export class SqliteClient {
   private db: sqlite3.Database;
-  public all: (sql: string, params?: unknown[]) => Promise<unknown[]>;
-  public get: (sql: string, params?: unknown[]) => Promise<unknown>;
-  public run: (sql: string, params?: unknown[]) => Promise<{ changes: number; lastID: number }>;
+  public all: (sql: string, params?: SqliteParams) => Promise<unknown[]>;
+  public get: (sql: string, params?: SqliteParams) => Promise<unknown>;
+  public run: (sql: string, params?: SqliteParams) => Promise<{ changes: number; lastID: number }>;
   public exec: (sql: string) => Promise<void>;
   public execAtomic: (sql: string) => Promise<void>;
 
@@ -147,23 +149,23 @@ export class SqliteClient {
       this.db.run(`PRAGMA temp_store = ${config.tempStore};`);
       this.db.run(`PRAGMA mmap_size = ${Math.max(0, config.mmapSize)};`);
     });
-    this.all = (sql: string, params: unknown[] = []) =>
+    this.all = (sql: string, params: SqliteParams = []) =>
       new Promise((resolve, reject) => {
-        this.db.all(sql, params, (error: Error | null, rows: unknown[]) => {
+        this.db.all(sql, params as any, (error: Error | null, rows: unknown[]) => {
           if (error) return reject(DatabaseError.from(error));
           resolve(rows);
         });
       });
-    this.get = (sql: string, params: unknown[] = []) =>
+    this.get = (sql: string, params: SqliteParams = []) =>
       new Promise((resolve, reject) => {
-        this.db.get(sql, params, (error: Error | null, row: unknown) => {
+        this.db.get(sql, params as any, (error: Error | null, row: unknown) => {
           if (error) return reject(DatabaseError.from(error));
           resolve(row);
         });
       });
-    this.run = (sql: string, params: unknown[] = []) =>
+    this.run = (sql: string, params: SqliteParams = []) =>
       new Promise((resolve, reject) => {
-        this.db.run(sql, params, function (this: sqlite3.RunResult, error: Error | null) {
+        this.db.run(sql, params as any, function (this: sqlite3.RunResult, error: Error | null) {
           if (error) return reject(DatabaseError.from(error));
           resolve({ changes: this.changes ?? 0, lastID: this.lastID ?? 0 });
         });

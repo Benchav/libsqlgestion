@@ -22,9 +22,9 @@ When you create a database, LibSQLite orchestrates the following:
 To expose your local Traefik proxy securely without opening ports on your router or VPS, use **Cloudflare Tunnels**.
 
 ### 🚨 CRITICAL: The Cloudflare Free Plan "SSL Trap"
-If you are on the **Free Plan** of Cloudflare, the provided Universal SSL certificate **only covers one level of subdomains** (e.g., `*.ibarrera.site`). 
-- ✅ `https://inventario.ibarrera.site` (Covered)
-- ❌ `https://inventario.db.ibarrera.site` (NOT covered. Will throw an SSL Error).
+If you are on the **Free Plan** of Cloudflare, the provided Universal SSL certificate **only covers one level of subdomains** (e.g., `*.example.com`). 
+- ✅ `https://inventario.example.com` (Covered)
+- ❌ `https://inventario.db.example.com` (NOT covered. Will throw an SSL Error).
 
 **GOLDEN RULE**: Do not use `db.yourdomain.com` as your routing domain in LibSQLite if you are on the Free Plan. Use your root domain (`yourdomain.com`). This ensures generated URLs like `https://my-db.yourdomain.com` are protected by Free SSL natively.
 
@@ -104,7 +104,7 @@ TURSO_DATABASE_URL=https://[database-name].yourdomain.com
 # OR using WebSockets
 TURSO_DATABASE_URL=libsql://[database-name].yourdomain.com
 
-TURSO_AUTH_TOKEN=eyJhbGciOiJFZERTQSIsInR...
+TURSO_AUTH_TOKEN=<your-database-token>
 ```
 
 LibSQLite now also exposes a public HTTPS URL and a public `libsql://` URL separately in the panel. Prefer the `libsql://` URL for production clients that support it, and use the HTTPS URL as a fallback.

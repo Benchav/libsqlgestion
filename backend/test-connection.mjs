@@ -1,17 +1,25 @@
-import { createClient } from "@libsql/client";
+import { createClient } from '@libsql/client';
 
-const client = createClient({
-  url: "https://insbarrera-1ac07590.ibarrera.site",
-  authToken: "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.e30.QSlKTcDWZhgBFEV5AAAdDAUvyxc0CcH-CVk1xds2K_a3l8xR9NMPoA67lOOQNT0iLcN6crzt__YDZXpITlegCg"
-});
+const url = process.env.DATABASE_URL || process.env.TURSO_DATABASE_URL;
+const authToken = process.env.DATABASE_AUTH_TOKEN || process.env.TURSO_AUTH_TOKEN;
+
+if (!url || !authToken) {
+  console.error('Set DATABASE_URL/TURSO_DATABASE_URL and DATABASE_AUTH_TOKEN/TURSO_AUTH_TOKEN.');
+  process.exit(1);
+}
+
+const client = createClient({ url, authToken });
 
 async function test() {
-  console.log("Intentando conectar a la nueva base de datos...");
+  console.log('Connecting to the configured libSQL database...');
   try {
-    const rs = await client.execute("SELECT '¡Funciona a la perfección!' AS mensaje");
-    console.log("Resultado de la consulta:", rs.rows);
+    const rs = await client.execute("SELECT 'connection ok' AS message");
+    console.log('Result:', rs.rows);
   } catch (error) {
-    console.error("Falló la conexión:", error.message);
+    console.error('Connection failed:', error.message);
+    process.exitCode = 1;
+  } finally {
+    client.close();
   }
 }
 

@@ -7,9 +7,9 @@ import fs from 'fs';
 import os from 'os';
 
 // Configuración de prueba
-const DOMAIN = 'ibarrera.site';
-const DB_NAME = 'insumosv1';
-const DB_HASH = 'e0d47a08';
+const DOMAIN = process.env.TEST_PUBLIC_DOMAIN || 'example.com';
+const DB_NAME = process.env.TEST_DB_NAME || 'example-db';
+const DB_HASH = process.env.TEST_DB_HASH || '00000000';
 const SUBDOMAIN = `${DB_NAME}-${DB_HASH}`;
 const FULL_PUBLIC_HOST = `${SUBDOMAIN}.${DOMAIN}`;
 
@@ -18,8 +18,8 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-url-test-'));
 const dbFilePath = path.join(tempDir, 'data.db');
 const db = new DatabaseSync(dbFilePath);
 
-// Token criptográfico de autenticación de prueba
-const VALID_AUTH_TOKEN = '92dba54d9bd333906096b58a7f771ddfe655ba1cc09e3fadda55080aa94ff3b7';
+// Token criptográfico de autenticación de prueba (generado en cada ejecución)
+const VALID_AUTH_TOKEN = process.env.TEST_AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
 const INVALID_AUTH_TOKEN = 'token_invalido_hacker_9999999999';
 
 console.log('================================================================');
@@ -205,7 +205,7 @@ server.listen(0, '127.0.0.1', async () => {
     // -------------------------------------------------------------
     // TEST 3: Operación mediante URL PÚBLICA con Subdominio y Token
     // -------------------------------------------------------------
-    console.log('\n📌 Test 3: Operaciones sobre URL PÚBLICA (Subdominio ibarrera.site)...');
+    console.log(`\n📌 Test 3: Operaciones sobre URL PÚBLICA (Subdominio ${DOMAIN})...`);
     
     // El cliente de libSQL o reverse proxy transmite el Host público del subdominio
     const publicFetch = (sql, args = []) => {

@@ -125,11 +125,22 @@ class DatabaseService {
                 metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: 'local-file' },
             });
             if (willProvisionRuntime && managedPath) {
-                this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
-                    projectId, type: input.type, subdomain: input.subdomain,
-                }).catch((error) => {
-                    console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
-                });
+                if (this.isRuntimeProvisioningAsync()) {
+                    this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
+                        projectId, type: input.type, subdomain: input.subdomain,
+                    }).catch((error) => {
+                        console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+                    });
+                }
+                else {
+                    const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
+                        projectId, type: input.type, subdomain: input.subdomain,
+                    }, false);
+                    if (!provisioned) {
+                        throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
+                    }
+                    return { database: provisioned.database, token: provisioned.token };
+                }
             }
             return { database, token };
         }
@@ -222,11 +233,22 @@ class DatabaseService {
                 metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: 'local-file' },
             });
             if (willProvisionRuntime) {
-                this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
-                    projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
-                }).catch((error) => {
-                    console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
-                });
+                if (this.isRuntimeProvisioningAsync()) {
+                    this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
+                        projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
+                    }).catch((error) => {
+                        console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+                    });
+                }
+                else {
+                    const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
+                        projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
+                    }, false);
+                    if (!provisioned) {
+                        throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
+                    }
+                    return { database: provisioned.database, token: provisioned.token };
+                }
             }
             return { database, token };
         }
@@ -572,10 +594,10 @@ class DatabaseService {
     isManagedRuntimeEntry(database) {
         return getManagedRuntimeUrl(database) !== null;
     }
-    async attemptRuntimeProvisioning(databaseId, managedPath, auditAction, auditMetadata) {
+    async attemptRuntimeProvisioning(databaseId, managedPath, auditAction, auditMetadata, asyncProvisioned = true) {
         const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
         if (!database)
-            return;
+            return null;
         try {
             const managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
             database.type = 'libsql';
@@ -588,8 +610,9 @@ class DatabaseService {
                 action: auditAction,
                 resourceType: 'database',
                 resourceId: database.id,
-                metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned: true },
+                metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned },
             });
+            return { token: managedRuntime.token, database };
         }
         catch (error) {
             const errorMessage = this.runtimeService.getRuntimeErrorMessage(error);
@@ -606,7 +629,12 @@ class DatabaseService {
                 resourceId: database.id,
                 metadata: { ...auditMetadata, error: errorMessage },
             });
+            return null;
         }
+    }
+    isRuntimeProvisioningAsync() {
+        const value = String(process.env.LIBSQL_PROVISION_ASYNC || 'false').trim().toLowerCase();
+        return value === 'true' || value === '1' || value === 'yes';
     }
     async cleanupCreatedDatabase(databaseId, extraPaths = [], runtimeMetadata) {
         const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });

@@ -256,7 +256,7 @@ class LibsqlRuntimeService {
         const { publicKey, privateKey } = crypto_1.default.generateKeyPairSync('ed25519');
         const publicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString().trim() + '\n';
         const issuedAt = Math.floor(Date.now() / 1000);
-        const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
+        const expiresInSeconds = Number(process.env.LIBSQL_RUNTIME_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 365);
         const payload = {
             a: 'rw',
             iat: issuedAt - 60,

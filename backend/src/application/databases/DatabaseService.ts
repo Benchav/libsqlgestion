@@ -138,11 +138,21 @@ export class DatabaseService {
       });
 
       if (willProvisionRuntime && managedPath) {
-        this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
-          projectId, type: input.type, subdomain: input.subdomain,
-        }).catch((error) => {
-          console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
-        });
+        if (this.isRuntimeProvisioningAsync()) {
+          this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
+            projectId, type: input.type, subdomain: input.subdomain,
+          }).catch((error) => {
+            console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+          });
+        } else {
+          const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
+            projectId, type: input.type, subdomain: input.subdomain,
+          }, false);
+          if (!provisioned) {
+            throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
+          }
+          return { database: provisioned.database, token: provisioned.token };
+        }
       }
 
       return { database, token };
@@ -251,11 +261,21 @@ export class DatabaseService {
       });
 
       if (willProvisionRuntime) {
-        this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
-          projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
-        }).catch((error) => {
-          console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
-        });
+        if (this.isRuntimeProvisioningAsync()) {
+          this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
+            projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
+          }).catch((error) => {
+            console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
+          });
+        } else {
+          const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
+            projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
+          }, false);
+          if (!provisioned) {
+            throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
+          }
+          return { database: provisioned.database, token: provisioned.token };
+        }
       }
 
       return { database, token };
@@ -651,9 +671,10 @@ export class DatabaseService {
     managedPath: string,
     auditAction: string,
     auditMetadata: Record<string, unknown>,
-  ) {
+    asyncProvisioned = true,
+  ): Promise<{ token: string; database: Database } | null> {
     const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
-    if (!database) return;
+    if (!database) return null;
 
     try {
       const managedRuntime = await this.runtimeService.provisionDatabase(database, managedPath);
@@ -667,8 +688,9 @@ export class DatabaseService {
         action: auditAction,
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned: true },
+        metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned },
       });
+      return { token: managedRuntime.token, database };
     } catch (error) {
       const errorMessage = this.runtimeService.getRuntimeErrorMessage(error);
       database.status = 'error';
@@ -684,7 +706,13 @@ export class DatabaseService {
         resourceId: database.id,
         metadata: { ...auditMetadata, error: errorMessage },
       });
+      return null;
     }
+  }
+
+  private isRuntimeProvisioningAsync(): boolean {
+    const value = String(process.env.LIBSQL_PROVISION_ASYNC || 'false').trim().toLowerCase();
+    return value === 'true' || value === '1' || value === 'yes';
   }
 
   private async cleanupCreatedDatabase(databaseId: string, extraPaths: string[] = [], runtimeMetadata?: Record<string, unknown>) {

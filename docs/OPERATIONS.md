@@ -148,6 +148,8 @@ const result = await client.execute('SELECT 1 AS ok');
 
 The endpoint supports positional and named parameters, `RETURNING`, batches and simple transactions. For high concurrency or full libSQL compatibility, use a `libsql` namespace or a dedicated `libsql-server` container instead of `LOCAL-FILE`.
 
+For an ERP or backend that uses `@libsql/client` with a file-based embedded replica (`TURSO_SYNC_URL`), follow [ERP_INTEGRATION.md](ERP_INTEGRATION.md). That setup requires a real `libsql-server` runtime, not `LOCAL-FILE`.
+
 
 ## 6. Discover mounted SQLite files
 

@@ -4,10 +4,14 @@ services:
     command:
       - /bin/sqld
       - --enable-namespaces
-      - --http-listen-addr=0.0.0.0:8080
       - --admin-listen-addr=0.0.0.0:9090
       - --auth-jwt-key-file=/var/lib/sqld/auth.pem
-      - --db-path=/var/lib/sqld/data
+    environment:
+      # The libsql-server entrypoint already materializes these as CLI flags.
+      # Do not pass --db-path or --http-listen-addr in command as well.
+      SQLD_NODE: primary
+      SQLD_DB_PATH: /var/lib/sqld/data
+      SQLD_HTTP_LISTEN_ADDR: 0.0.0.0:8080
     expose:
       - '8080'
       - '9090'

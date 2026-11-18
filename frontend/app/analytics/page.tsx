@@ -190,8 +190,8 @@ export default function AnalyticsPage() {
             <Activity className="mx-auto text-zinc-600" size={28} />
             <h2 className="mt-3 text-sm font-medium text-zinc-200">No analytics yet</h2>
             <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500">
-              Query metrics are collected from the moment this version was deployed. Run some queries or connect
-              the ERP to start seeing usage.
+              Query metrics are collected from the moment this version was deployed. Connect a project to see
+              progress.
             </p>
           </div>
         ) : (

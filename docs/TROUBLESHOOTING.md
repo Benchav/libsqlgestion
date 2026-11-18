@@ -104,15 +104,16 @@ Check:
 ```bash
 docker inspect <runtime-container> --format '{{json .NetworkSettings.Networks}}'
 docker inspect <backend-container> --format '{{json .NetworkSettings.Networks}}'
+docker inspect coolify-proxy --format '{{json .NetworkSettings.Networks}}'
 ```
 
-The runtime must list the same network as the backend and Traefik.
+The runtime must share a network with both the backend and `coolify-proxy`.
 
 Fix:
 
 1. Set `LIBSQL_RUNTIME_NETWORK` to that network (usually `coolify`). Leave it
-   empty only if automatic detection works; the backend prefers `coolify` and
-   refuses to create runtimes on `bridge`.
+   empty only if automatic detection works; the backend prefers a network
+   shared with the proxy and refuses to create runtimes on `bridge`.
 2. Redeploy the backend so the new code and variable are active.
 3. Rotate the runtime with **Create new token**. Existing containers keep their
    old network and labels until they are recreated.
@@ -126,6 +127,50 @@ recreated:
 ```bash
 docker network connect coolify <runtime-container>
 ```
+
+## `Public: Fail` with a public DNS NXDOMAIN or a Coolify 503 page
+
+There are two different public failures:
+
+- **NXDOMAIN**: the public hostname does not exist. External clients cannot
+  resolve it. The local resolver can return a cached or captive answer, so
+  verify with Cloudflare DoH:
+
+  ```bash
+  curl -H "Accept: application/dns-json" \
+    "https://cloudflare-dns.com/dns-query?name=<host>&type=A"
+  ```
+
+  `Status: 3` means NXDOMAIN.
+
+- **503 "Site not available" from Coolify**: DNS works, but Traefik has no
+  healthy route for that Host. Check labels and networks.
+
+A wildcard on the parent does not cover a deeper name. For example:
+
+```text
+*.ibarrera.site        covers  foo.ibarrera.site
+*.ibarrera.site   NOT  covers  foo.data.ibarrera.site
+```
+
+If the panel's **Wildcard domain** is `data.ibarrera.site`, you need a record
+for:
+
+```text
+*.data.ibarrera.site
+```
+
+Create it in Cloudflare:
+
+- **Through the existing Tunnel:** add a public hostname
+  `*.data.ibarrera.site` in Zero Trust → Networks → Tunnels → your tunnel,
+  pointing to the same Coolify proxy service.
+- **Direct to the origin:** create a DNS-only A record for
+  `*.data.ibarrera.site` pointing to the server IP, then configure a wildcard
+  certificate in Traefik with DNS-01.
+
+Use **Settings → Public Database Routing → Test wildcard DNS** to verify the
+record before importing.
 
 ## New create/import is blocked: no libSQL primary available
 

@@ -89,6 +89,21 @@ Once deployed, open your LibSQLite Panel to tell the backend how to build your p
 
 Now, whenever you create or import a database, the panel will dynamically inject Traefik labels into the container using this domain and generate a public `URL` like `https://[database-name].yourdomain.com`.
 
+### Wildcard DNS is not the same as a parent wildcard
+
+If the Wildcard domain is `data.example.com`, the DNS record must cover:
+
+```text
+*.data.example.com
+```
+
+A record for `*.example.com` does **not** cover `database.data.example.com`.
+This is the most common cause of `Public: Fail` while `Internal` and `Backend`
+are healthy. Use **Settings → Public Database Routing → Test wildcard DNS** to
+verify the record. If you use a Cloudflare Tunnel, add the wildcard public
+hostname to the tunnel or create a DNS-only `*.data.example.com` record for a
+direct origin connection.
+
 ### Runtime networking
 
 A dedicated `libsql-server` container must share a user-defined Docker network

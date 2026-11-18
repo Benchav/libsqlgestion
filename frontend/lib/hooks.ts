@@ -49,6 +49,9 @@ export type DatabaseDetail = {
     backendOk?: boolean;
     publicOk?: boolean;
     publicChecked?: boolean;
+    internalError?: string;
+    backendError?: string;
+    publicError?: string;
   };
   metadata?: Record<string, unknown>;
   createdAt: string;

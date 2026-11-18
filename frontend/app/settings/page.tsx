@@ -50,6 +50,7 @@ export default function SettingsPage() {
   const [publicDatabaseSettings, setPublicDatabaseSettings] = useState<PublicDatabaseSettings>(DEFAULT_PUBLIC_DATABASE_SETTINGS);
   const [loadingPublicDatabaseSettings, setLoadingPublicDatabaseSettings] = useState(true);
   const [savingPublicDatabaseSettings, setSavingPublicDatabaseSettings] = useState(false);
+  const [dnsCheck, setDnsCheck] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; message: string }>({ status: 'idle', message: '' });
   const [error, setError] = useState('');
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
@@ -145,6 +146,40 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleCheckPublicDns() {
+    const domain = publicDatabaseSettings.domain.trim();
+    if (!domain) {
+      setDnsCheck({ status: 'error', message: 'Enter the database wildcard domain first.' });
+      return;
+    }
+
+    setDnsCheck({ status: 'loading', message: 'Checking public DNS...' });
+    try {
+      const result = await apiRequest<{
+        ok: boolean;
+        record: string;
+        addresses?: string[];
+        message?: string;
+        warning?: string;
+        error?: string;
+      }>(`/settings/public-database/dns-check?domain=${encodeURIComponent(domain)}`);
+
+      if (result.ok) {
+        setDnsCheck({
+          status: 'ok',
+          message: `${result.message || `${result.record} resolves.`}${result.warning ? ` ${result.warning}` : ''}`,
+        });
+      } else {
+        setDnsCheck({
+          status: 'error',
+          message: result.error || `No wildcard DNS record found for ${result.record}.`,
+        });
+      }
+    } catch (err: any) {
+      setDnsCheck({ status: 'error', message: err.message });
+    }
+  }
+
   return (
     <AppShell>
       <div className="p-6 max-w-5xl mx-auto w-full">
@@ -187,12 +222,18 @@ export default function SettingsPage() {
                       type="text"
                       placeholder="db.example.com"
                       value={publicDatabaseSettings.domain}
-                      onChange={(e) => setPublicDatabaseSettings((current) => ({ ...current, domain: e.target.value }))}
+                      onChange={(e) => {
+                        setPublicDatabaseSettings((current) => ({ ...current, domain: e.target.value }));
+                        setDnsCheck({ status: 'idle', message: '' });
+                      }}
                       className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
                     />
                   </div>
                   <p className="-mt-2 ml-44 text-xs text-zinc-500">
                     Required for libSQL runtime/namespace URLs. The Base URL below is only used by LOCAL-FILE databases.
+                    {publicDatabaseSettings.domain.trim()
+                      ? ` The DNS record must cover *.${publicDatabaseSettings.domain.trim()}. A wildcard on a parent domain does not cover this subdomain.`
+                      : ''}
                   </p>
 
                   <div className="flex items-center gap-4">
@@ -223,19 +264,42 @@ export default function SettingsPage() {
                     <code>{publicDatabaseSettings.baseUrl || 'https://your-domain'}/api/v1/databases/&lt;id&gt;/</code>.
                   </p>
 
-                  <div className="flex items-center justify-between gap-3 pt-2">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                     <p className="text-xs text-zinc-500">
                       Save only the dedicated database domain. Example: `db.example.com` becomes a URL like `${publicDatabaseSettings.protocol}://subdomain.db.example.com`.
                     </p>
-                    <button
-                      type="button"
-                      onClick={handleSavePublicDatabaseSettings}
-                      disabled={savingPublicDatabaseSettings}
-                      className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
-                    >
-                      {savingPublicDatabaseSettings ? 'Saving...' : 'Save routing'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCheckPublicDns}
+                        disabled={dnsCheck.status === 'loading' || savingPublicDatabaseSettings}
+                        className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+                      >
+                        {dnsCheck.status === 'loading' ? 'Checking DNS...' : 'Test wildcard DNS'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSavePublicDatabaseSettings}
+                        disabled={savingPublicDatabaseSettings}
+                        className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
+                      >
+                        {savingPublicDatabaseSettings ? 'Saving...' : 'Save routing'}
+                      </button>
+                    </div>
                   </div>
+                  {dnsCheck.status !== 'idle' && (
+                    <div
+                      className={`rounded-lg border px-3 py-2 text-xs ${
+                        dnsCheck.status === 'ok'
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                          : dnsCheck.status === 'error'
+                            ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                            : 'border-zinc-700 bg-zinc-900 text-zinc-400'
+                      }`}
+                    >
+                      {dnsCheck.message}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

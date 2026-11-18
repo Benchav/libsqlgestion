@@ -113,7 +113,8 @@ Notes:
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - `MAX_UPLOAD_SIZE_BYTES` caps browser imports. The panel gzip-compresses in the browser when supported; the limit applies to the decompressed database. Larger databases should be placed on the server and imported through **Server path**.
 - `IMPORT_STAGING_DIR` must stay on the `/app/data` volume so uploads are not copied across filesystems. It defaults to `<data>/tmp`.
-- `LIBSQL_RUNTIME_NETWORK=coolify` puts dynamically created libSQL runtimes on the same Docker network as the backend and Traefik. Leave it empty to detect the network from the backend container; detection prefers `coolify`. The runtime is never silently created on the default `bridge` network because internal DNS and Traefik routing fail there.
+- `LIBSQL_RUNTIME_NETWORK=coolify` puts dynamically created libSQL runtimes on the same Docker network as the backend and Traefik. Leave it empty to detect a network shared with `coolify-proxy`; detection prefers `coolify`. The runtime is never silently created on the default `bridge` network because internal DNS and Traefik routing fail there.
+- `LIBSQL_PROXY_CONTAINER_NAME` defaults to `coolify-proxy`; the backend uses it to verify that the runtime and proxy share a network.
 - `LIBSQL_BACKEND_CONTAINER_ID` is only needed when `HOSTNAME`/`os.hostname()` cannot identify the backend container. A dedicated runtime is recreated through **Create new token**, so existing runtimes created on `bridge` must be rotated to pick up the correct network.
 - `LIBSQL_REQUIRE_PRIMARY=true` blocks new `LOCAL-FILE` databases when no libSQL primary is available. It does not affect existing legacy databases.
 - `LIBSQL_ALLOW_LOCAL_FILE=true` is the hidden escape hatch for legacy local files; keep it false for Turso-like behavior.

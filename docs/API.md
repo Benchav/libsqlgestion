@@ -146,6 +146,19 @@ legacy local-file escape hatch is enabled, `maxUploadBytes`, and
 `supportsUploadCompression`. The panel uses it to build the create/import
 selectors, enable browser gzip compression, and explain why a mode is disabled.
 
+### `GET /settings/public-database/dns-check`
+
+Checks whether a wildcard DNS record exists for the configured database domain
+(or the `domain` query parameter). It queries a random
+`probe-<random>.<domain>` using public resolvers (1.1.1.1/8.8.8.8) with a
+system-resolver fallback.
+
+- `ok: true` includes the resolved addresses.
+- `ok: false` with `record: "*.example.com"` means the wildcard record is
+  missing. A wildcard on the parent domain does not cover a deeper subdomain.
+
+This is used by **Settings → Public Database Routing → Test wildcard DNS**.
+
 ### `GET /databases/:id`
 
 Returns a single database record.

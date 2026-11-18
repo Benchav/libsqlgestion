@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import dns from 'dns';
 import fs from 'fs';
 import http from 'http';
 import os from 'os';
@@ -15,6 +16,9 @@ export type RuntimeRouteHealth = {
   backendOk: boolean;
   publicOk: boolean;
   publicChecked: boolean;
+  internalError?: string;
+  backendError?: string;
+  publicError?: string;
 };
 
 type RuntimeMetadata = {
@@ -52,6 +56,7 @@ export class LibsqlRuntimeService {
     || process.env.HOSTNAME?.trim()
     || os.hostname();
   private readonly runtimeNetwork = process.env.LIBSQL_RUNTIME_NETWORK?.trim() || '';
+  private readonly proxyContainerName = process.env.LIBSQL_PROXY_CONTAINER_NAME?.trim() || 'coolify-proxy';
   private imagePulled = false;
   private imagePullPromise: Promise<void> | null = null;
 
@@ -509,10 +514,31 @@ export class LibsqlRuntimeService {
 
     let publicCheck: { ok: boolean; error?: string } = { ok: true };
     if (publicChecked) {
-      const publicTimeoutMs = Math.max(0, Number(options.publicTimeoutMs || 0));
-      publicCheck = publicTimeoutMs > 0
-        ? await this.waitForPublicConnection(publicUrl, token, publicTimeoutMs)
-        : await this.checkConnection(publicUrl, token, false);
+      const publicHost = (() => {
+        try {
+          return new URL(publicUrl).hostname;
+        } catch {
+          return '';
+        }
+      })();
+
+      let dnsError: string | undefined;
+      if (publicHost) {
+        try {
+          await dns.promises.lookup(publicHost);
+        } catch (error: any) {
+          dnsError = `DNS does not resolve for ${publicHost}: ${error?.code || error?.message || 'NXDOMAIN'}`;
+        }
+      }
+
+      if (dnsError) {
+        publicCheck = { ok: false, error: dnsError };
+      } else {
+        const publicTimeoutMs = Math.max(0, Number(options.publicTimeoutMs || 0));
+        publicCheck = publicTimeoutMs > 0
+          ? await this.waitForPublicConnection(publicUrl, token, publicTimeoutMs)
+          : await this.checkConnection(publicUrl, token, false);
+      }
     }
 
     return {
@@ -521,7 +547,40 @@ export class LibsqlRuntimeService {
       backendOk: backendCheck.ok,
       publicOk: publicCheck.ok,
       publicChecked,
+      internalError: internalCheck.ok ? undefined : this.describeRouteError(internalCheck.error, runtime.internalUrl),
+      backendError: backendCheck.ok ? undefined : this.describeRouteError(backendCheck.error, runtime.backendUrl),
+      publicError: publicCheck.ok ? undefined : this.describeRouteError(publicCheck.error, publicUrl),
     };
+  }
+
+  private describeRouteError(error: string | undefined, url?: string) {
+    const message = String(error || 'unknown error').trim();
+    const lower = message.toLowerCase();
+    const host = (() => {
+      if (!url) return '';
+      try {
+        return new URL(url).hostname;
+      } catch {
+        return '';
+      }
+    })();
+
+    if (/enotfound|eai_again|nxdomain|getaddrinfo|dns does not resolve/.test(lower)) {
+      return host
+        ? `DNS does not resolve for ${host}. Create a wildcard DNS record that covers this host.`
+        : 'DNS does not resolve. Create the wildcard DNS record for the database domain.';
+    }
+    if (/cert|self.signed|unable to verify|tls|ssl/.test(lower)) {
+      return 'TLS certificate is not valid. Configure TRAEFIK_CERT_RESOLVER or install a wildcard certificate.';
+    }
+    if (/503|service unavailable|no available server/.test(lower)) {
+      return 'The proxy returned 503. Check that the runtime is on the coolify-proxy network and has valid Traefik labels.';
+    }
+    if (/econnrefused|econnreset|etimedout|timeout|fetch failed/.test(lower)) {
+      return 'Connection refused or timed out. Check DNS, firewall and the proxy route.';
+    }
+
+    return message.length > 300 ? `${message.slice(0, 300)}...` : message;
   }
 
   private async waitForReady(containerId: string, urls: { internalUrl: string; backendUrl: string }, token: string) {
@@ -636,6 +695,16 @@ export class LibsqlRuntimeService {
       }
 
       const backendNetworks = await this.getBackendNetworkNames();
+      const proxyNetworks = await this.getProxyNetworkNames();
+      if (proxyNetworks && proxyNetworks.length > 0 && !proxyNetworks.includes(network.Name)) {
+        throw new Error(
+          `LIBSQL_RUNTIME_NETWORK="${network.Name}" is not shared with the proxy container ` +
+          `"${this.proxyContainerName}" (proxy networks: ${proxyNetworks.join(', ')}). ` +
+          'Public routing will not work. Set LIBSQL_RUNTIME_NETWORK to a network shared with the proxy ' +
+          '(usually "coolify") or connect the proxy to that network.',
+        );
+      }
+
       if (backendNetworks === null) {
         console.warn(
           `[LibsqlRuntimeService] could not inspect backend container ` +
@@ -664,6 +733,44 @@ export class LibsqlRuntimeService {
       );
     }
 
+    const proxyNetworks = await this.getProxyNetworkNames();
+    if (proxyNetworks && proxyNetworks.length > 0) {
+      const sharedNetworks = networkNames.filter((name) => proxyNetworks.includes(name));
+      if (sharedNetworks.length === 0) {
+        throw new Error(
+          `Backend container "${this.backendContainerId}" and proxy container ` +
+          `"${this.proxyContainerName}" share no Docker network ` +
+          `(backend: ${networkNames.join(', ')}; proxy: ${proxyNetworks.join(', ')}). ` +
+          'The libSQL runtime would be unreachable publicly. Set LIBSQL_RUNTIME_NETWORK ' +
+          'to a network shared with the proxy (usually "coolify") and restart the proxy.',
+        );
+      }
+
+      const selected = sharedNetworks.includes('coolify')
+        ? 'coolify'
+        : sharedNetworks.find((name) => name !== 'bridge') || sharedNetworks[0];
+
+      if (selected === 'bridge') {
+        throw new Error(
+          'Refusing to create the libSQL runtime on the default "bridge" network: ' +
+          'container-name DNS and Traefik routing do not work there. Set ' +
+          'LIBSQL_RUNTIME_NETWORK to the shared Docker network (for example "coolify").',
+        );
+      }
+
+      console.log(
+        `[LibsqlRuntimeService] using Docker network "${selected}" shared with proxy ` +
+        `"${this.proxyContainerName}" for libSQL runtimes`,
+      );
+      return selected;
+    }
+
+    console.warn(
+      `[LibsqlRuntimeService] proxy container "${this.proxyContainerName}" was not found; ` +
+      'falling back to the backend network. Public routing may fail if the proxy is not ' +
+      'attached to that network.',
+    );
+
     const selected = networkNames.includes('coolify')
       ? 'coolify'
       : networkNames.find((name) => name !== 'bridge') || networkNames[0];
@@ -685,21 +792,30 @@ export class LibsqlRuntimeService {
     return selected;
   }
 
-  private async getBackendNetworkNames(): Promise<string[] | null> {
-    if (!this.backendContainerId) {
+  private async getContainerNetworkNames(containerName: string): Promise<string[] | null> {
+    if (!containerName) {
       return null;
     }
 
     try {
       const inspect = await this.requestJson(
         'GET',
-        `/containers/${encodeURIComponent(this.backendContainerId)}/json`,
+        `/containers/${encodeURIComponent(containerName)}/json`,
       );
       const networks = inspect?.NetworkSettings?.Networks;
       return networks && typeof networks === 'object' ? Object.keys(networks) : [];
     } catch {
       return null;
     }
+  }
+
+  private async getBackendNetworkNames(): Promise<string[] | null> {
+    return this.getContainerNetworkNames(this.backendContainerId);
+  }
+
+  private async getProxyNetworkNames(): Promise<string[] | null> {
+    const networkNames = await this.getContainerNetworkNames(this.proxyContainerName);
+    return networkNames && networkNames.length > 0 ? networkNames : null;
   }
 
   private async getNetworkByName(name: string): Promise<{ Name: string } | null> {

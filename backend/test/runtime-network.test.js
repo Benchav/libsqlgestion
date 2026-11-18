@@ -62,6 +62,9 @@ test.describe('LibSQL runtime Docker network selection', () => {
         return { Name: 'coolify' };
       }
       if (method === 'GET' && requestPath.startsWith('/containers/')) {
+        if (requestPath.includes('coolify-proxy')) {
+          return backendInspect(['coolify']);
+        }
         return backendInspect(['app_default']);
       }
       if (method === 'POST' && requestPath === '/networks/coolify/connect') {
@@ -86,6 +89,46 @@ test.describe('LibSQL runtime Docker network selection', () => {
     });
 
     assert.equal(await service['resolveBackendNetworkName'](), 'coolify');
+  });
+
+  test('fails when backend and proxy share no Docker network', async () => {
+    const service = new LibsqlRuntimeService();
+    mockRequests(service, (method, requestPath) => {
+      if (method === 'GET' && requestPath.includes('coolify-proxy')) {
+        return backendInspect(['coolify']);
+      }
+      if (method === 'GET' && requestPath.startsWith('/containers/')) {
+        return backendInspect(['app_default']);
+      }
+      throw new Error(`unexpected ${method} ${requestPath}`);
+    });
+
+    await assert.rejects(
+      () => service['resolveBackendNetworkName'](),
+      /share no Docker network/,
+    );
+  });
+
+  test('fails when LIBSQL_RUNTIME_NETWORK is not shared with the proxy', async () => {
+    process.env.LIBSQL_RUNTIME_NETWORK = 'app_default';
+    const service = new LibsqlRuntimeService();
+    mockRequests(service, (method, requestPath) => {
+      if (method === 'GET' && requestPath === '/networks/app_default') {
+        return { Name: 'app_default' };
+      }
+      if (method === 'GET' && requestPath.includes('coolify-proxy')) {
+        return backendInspect(['coolify']);
+      }
+      if (method === 'GET' && requestPath.startsWith('/containers/')) {
+        return backendInspect(['app_default']);
+      }
+      throw new Error(`unexpected ${method} ${requestPath}`);
+    });
+
+    await assert.rejects(
+      () => service['resolveBackendNetworkName'](),
+      /not shared with the proxy container/,
+    );
   });
 
   test('refuses to create runtimes on the default bridge network', async () => {
@@ -157,6 +200,22 @@ test.describe('LibSQL runtime Docker network selection', () => {
       calls.some((call) => call.method === 'DELETE'),
       false,
       'the old primary must stay online when network resolution fails',
+    );
+  });
+
+  test('classifies DNS, TLS and proxy errors for the public route', () => {
+    const service = new LibsqlRuntimeService();
+    assert.match(
+      service['describeRouteError']('getaddrinfo ENOTFOUND insumosv1.data.example.com', 'https://insumosv1.data.example.com'),
+      /DNS does not resolve/,
+    );
+    assert.match(
+      service['describeRouteError']('unable to verify the first certificate', 'https://insumosv1.data.example.com'),
+      /TLS certificate is not valid/,
+    );
+    assert.match(
+      service['describeRouteError']('503 Service Unavailable', 'https://insumosv1.data.example.com'),
+      /proxy returned 503/,
     );
   });
 

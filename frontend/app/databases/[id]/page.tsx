@@ -37,6 +37,9 @@ type DatabaseDetail = {
     backendOk?: boolean;
     publicOk?: boolean;
     publicChecked?: boolean;
+    internalError?: string;
+    backendError?: string;
+    publicError?: string;
   };
   metadata?: Record<string, unknown>;
   createdAt: string;
@@ -663,6 +666,11 @@ export default function DatabaseDetailPage() {
                             <strong>Public: Fail</strong> — check the wildcard domain, DNS and{' '}
                             <code className="text-amber-100">TRAEFIK_CERT_RESOLVER</code>. After fixing the route,
                             press <strong>Re-check</strong>. If labels changed, use <strong>Create new token</strong>.
+                          </p>
+                        )}
+                        {database.runtimeHealth.publicError && (
+                          <p className="break-words rounded-md bg-black/20 px-2 py-1.5 font-mono text-[11px] text-amber-100/90">
+                            {database.runtimeHealth.publicError}
                           </p>
                         )}
                         <p className="text-amber-300/80">

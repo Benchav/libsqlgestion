@@ -13,7 +13,17 @@ import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorage
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { LibsqlNamespaceService } from '../../infrastructure/libsql/LibsqlNamespaceService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
+import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
 import { getRuntimeConnectionUrl, isRemoteDatabaseUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
+
+type PrimaryMode = 'namespace' | 'runtime';
+type RequestedPrimaryMode = PrimaryMode | 'auto';
+type StorageMode = PrimaryMode | 'local';
+
+function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === '') return fallback;
+  return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
 
 export class NamespaceUnavailableError extends Error {
   statusCode = 503;
@@ -33,12 +43,40 @@ export class DatabaseService {
   private runtimeService = new LibsqlRuntimeService();
   private namespaceService = new LibsqlNamespaceService();
 
-  async createDatabase(projectId: string, input: { name: string; type: 'sqlite' | 'libsql' | 'remote'; url?: string; token?: string; subdomain?: string; metadata?: Record<string, unknown> }) {
+  async createDatabase(projectId: string, input: { name: string; type: 'sqlite' | 'libsql' | 'remote'; url?: string; token?: string; subdomain?: string; primaryMode?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
+    if (input.type === 'remote' && !input.url) {
+      const error: any = new Error('Remote database registration requires a URL.');
+      error.statusCode = 422;
+      throw error;
+    }
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(input.name, randomToken());
-    const isNamespace = this.namespaceService.isEnabled() && (input.type === 'libsql' || (!input.url && process.env.SQLITE_PREFER_NAMESPACE === 'true'));
+    const isExternalPrimary = input.type === 'remote' || (input.type === 'libsql' && Boolean(input.url));
+    let storageMode: StorageMode | null = null;
 
-    if (isNamespace) {
+    if (!isExternalPrimary) {
+      if (input.type === 'sqlite') {
+        if (!this.isLocalFileAllowed()) {
+          const error: any = new Error(
+            'LOCAL-FILE creation is disabled by policy. Create a libSQL namespace or runtime instead.',
+          );
+          error.statusCode = 403;
+          throw error;
+        }
+        storageMode = 'local';
+      } else {
+        storageMode = await this.resolvePrimaryMode(input.primaryMode);
+        if (storageMode === 'local') {
+          const error: any = new Error(
+            'No libSQL primary is available. Configure the shared sqld namespace or enable the Docker runtime.',
+          );
+          error.statusCode = 503;
+          throw error;
+        }
+      }
+    }
+
+    if (storageMode === 'namespace') {
       const namespace = await this.namespaceService.createNamespace(subdomain);
       if (!namespace.ok) {
         throw new NamespaceUnavailableError(
@@ -76,13 +114,13 @@ export class DatabaseService {
         action: 'database.create',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, type: 'libsql', subdomain, runtime: 'sqld-namespace' },
+        metadata: { projectId, type: 'libsql', subdomain, runtime: 'sqld-namespace', primaryMode: 'namespace' },
       });
 
       return { database, token };
     }
 
-    const willProvisionRuntime = this.isManagedRuntimeRequest(input) && this.runtimeService.isEnabled();
+    const willProvisionRuntime = storageMode === 'runtime';
 
     if (input.type === 'libsql' && !input.url && !willProvisionRuntime) {
       throw new NamespaceUnavailableError(
@@ -121,8 +159,9 @@ export class DatabaseService {
       database.url = managedPath || input.url || undefined;
       database.status = database.type === 'remote' && !managedPath ? (input.url ? 'active' : 'inactive') : willProvisionRuntime ? 'provisioning' : 'active';
       database.encryptedToken = encrypt(token);
+      const initialProvider = isExternalPrimary ? 'remote' : 'local-file';
       database.metadata = mergeRuntimeMetadata(database.metadata, {
-        provider: 'local-file',
+        provider: initialProvider,
         databasePath: managedPath || null,
         connectionUrl: managedPath || null,
         internalUrl: managedPath || null,
@@ -134,19 +173,29 @@ export class DatabaseService {
         action: 'database.create',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, type: input.type, subdomain: input.subdomain, runtime: 'local-file' },
+        metadata: {
+          projectId,
+          type: input.type,
+          subdomain: input.subdomain,
+          runtime: isExternalPrimary ? 'remote' : willProvisionRuntime ? 'docker-libsql' : 'local-file',
+          storageMode: storageMode ?? (isExternalPrimary ? 'remote' : 'local'),
+        },
       });
 
       if (willProvisionRuntime && managedPath) {
-        if (this.isRuntimeProvisioningAsync()) {
+        const asyncProvisioning = this.isRuntimeProvisioningAsync()
+          && !input.primaryMode
+          && !this.isPrimaryRequired();
+
+        if (asyncProvisioning) {
           this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
-            projectId, type: input.type, subdomain: input.subdomain,
+            projectId, type: input.type, subdomain: input.subdomain, primaryMode: 'runtime',
           }).catch((error) => {
             console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
           });
         } else {
           const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.create', {
-            projectId, type: input.type, subdomain: input.subdomain,
+            projectId, type: input.type, subdomain: input.subdomain, primaryMode: 'runtime',
           }, false);
           if (!provisioned) {
             throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
@@ -162,17 +211,16 @@ export class DatabaseService {
     }
   }
 
-  async importExistingSqlite(projectId: string, input: { name?: string; sourceName?: string; sourcePath: string; subdomain?: string; token?: string; metadata?: Record<string, unknown> }) {
+  async importExistingSqlite(projectId: string, input: { name?: string; sourceName?: string; sourcePath: string; subdomain?: string; token?: string; storageMode?: string; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     if (!fs.existsSync(input.sourcePath)) {
       throw new Error('sourcePath does not exist');
     }
     const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(databaseName, randomToken());
+    const storageMode = await this.resolveImportStorageMode(input.storageMode);
 
-    const useNamespace = await this.shouldUseNamespaceForImport();
-
-    if (useNamespace) {
+    if (storageMode === 'namespace') {
       try {
         await this.storageService.importToNamespace(input.sourcePath, subdomain);
       } catch (error: any) {
@@ -218,13 +266,13 @@ export class DatabaseService {
         action: 'database.import',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, sourcePath: input.sourcePath, subdomain, runtime: 'sqld-namespace' },
+        metadata: { projectId, sourcePath: input.sourcePath, subdomain, runtime: 'sqld-namespace', storageMode: 'namespace' },
       });
 
       return { database, token };
     }
 
-    const willProvisionRuntime = this.shouldProvisionRuntimeForImport();
+    const willProvisionRuntime = storageMode === 'runtime';
     const storageType = willProvisionRuntime ? 'libsql' : 'sqlite';
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
@@ -257,25 +305,25 @@ export class DatabaseService {
         action: 'database.import',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, runtime: 'local-file' },
+        metadata: {
+          projectId,
+          sourcePath: input.sourcePath,
+          subdomain: input.subdomain,
+          runtime: willProvisionRuntime ? 'docker-libsql' : 'local-file',
+          storageMode,
+        },
       });
 
       if (willProvisionRuntime) {
-        if (this.isRuntimeProvisioningAsync()) {
-          this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
-            projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
-          }).catch((error) => {
-            console.error(`[DatabaseService] Background provisioning failed for ${database.id}:`, error?.message || error);
-          });
-        } else {
-          const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
-            projectId, sourcePath: input.sourcePath, subdomain: input.subdomain,
-          }, false);
-          if (!provisioned) {
-            throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
-          }
-          return { database: provisioned.database, token: provisioned.token };
+        // Import requests must return the real runtime JWT. Provisioning in the
+        // background would return a token that is immediately invalid.
+        const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
+          projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, primaryMode: 'runtime',
+        }, false);
+        if (!provisioned) {
+          throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
         }
+        return { database: provisioned.database, token: provisioned.token };
       }
 
       return { database, token };
@@ -391,6 +439,8 @@ export class DatabaseService {
       throw error;
     }
 
+    this.assertPrimaryPublicDomain();
+
     if (resolveEffectiveDatabaseType(database) !== 'sqlite') {
       const error: any = new Error('Only LOCAL-FILE SQLite databases can be converted to a libSQL runtime');
       error.statusCode = 409;
@@ -488,6 +538,15 @@ export class DatabaseService {
         'sqld is not available. Verify that the sqld container is running and reachable through LIBSQL_ADMIN_URL.',
       );
     }
+
+    if (!this.namespaceService.isPublicEnabled()) {
+      throw new NamespaceUnavailableError(
+        'Shared namespace public routing is not enabled. Configure wildcard TLS and set ' +
+        'LIBSQL_NAMESPACE_PUBLIC_ENABLED=true (or LIBSQL_NAMESPACE_HOST for a single host).',
+      );
+    }
+
+    this.assertPrimaryPublicDomain();
 
     if (resolveEffectiveDatabaseType(database) !== 'sqlite' || database.type === 'remote' || isRemoteDatabaseUrl(database.url)) {
       const error: any = new Error('Only LOCAL-FILE SQLite databases can be converted to a sqld namespace');
@@ -607,14 +666,20 @@ export class DatabaseService {
    * El valor por defecto es runtime para no cambiar instalaciones existentes.
    */
   async convertLocalDatabaseToPublic(id: string, input: { subdomain?: string } = {}) {
-    const mode = String(process.env.LIBSQL_CONVERSION_MODE || 'runtime').trim().toLowerCase();
+    const mode = String(
+      process.env.LIBSQL_CONVERSION_MODE || process.env.LIBSQL_PRIMARY_MODE || 'auto',
+    ).trim().toLowerCase();
 
     if (mode === 'namespace' || mode === 'sqld' || mode === 'path') {
       return this.convertLocalDatabaseToNamespace(id, input);
     }
 
     if (mode === 'auto') {
-      if (this.namespaceService.isEnabled() && await this.namespaceService.isAvailable()) {
+      if (
+        this.namespaceService.isEnabled()
+        && this.namespaceService.isPublicEnabled()
+        && await this.namespaceService.isAvailable()
+      ) {
         return this.convertLocalDatabaseToNamespace(id, input);
       }
       return this.convertLocalDatabaseToRuntime(id, input);
@@ -910,6 +975,227 @@ export class DatabaseService {
     return (database.url && fs.existsSync(database.url)) ? database.url : managedPath;
   }
 
+  private isPrimaryRequired(): boolean {
+    return parseEnvBoolean(process.env.LIBSQL_REQUIRE_PRIMARY, false);
+  }
+
+  private isLocalFileAllowed(): boolean {
+    return parseEnvBoolean(process.env.LIBSQL_ALLOW_LOCAL_FILE, !this.isPrimaryRequired());
+  }
+
+  private getRequestedPrimaryMode(requested?: string): RequestedPrimaryMode {
+    const raw = String(requested || process.env.LIBSQL_PRIMARY_MODE || 'auto').trim().toLowerCase();
+    if (raw === 'namespace' || raw === 'runtime' || raw === 'auto') {
+      return raw;
+    }
+
+    const error: any = new Error(
+      `Invalid primary mode "${raw}". Use auto, namespace or runtime.`,
+    );
+    error.statusCode = 500;
+    throw error;
+  }
+
+  private hasPrimaryPublicDomain(): boolean {
+    const settings = getPublicDatabaseSettings();
+    return Boolean(settings.domain && settings.domain !== 'localhost');
+  }
+
+  private assertPrimaryPublicDomain() {
+    if (!this.isPrimaryRequired() || this.hasPrimaryPublicDomain()) {
+      return;
+    }
+
+    const error: any = new Error(
+      'Public wildcard domain is not configured. Set the Wildcard domain in Settings ' +
+      'or DATABASE_PUBLIC_DOMAIN before creating a public libSQL primary.',
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+
+  private assertRuntimePrimaryReady() {
+    if (!this.runtimeService.isEnabled()) {
+      const error: any = new Error(
+        'Dedicated libSQL runtime is not available: Docker socket not found. ' +
+        'Enable the Docker socket or configure the shared sqld namespace.',
+      );
+      error.statusCode = 503;
+      throw error;
+    }
+
+    this.assertPrimaryPublicDomain();
+  }
+
+  private async assertNamespacePrimaryReady() {
+    if (!this.namespaceService.isEnabled()) {
+      throw new NamespaceUnavailableError(
+        'Shared sqld namespaces are not configured. Set LIBSQL_ADMIN_URL or LIBSQL_ENABLE_NAMESPACES=true.',
+      );
+    }
+
+    if (!(await this.namespaceService.isAvailable())) {
+      throw new NamespaceUnavailableError(
+        'sqld is not available. Verify that the sqld container is running and reachable through LIBSQL_ADMIN_URL.',
+      );
+    }
+
+    if (!this.namespaceService.isPublicEnabled()) {
+      throw new NamespaceUnavailableError(
+        'Shared namespace public routing is not enabled. Configure wildcard TLS and set ' +
+        'LIBSQL_NAMESPACE_PUBLIC_ENABLED=true (or LIBSQL_NAMESPACE_HOST for a single host).',
+      );
+    }
+
+    this.assertPrimaryPublicDomain();
+  }
+
+  private async resolvePrimaryMode(requested?: string): Promise<StorageMode> {
+    const mode = this.getRequestedPrimaryMode(requested);
+
+    if (mode === 'namespace') {
+      await this.assertNamespacePrimaryReady();
+      return 'namespace';
+    }
+
+    if (mode === 'runtime') {
+      this.assertRuntimePrimaryReady();
+      return 'runtime';
+    }
+
+    if (
+      this.namespaceService.isEnabled()
+      && this.namespaceService.isPublicEnabled()
+      && await this.namespaceService.isAvailable()
+    ) {
+      await this.assertNamespacePrimaryReady();
+      return 'namespace';
+    }
+
+    if (this.runtimeService.isEnabled()) {
+      this.assertRuntimePrimaryReady();
+      return 'runtime';
+    }
+
+    if (this.isLocalFileAllowed()) {
+      return 'local';
+    }
+
+    const error: any = new Error(
+      'No libSQL primary is available. Configure the shared sqld namespace or enable the Docker runtime. ' +
+      'LOCAL-FILE creation is disabled by policy.',
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+
+  private async resolveImportStorageMode(requested?: string): Promise<StorageMode> {
+    const raw = String(requested || 'auto').trim().toLowerCase();
+
+    if (raw === 'local') {
+      if (!this.isLocalFileAllowed()) {
+        const error: any = new Error(
+          'LOCAL-FILE imports are disabled by policy. Choose a libSQL namespace or runtime.',
+        );
+        error.statusCode = 403;
+        throw error;
+      }
+      return 'local';
+    }
+
+    if (raw === 'namespace') {
+      await this.assertNamespacePrimaryReady();
+      return 'namespace';
+    }
+
+    if (raw === 'runtime') {
+      this.assertRuntimePrimaryReady();
+      return 'runtime';
+    }
+
+    if (raw !== 'auto') {
+      const error: any = new Error(`Invalid storage mode "${raw}". Use auto, namespace, runtime or local.`);
+      error.statusCode = 422;
+      throw error;
+    }
+
+    if (this.isPrimaryRequired()) {
+      return this.resolvePrimaryMode('auto');
+    }
+
+    // Legacy auto behavior, preserved for installations that have not enabled
+    // the libSQL-first policy yet.
+    if (await this.shouldUseNamespaceForImport()) {
+      return 'namespace';
+    }
+    if (this.shouldProvisionRuntimeForImport()) {
+      return 'runtime';
+    }
+    if (this.isLocalFileAllowed()) {
+      return 'local';
+    }
+
+    const error: any = new Error(
+      'No import target is available. Configure sqld namespaces or the Docker runtime.',
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+
+  async getStorageCapabilities() {
+    const namespaceEnabled = this.namespaceService.isEnabled();
+    const namespacePublicEnabled = this.namespaceService.isPublicEnabled();
+    const namespaceAvailable = namespaceEnabled && await this.namespaceService.isAvailable();
+    const namespaceUsable = namespaceAvailable && namespacePublicEnabled;
+    const runtimeAvailable = this.runtimeService.isEnabled();
+    const localAllowed = this.isLocalFileAllowed();
+    const requirePrimary = this.isPrimaryRequired();
+    const preferredMode = this.getRequestedPrimaryMode();
+
+    let defaultMode: StorageMode | null = null;
+    if (preferredMode === 'namespace') {
+      defaultMode = namespaceUsable ? 'namespace' : null;
+    } else if (preferredMode === 'runtime') {
+      defaultMode = runtimeAvailable ? 'runtime' : null;
+    } else {
+      defaultMode = namespaceUsable ? 'namespace' : runtimeAvailable ? 'runtime' : localAllowed ? 'local' : null;
+    }
+
+    const settings = getPublicDatabaseSettings();
+
+    const namespaceReason = !namespaceEnabled
+      ? 'Shared sqld namespaces are not configured.'
+      : !namespacePublicEnabled
+        ? 'Namespace public routing is not enabled (wildcard TLS/LIBSQL_NAMESPACE_PUBLIC_ENABLED).'
+        : !namespaceAvailable
+          ? 'sqld admin is not reachable.'
+          : null;
+
+    return {
+      namespace: {
+        enabled: namespaceEnabled,
+        publicEnabled: namespacePublicEnabled,
+        available: namespaceAvailable,
+        usable: namespaceUsable,
+        reason: namespaceReason,
+      },
+      runtime: {
+        enabled: runtimeAvailable,
+        available: runtimeAvailable,
+        reason: runtimeAvailable ? null : 'Docker socket is not available.',
+      },
+      local: {
+        allowed: localAllowed,
+      },
+      requirePrimary,
+      preferredMode,
+      defaultMode,
+      publicDomain: settings.domain || '',
+      publicProtocol: settings.protocol || 'https',
+      runtimeTlsConfigured: Boolean(process.env.TRAEFIK_CERT_RESOLVER?.trim()),
+    };
+  }
+
   private async verifyNamespaceConnection(subdomain: string, token: string) {
     const urls = this.namespaceService.buildNamespaceUrls(subdomain);
     const client = createLibsqlClient(urls.connectionUrl, token);
@@ -941,18 +1227,28 @@ export class DatabaseService {
       return false;
     }
 
-    if (await this.namespaceService.isAvailable()) {
-      return true;
+    if (!(await this.namespaceService.isAvailable())) {
+      if (strict) {
+        throw new NamespaceUnavailableError(
+          'sqld no está disponible para crear el namespace. Verifica que el contenedor sqld esté corriendo, que LIBSQL_ADMIN_URL sea accesible desde el backend y que ambos compartan la misma red Docker.',
+        );
+      }
+
+      console.warn('[DatabaseService] sqld no está disponible; se usará importación local para esta base.');
+      return false;
     }
 
-    if (strict) {
-      throw new NamespaceUnavailableError(
-        'sqld no está disponible para crear el namespace. Verifica que el contenedor sqld esté corriendo, que LIBSQL_ADMIN_URL sea accesible desde el backend y que ambos compartan la misma red Docker.',
-      );
+    if (!this.namespaceService.isPublicEnabled()) {
+      if (strict) {
+        throw new NamespaceUnavailableError(
+          'La importación por namespace requiere routing público. Configura wildcard TLS y define ' +
+          'LIBSQL_NAMESPACE_PUBLIC_ENABLED=true (o LIBSQL_NAMESPACE_HOST para un solo host).',
+        );
+      }
+      return false;
     }
 
-    console.warn('[DatabaseService] sqld no está disponible; se usará importación local para esta base.');
-    return false;
+    return true;
   }
 
   private shouldProvisionRuntimeForImport(): boolean {
@@ -961,10 +1257,6 @@ export class DatabaseService {
       return false;
     }
     return this.runtimeService.isEnabled();
-  }
-
-  private isManagedRuntimeRequest(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {
-    return isManagedRuntimeType(input);
   }
 
   private isManagedRuntimeEntry(database: { metadata?: Record<string, unknown>; type: string; url?: string | null }) {
@@ -1067,10 +1359,4 @@ function getManagedRuntimeUrl(database: { metadata?: Record<string, unknown>; ty
   }
 
   return runtimeUrl || null;
-}
-
-function isManagedRuntimeType(input: { type: 'sqlite' | 'libsql' | 'remote'; url?: string }) {
-  if (input.type === 'sqlite') return true;
-  if (input.type === 'libsql' && !input.url) return true;
-  return false;
 }

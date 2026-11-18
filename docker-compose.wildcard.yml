@@ -1,0 +1,27 @@
+# Optional override: wildcard public routing for shared sqld namespaces.
+#
+# Use this when every database is a shared namespace and clients need
+# host-based URLs such as:
+#
+#   libsql://ventas.data.example.com
+#
+# Requirements:
+#   - SQLD_PUBLIC_DOMAIN=data.example.com
+#   - *.data.example.com DNS points to Traefik/Cloudflare Tunnel
+#   - TRAEFIK_WILDCARD_CERT_RESOLVER is a DNS-01 resolver able to issue
+#     *.data.example.com (HTTP-01 cannot issue wildcard certificates)
+#   - LIBSQL_NAMESPACE_PUBLIC_ENABLED=true in the backend
+#
+# Run:
+#   docker compose -f docker-compose.yml -f docker-compose.wildcard.yml up -d
+#
+# In Coolify, add this file as an additional compose file or copy these labels
+# to the sqld service.
+services:
+  sqld:
+    labels:
+      - "traefik.http.routers.sqld.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.sqld.tls=true"
+      - "traefik.http.routers.sqld.tls.certresolver=${TRAEFIK_WILDCARD_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.sqld.tls.domains[0].main=${SQLD_PUBLIC_DOMAIN}"
+      - "traefik.http.routers.sqld.tls.domains[0].sans=*.${SQLD_PUBLIC_DOMAIN}"

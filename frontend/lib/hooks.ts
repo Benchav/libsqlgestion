@@ -55,6 +55,30 @@ export type DatabaseDetail = {
   project?: { id: string; name: string };
 };
 
+export type StorageCapabilities = {
+  namespace: {
+    enabled: boolean;
+    publicEnabled: boolean;
+    available: boolean;
+    usable: boolean;
+    reason?: string | null;
+  };
+  runtime: {
+    enabled: boolean;
+    available: boolean;
+    reason?: string | null;
+  };
+  local: {
+    allowed: boolean;
+  };
+  requirePrimary: boolean;
+  preferredMode: 'auto' | 'namespace' | 'runtime';
+  defaultMode: 'namespace' | 'runtime' | 'local' | null;
+  publicDomain: string;
+  publicProtocol: string;
+  runtimeTlsConfigured: boolean;
+};
+
 export type DatabaseSnapshot = {
   id: string;
   databaseId: string;
@@ -171,6 +195,15 @@ export function useDatabases() {
   });
 }
 
+export function useStorageCapabilities() {
+  return useQuery({
+    queryKey: ['storage-capabilities'],
+    queryFn: async () => apiRequest<StorageCapabilities>('/databases/storage-capabilities'),
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
 export function useDatabase(id: string | undefined) {
   return useQuery({
     queryKey: ['database', id],
@@ -192,7 +225,7 @@ export function useDatabase(id: string | undefined) {
 export function useCreateDatabase() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { projectId: string; name: string; type: string }) => {
+    mutationFn: async (data: { projectId: string; name: string; type: string; subdomain?: string; primaryMode?: 'auto' | 'namespace' | 'runtime' }) => {
       const result = await apiRequest<{ database: DatabaseDetail; token: string }>('/databases', {
         method: 'POST',
         body: JSON.stringify(data),

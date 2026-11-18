@@ -6,7 +6,7 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
-import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema, convertToRuntimeSchema } from '../../../types/validations';
+import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema, convertToRuntimeSchema, storageModeSchema } from '../../../types/validations';
 import { ValidationError } from '../../../types/validations';
 import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { Database } from '../../../domain/entities/Database';
@@ -58,6 +58,15 @@ export default async function databaseRoutes(app: FastifyInstance) {
     } catch (error) {
       if (error instanceof ValidationError) throw error;
       return reply.status(500).send({ error: 'failed to list databases' });
+    }
+  });
+
+  app.get('/databases/storage-capabilities', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.read'))) return;
+    try {
+      return reply.send(await databaseService.getStorageCapabilities());
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to read storage capabilities' });
     }
   });
 
@@ -113,6 +122,11 @@ export default async function databaseRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'projectId and file required' });
     }
 
+    const parsedStorageMode = storageModeSchema.safeParse(fields.storageMode || 'auto');
+    if (!parsedStorageMode.success) {
+      return reply.status(422).send({ error: 'storageMode must be auto, local, namespace or runtime' });
+    }
+
     const access = await ensureProjectAccess(request, reply, fields.projectId);
     if (!access) return;
 
@@ -122,6 +136,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
         sourceName: uploadedFileName,
         sourcePath: uploadedPath,
         subdomain: fields.subdomain || undefined,
+        storageMode: parsedStorageMode.data,
       });
       return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {

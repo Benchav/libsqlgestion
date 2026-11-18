@@ -43,7 +43,7 @@ The generated URL must look like:
 https://libsql.example.com/api/v1/databases/<id>/
 ```
 
-The wildcard domain setting is only used by `sqld` namespaces, not by `LOCAL-FILE` databases.
+The wildcard domain setting is used by runtime and namespace URLs, not by `LOCAL-FILE` databases.
 
 ## Runtime URL shows `<name>.localhost` or Backend health fails
 
@@ -66,6 +66,43 @@ also HTTP. Only the canonical public URL is HTTPS, terminated by Traefik. Older
 builds used `https://host.docker.internal:<port>` for the Backend check; current
 builds use `http://`. If you still see the HTTPS host-port URL, redeploy the
 updated backend and rotate the runtime token.
+
+## New create/import is blocked: no libSQL primary available
+
+The libSQL-first policy refuses to create a new `LOCAL-FILE` database when:
+
+```env
+LIBSQL_REQUIRE_PRIMARY=true
+LIBSQL_ALLOW_LOCAL_FILE=false
+```
+
+Check the storage capabilities from the panel. You need either:
+
+- the Docker socket available for a dedicated runtime;
+- `sqld` reachable and `LIBSQL_NAMESPACE_PUBLIC_ENABLED=true` for a shared namespace.
+
+If you intentionally want a legacy local file, set `LIBSQL_ALLOW_LOCAL_FILE=true`
+(and likely `LIBSQL_REQUIRE_PRIMARY=false`). Existing `LOCAL-FILE` databases are
+not affected by the policy.
+
+## Shared namespace says public routing is not enabled
+
+Set:
+
+```env
+LIBSQL_NAMESPACE_PUBLIC_ENABLED=true
+DATABASE_PUBLIC_DOMAIN=data.example.com
+SQLD_PUBLIC_DOMAIN=data.example.com
+```
+
+For multiple namespaces, deploy the wildcard override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.wildcard.yml up -d
+```
+
+with a DNS-01 resolver in `TRAEFIK_WILDCARD_CERT_RESOLVER`. For a single host,
+set `LIBSQL_NAMESPACE_HOST` to that exact host and use the exact router.
 
 ## Embedded replica fails with `Invalid header bit 123 expected 0 or 1`
 
@@ -107,10 +144,10 @@ The host's first DNS label must equal the namespace. For example, namespace
 `NamespaceDoesntExist` during the replication handshake.
 
 If the namespace host shows `TRAEFIK DEFAULT CERT`, Traefik has not issued a
-certificate for that hostname. Set `LIBSQL_NAMESPACE_HOST` to the exact host and
-`TRAEFIK_CERT_RESOLVER` to the resolver used by your Traefik (usually
-`letsencrypt`), then redeploy the compose stack. For multiple namespaces, use a
-wildcard certificate or one exact router per host.
+certificate for that hostname. For a single host, set `LIBSQL_NAMESPACE_HOST` and
+`LIBSQL_NAMESPACE_PUBLIC_ENABLED=true`, then redeploy. For multiple namespaces,
+use `docker-compose.wildcard.yml` with a DNS-01 wildcard resolver in
+`TRAEFIK_WILDCARD_CERT_RESOLVER` and set `LIBSQL_NAMESPACE_PUBLIC_ENABLED=true`.
 
 ## Imports fail with `fetch failed: getaddrinfo EAI_AGAIN sqld`
 
@@ -131,15 +168,19 @@ node -e "require('dns').lookup('sqld',(e,a)=>console.log(e?e.code:a))"
 wget -qO- http://sqld:9090/health
 ```
 
-If `sqld` is not part of the deployment, disable namespace imports:
+If `sqld` is not part of the deployment, disable namespaces and rely on the
+dedicated runtime:
 
 ```env
 LIBSQL_ENABLE_NAMESPACES=false
 LIBSQL_ADMIN_URL=
-LIBSQL_NAMESPACE_IMPORTS=false
+LIBSQL_NAMESPACE_PUBLIC_ENABLED=false
 ```
 
-The Compose stack defaults `LIBSQL_NAMESPACE_IMPORTS` to `false`, so imports are stored locally. With `auto`, an import falls back to a local SQLite file when `sqld` is unreachable instead of silently registering a broken database.
+With the libSQL-first policy (`LIBSQL_REQUIRE_PRIMARY=true`,
+`LIBSQL_ALLOW_LOCAL_FILE=false`), create/import requests fail with a clear 503
+instead of silently falling back to a local file. The legacy
+`LIBSQL_NAMESPACE_IMPORTS` fallback only applies when `LIBSQL_REQUIRE_PRIMARY=false`.
 
 If a database was already registered as a namespace database and `sqld` is still unavailable, repair it from the API:
 
@@ -160,6 +201,10 @@ Check:
 - the backend has free disk space above `SNAPSHOT_MIN_FREE_BYTES`
 - the backend logs contain `[snapshots]` messages
 - `/app/data/sqlite/snapshots` is inside the persistent volume
+
+After migrating to libSQL primaries, the local-file snapshot scheduler no longer
+applies to those databases. Back up the runtime volume and the `sqld` data volume
+instead. The old LOCAL-FILE snapshots remain valid as pre-migration backups.
 
 The scheduler wakes every `SNAPSHOT_SCHEDULER_TICK_MINUTES` (default 5) and uses
 each database's backup policy. The default restore-point interval is

@@ -45,8 +45,9 @@ Set the backend environment:
 ```env
 DATABASE_PUBLIC_DOMAIN=example.com
 DATABASE_PUBLIC_PROTOCOL=https
-LIBSQL_NAMESPACE_IMPORTS=false
-LIBSQL_IMPORT_RUNTIME=true
+LIBSQL_REQUIRE_PRIMARY=true
+LIBSQL_ALLOW_LOCAL_FILE=false
+LIBSQL_PRIMARY_MODE=runtime
 LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=31536000
 SQLD_PUBLIC_DOMAIN=
 
@@ -58,7 +59,7 @@ TRAEFIK_ENTRYPOINT=websecure
 
 - `DATABASE_PUBLIC_DOMAIN` is the parent used for the runtime URL (`erp-db.example.com`).
 - Keep `SQLD_PUBLIC_DOMAIN` empty when using per-database runtimes so the namespace wildcard does not capture other app subdomains.
-- `LIBSQL_IMPORT_RUNTIME=true` makes imports provision a dedicated `libsql-server`.
+- `LIBSQL_PRIMARY_MODE=runtime` makes new databases and imports provision a dedicated `libsql-server`.
 - `LIBSQL_PROVISION_ASYNC=false` makes the import wait for the container and return the real runtime JWT. If you keep it `true`, use **Rotate Token** after the database becomes active.
 
 Import the ERP database with a fixed subdomain, for example:
@@ -134,27 +135,45 @@ The **first DNS label must match the namespace** (`erp-db`). This is how the
 libSQL replication client selects the namespace; the `/dev/<namespace>/` path is
 only used by HTTP pipeline clients.
 
-Backend environment:
+Backend environment (all future databases as shared namespaces):
 
 ```env
-LIBSQL_NAMESPACE_IMPORTS=true
+LIBSQL_REQUIRE_PRIMARY=true
+LIBSQL_ALLOW_LOCAL_FILE=false
+LIBSQL_PRIMARY_MODE=namespace
 LIBSQL_CONVERSION_MODE=namespace
+LIBSQL_NAMESPACE_PUBLIC_ENABLED=true
+
 DATABASE_PUBLIC_DOMAIN=data.example.com
 DATABASE_PUBLIC_PROTOCOL=https
+SQLD_PUBLIC_DOMAIN=data.example.com
 ```
 
-Compose/Traefik environment:
+Compose/Traefik environment for the wildcard:
 
 ```env
-# Exact host routed to the shared sqld container, with a normal certificate.
-LIBSQL_NAMESPACE_HOST=erp-db.data.example.com
-TRAEFIK_CERT_RESOLVER=letsencrypt
+# Must be a DNS-01 resolver able to issue *.data.example.com.
+TRAEFIK_WILDCARD_CERT_RESOLVER=<dns01-resolver>
 TRAEFIK_ENTRYPOINT=websecure
 ```
 
-The compose file adds a `sqld-namespace` router for that exact host with TLS.
-For multiple namespaces, add one exact router per host or configure a wildcard
-certificate for `*.data.example.com`.
+Use the optional wildcard override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.wildcard.yml up -d
+```
+
+It adds TLS and wildcard domains to the `sqld` router, so all namespace hosts
+such as `erp-db.data.example.com` are served by the shared `sqld`.
+
+For a **single namespace host**, you can skip the wildcard override and use the
+exact router instead:
+
+```env
+LIBSQL_NAMESPACE_HOST=erp-db.data.example.com
+LIBSQL_NAMESPACE_PUBLIC_ENABLED=true
+TRAEFIK_CERT_RESOLVER=letsencrypt
+```
 
 If you use a **dedicated runtime** instead, leave `LIBSQL_NAMESPACE_HOST` empty
 and leave `SQLD_PUBLIC_DOMAIN` empty so the shared `sqld` routers do not capture
@@ -178,6 +197,41 @@ npm run test:external -- libsql://erp-db.data.example.com "<JWT>" --embedded
 
 If the shared-namespace host is not suitable, use the dedicated runtime
 topology above instead.
+
+## Migrating legacy LOCAL-FILE databases
+
+`LOCAL-FILE` is legacy-only. New databases/imports must be libSQL primaries.
+To migrate existing local files:
+
+```bash
+cd backend
+
+# Inspect first. Default mode is runtime and no changes are made.
+npm run migrate:local-to-primary -- --mode=runtime --dry-run
+
+# Execute.
+npm run migrate:local-to-primary -- --mode=runtime --apply
+
+# Or, after wildcard namespace public routing is configured:
+npm run migrate:local-to-primary -- --mode=namespace --apply
+```
+
+The script:
+
+- skips databases that are already libSQL primaries;
+- copies each local file with `VACUUM INTO`;
+- keeps the original local file at `previousLocalPath`;
+- prints the new sync URL and JWT for each database;
+- continues after individual failures and exits non-zero if any failed.
+
+Decide the target before running: runtime and namespace are both valid libSQL
+primaries, but runtime → namespace conversion is not implemented in this
+version. If wildcard namespace routing is ready, migrate directly with
+`--mode=namespace`; otherwise use `--mode=runtime` and keep those databases as
+dedicated primaries.
+
+Stop writes to each database during the migration. Take a full backup of
+`/app/data`, the `sqld` volume and the ERP replica first.
 
 ## 4. Migrate data before switching
 

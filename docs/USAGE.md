@@ -122,21 +122,29 @@ curl -X POST http://localhost:3000/api/v1/databases \
   -d '{
     "projectId":"<projectId>",
     "name":"billing-db",
-    "type":"sqlite"
+    "type":"libsql",
+    "primaryMode":"runtime"
   }'
 ```
 
 What happens:
 
 - the control plane creates a metadata record
-- a file is created in the structured storage tree
-- a subdomain identifier is generated
-- the database becomes active
+- a dedicated libsql-server runtime or shared sqld namespace is provisioned
+- a subdomain and `libsql://` URL are generated
+- the database becomes active and returns its JWT
 
-Managed path example:
+With `LIBSQL_ALLOW_LOCAL_FILE=false`, `type=sqlite` is rejected. Legacy
+`LOCAL-FILE` databases can be migrated with `migrate:local-to-primary`.
+
+Managed path examples:
 
 ```text
-data/sqlite/projects/<projectId>/databases/<databaseId>.db
+# Dedicated runtime
+data/sqlite/projects/<projectId>/databases/<databaseId>/dbs/default/data
+
+# Shared sqld namespace
+/app/data/sqld/data/dbs/<namespace>/data
 ```
 
 ## 7. Import an existing SQLite database
@@ -156,17 +164,26 @@ curl -X POST http://localhost:3000/api/v1/databases/import-sqlite \
   -d '{
     "projectId":"<projectId>",
     "name":"legacy-db",
-    "sourcePath":"/srv/uploads/legacy.db"
+    "sourcePath":"/srv/uploads/legacy.db",
+    "storageMode":"runtime"
   }'
 ```
 
+Use `storageMode=namespace` for the shared sqld primary, or `auto` to follow
+`LIBSQL_PRIMARY_MODE`. Under the libSQL-first policy, imports without a
+primary fail instead of creating a legacy LOCAL-FILE database.
+
 What happens:
 
-- the file is copied into managed storage
-- the database is registered in metadata
-- the file is now managed like any other database
+- the file is copied into a libSQL runtime or namespace
+- the database is registered with a `libsql://` URL and JWT
+- the original source file is left untouched
 
 ## 8. Discover existing `.db` files from a mounted folder
+
+Under the libSQL-first policy, discovery is skipped because it would create
+legacy LOCAL-FILE records. Import files with `storageMode=auto` instead, or use
+the hidden `LIBSQL_ALLOW_LOCAL_FILE=true` escape hatch.
 
 Use this when Coolify or your server mounts a folder containing SQLite files.
 

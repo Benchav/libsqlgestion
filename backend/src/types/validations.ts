@@ -4,6 +4,9 @@ const identifier = z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const nonEmptyString = z.string().trim().min(1).max(512);
 const optionalString = z.string().max(512).optional();
 
+export const primaryModeSchema = z.enum(['auto', 'namespace', 'runtime']);
+export const storageModeSchema = z.enum(['auto', 'local', 'namespace', 'runtime']);
+
 export const createDatabaseSchema = z.object({
   projectId: z.string().uuid(),
   name: nonEmptyString,
@@ -11,6 +14,7 @@ export const createDatabaseSchema = z.object({
   url: optionalString,
   token: optionalString,
   subdomain: optionalString,
+  primaryMode: primaryModeSchema.optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -21,6 +25,7 @@ export const importSqliteSchema = z.object({
   sourcePath: z.string().min(1),
   subdomain: optionalString,
   token: optionalString,
+  storageMode: storageModeSchema.optional().default('auto'),
   metadata: z.record(z.unknown()).optional(),
 });
 

@@ -61,9 +61,9 @@ curl -X POST http://localhost:3000/api/v1/projects \
   -d '{"name":"Billing"}'
 ```
 
-## 4. Create a new managed SQLite database
+## 4. Create a new libSQL primary database
 
-Use this when you want the platform to create the file for you.
+Use this when you want the platform to create a real libSQL primary.
 
 Example API call:
 
@@ -74,16 +74,23 @@ curl -X POST http://localhost:3000/api/v1/databases \
   -d '{
     "projectId":"<projectId>",
     "name":"billing-main",
-    "type":"sqlite"
+    "type":"libsql",
+    "primaryMode":"runtime"
   }'
 ```
 
+Use `primaryMode=namespace` when `sqld` public routing is ready, or omit it to
+use `LIBSQL_PRIMARY_MODE`/`auto`.
+
 Expected result:
 
-- metadata is saved
-- the `.db` file is created in managed storage
-- a subdomain identifier is generated
+- a dedicated runtime or shared namespace is provisioned
+- a subdomain and `libsql://` URL are generated
+- a JWT with the right scope is returned
 - the database status becomes active
+
+With `LIBSQL_ALLOW_LOCAL_FILE=false`, `type=sqlite` is rejected. The legacy
+local-file escape hatch is only for development or rollback.
 
 ## 5. Import an existing database
 
@@ -98,7 +105,8 @@ curl -X POST http://localhost:3000/api/v1/databases/import-sqlite \
   -d '{
     "projectId":"<projectId>",
     "name":"legacy-billing",
-    "sourcePath":"/srv/libsqlite/discovered/legacy-app.db"
+    "sourcePath":"/srv/libsqlite/discovered/legacy-app.db",
+    "storageMode":"runtime"
   }'
 ```
 
@@ -107,8 +115,16 @@ Operational advice:
 - import copies the database into the managed storage tree
 - after import, treat the managed copy as the source of truth
 - keep the original file untouched if you still need it as a fallback
-- `LIBSQL_NAMESPACE_IMPORTS=false` (the Compose default) stores imports as local `.db` files
-- set `LIBSQL_NAMESPACE_IMPORTS=auto` to use the `sqld` namespace when it is reachable, or `true` to require it
+- with the libSQL-first policy (`LIBSQL_REQUIRE_PRIMARY=true`,
+  `LIBSQL_ALLOW_LOCAL_FILE=false`), add `storageMode` to choose
+  `namespace` or `runtime`; imports without a primary fail instead of
+  falling back to a local `.db`
+- `LIBSQL_ALLOW_LOCAL_FILE=true` is a hidden escape hatch for legacy local files
+- `LIBSQL_NAMESPACE_IMPORTS` and `LIBSQL_IMPORT_RUNTIME` are legacy defaults
+  only used when `LIBSQL_REQUIRE_PRIMARY=false`
+- migrate existing local files with
+  `npm --prefix backend run migrate:local-to-primary -- --mode=runtime --dry-run`
+  and then `--apply`
 
 ## Usage analytics
 
@@ -207,6 +223,11 @@ For an ERP or backend that uses `@libsql/client` with a file-based embedded repl
 ## 6. Discover mounted SQLite files
 
 Use this when a directory is mounted inside the backend container or VM.
+
+> **libSQL-first policy:** discovery/adoption is skipped because it creates
+> `LOCAL-FILE` records. Use `POST /databases/import-sqlite` with
+> `storageMode=auto|runtime|namespace` instead, or enable the hidden
+> `LIBSQL_ALLOW_LOCAL_FILE=true` escape hatch.
 
 You can scan in two modes:
 

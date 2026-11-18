@@ -68,20 +68,26 @@ SNAPSHOT_MIN_FREE_BYTES=1073741824
 SNAPSHOT_STALE_MINUTES=30
 SNAPSHOT_VERIFY_ON_RESTORE=true
 
-# Import strategy for SQLite files
-# false = always store imported files as local .db files (Compose default)
-# auto  = use the sqld namespace when reachable, otherwise local
-# true  = require sqld and fail the import when it is unavailable
-LIBSQL_NAMESPACE_IMPORTS=false
-LIBSQL_IMPORT_RUNTIME=false
+# libSQL-first policy (new databases/imports are real libSQL primaries)
+LIBSQL_REQUIRE_PRIMARY=true
+LIBSQL_ALLOW_LOCAL_FILE=false
+LIBSQL_PRIMARY_MODE=auto
+LIBSQL_CONVERSION_MODE=auto
 
-# Shared sqld namespace (host-based, required for embedded replicas)
-LIBSQL_CONVERSION_MODE=runtime
-# Compose-only: exact public host; first label must match the namespace
+# Shared sqld namespace
+LIBSQL_NAMESPACE_PUBLIC_ENABLED=false
+# Exact public host for a single namespace; first label must match the namespace
 LIBSQL_NAMESPACE_HOST=
+
 # Traefik TLS for dedicated runtimes or the exact shared-namespace router
 TRAEFIK_CERT_RESOLVER=
 TRAEFIK_ENTRYPOINT=websecure
+# DNS-01 resolver for the optional wildcard namespace override
+TRAEFIK_WILDCARD_CERT_RESOLVER=
+
+# Legacy auto behavior, only used when LIBSQL_REQUIRE_PRIMARY=false
+LIBSQL_NAMESPACE_IMPORTS=false
+LIBSQL_IMPORT_RUNTIME=false
 ```
 
 Notes:
@@ -100,11 +106,15 @@ Notes:
 - `SQL_QUERY_TIMEOUT_MS` cancels long read queries; `QUERY_HARD_MAX_ROWS` caps API/Studio result sets.
 - `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
-- `LIBSQL_NAMESPACE_IMPORTS=false` keeps imports local by default. Use `auto` to try the namespace when `sqld` is reachable, or `true` to require it.
-- If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume. Otherwise imports will fail or fall back to local storage depending on `LIBSQL_NAMESPACE_IMPORTS`.
+- `LIBSQL_REQUIRE_PRIMARY=true` blocks new `LOCAL-FILE` databases when no libSQL primary is available. It does not affect existing legacy databases.
+- `LIBSQL_ALLOW_LOCAL_FILE=true` is the hidden escape hatch for legacy local files; keep it false for Turso-like behavior.
+- `LIBSQL_PRIMARY_MODE=auto` prefers the shared namespace when `LIBSQL_NAMESPACE_PUBLIC_ENABLED=true` and `sqld` is reachable; otherwise it uses a dedicated runtime.
+- If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume.
 - If you use `sqld` namespaces, set **both** `DATABASE_PUBLIC_DOMAIN` and `SQLD_PUBLIC_DOMAIN` to a dedicated parent domain for databases (for example `db.example.com`) and keep that domain separate from the domains used by applications.
-- For an embedded replica against a shared namespace, the namespace URL must be host-based (`libsql://erp-db.data.example.com`). Set `LIBSQL_NAMESPACE_HOST` to that exact host and `TRAEFIK_CERT_RESOLVER` so the `sqld-namespace` router can issue its certificate. The `/dev/<namespace>/` path is only for HTTP pipeline clients.
-- For `LOCAL-FILE` databases, set `DATABASE_PUBLIC_BASE_URL` (or the panel's **Base URL** field) to the public HTTPS base URL of the backend so the generated URL is reachable by external clients.
+- For many namespaces, use `docker-compose.wildcard.yml` with a DNS-01 wildcard resolver and set `LIBSQL_NAMESPACE_PUBLIC_ENABLED=true`. For one namespace, use the exact `LIBSQL_NAMESPACE_HOST` router.
+- For an embedded replica against a shared namespace, the namespace URL must be host-based (`libsql://erp-db.data.example.com`). The `/dev/<namespace>/` path is only for HTTP pipeline clients.
+- Migrate existing `LOCAL-FILE` databases with `npm --prefix backend run migrate:local-to-primary -- --mode=runtime --dry-run` and then `--apply`; use `--mode=namespace` after wildcard routing is ready.
+- For legacy `LOCAL-FILE` databases, set `DATABASE_PUBLIC_BASE_URL` (or the panel's **Base URL** field) to the public HTTPS base URL of the backend so the generated URL is reachable by external clients.
 - The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.
 
 ## 4. Volumes

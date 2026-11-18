@@ -21,6 +21,21 @@ export class DiscoveryService {
       throw new Error('SQLITE_DISCOVERY_PATH not configured');
     }
 
+    const requirePrimary = parseEnvBoolean(process.env.LIBSQL_REQUIRE_PRIMARY, false);
+    const allowLocal = parseEnvBoolean(process.env.LIBSQL_ALLOW_LOCAL_FILE, !requirePrimary);
+    if (requirePrimary && !allowLocal) {
+      // Discovery registers files as LOCAL-FILE records. Under the libSQL-first
+      // policy those would be new legacy databases, so skip instead of creating
+      // records that violate the policy.
+      return {
+        discovered: [],
+        count: 0,
+        baseDir,
+        skipped: true,
+        reason: 'LOCAL-FILE discovery is disabled. Import the files with storageMode=auto instead.',
+      };
+    }
+
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     const files = this.collectSqliteFiles(baseDir);
     const discovered: Database[] = [];
@@ -86,4 +101,9 @@ export class DiscoveryService {
     visit(rootPath);
     return results;
   }
+}
+
+function parseEnvBoolean(value: string | undefined, fallback: boolean) {
+  if (value === undefined || value.trim() === '') return fallback;
+  return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
 }

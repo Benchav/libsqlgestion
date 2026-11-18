@@ -100,8 +100,14 @@ services:
       # namespace public DNS/TLS setup is ready.
       LIBSQL_NAMESPACE_IMPORTS: ${LIBSQL_NAMESPACE_IMPORTS:-false}
       LIBSQL_IMPORT_RUNTIME: ${LIBSQL_IMPORT_RUNTIME:-false}
+      # libSQL-first policy: new bases/imports must be real libSQL primaries.
+      LIBSQL_REQUIRE_PRIMARY: ${LIBSQL_REQUIRE_PRIMARY:-true}
+      LIBSQL_ALLOW_LOCAL_FILE: ${LIBSQL_ALLOW_LOCAL_FILE:-false}
+      LIBSQL_PRIMARY_MODE: ${LIBSQL_PRIMARY_MODE:-auto}
+      LIBSQL_NAMESPACE_PUBLIC_ENABLED: ${LIBSQL_NAMESPACE_PUBLIC_ENABLED:-false}
+      LIBSQL_NAMESPACE_HOST: ${LIBSQL_NAMESPACE_HOST:-}
       # "Make public libSQL" conversion: runtime | namespace | auto
-      LIBSQL_CONVERSION_MODE: ${LIBSQL_CONVERSION_MODE:-runtime}
+      LIBSQL_CONVERSION_MODE: ${LIBSQL_CONVERSION_MODE:-auto}
       # Optional Traefik TLS labels for dynamically created dedicated runtimes.
       # Leave empty if you use the shared sqld namespace router below.
       TRAEFIK_CERT_RESOLVER: ${TRAEFIK_CERT_RESOLVER:-}

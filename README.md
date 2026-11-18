@@ -40,6 +40,7 @@ Instead of paying for managed cloud services or struggling with monolithic setup
 - **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dark-mode dashboard.
 - **Account Management**: Change your email/password, create additional users, reset passwords, and manage roles from Settings.
 - **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface (synchronizes perfectly with your active `libsql-server` instances).
+- **libSQL-first mode**: New databases and imports are real libSQL primaries by default (shared `sqld` namespace or dedicated runtime). Legacy `LOCAL-FILE` databases remain accessible and can be migrated with `migrate:local-to-primary`.
 - **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
 - **Snapshots & Restore Points**: Scheduled, consistent SQLite snapshots with point-in-time selection, selectable daily/weekly/monthly backups, tiered retention, and one-click restore into a new database.
 - **Usage Analytics**: Query latency, rows read/written, traffic, storage history, error and source breakdowns, top databases/projects, and normalized query leaderboards, with no external analytics service.

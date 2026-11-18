@@ -99,15 +99,30 @@ Body fields:
 - `projectId`
 - `name`
 - `type` (`sqlite`, `libsql`, `remote`)
-- `url` optional for remote databases
+- `url` required for remote databases
 - `token` optional
 - `subdomain` optional
+- `primaryMode` optional (`auto`, `namespace`, `runtime`) for managed libSQL primaries
+
+With the libSQL-first policy (`LIBSQL_REQUIRE_PRIMARY=true`,
+`LIBSQL_ALLOW_LOCAL_FILE=false`), `type=sqlite` is rejected and `type=libsql`
+without a URL creates a real libSQL namespace or runtime. `type=remote` or
+`type=libsql` with a URL registers an external libSQL primary.
 
 ### `POST /databases/import-sqlite`
 
 Imports an existing SQLite file from a server-side path.
 
-With `LIBSQL_NAMESPACE_IMPORTS=false` (the Compose default), imports are stored as local `.db` files. Set `auto` to use the `sqld` namespace when it is reachable and fall back to local otherwise, or `true` to require the namespace.
+Body fields include `storageMode` (`auto`, `namespace`, `runtime`, or `local`).
+With the default policy, imports must target a libSQL primary; `local` is only
+allowed when `LIBSQL_ALLOW_LOCAL_FILE=true`. `auto` selects the configured
+primary and never falls back to `LOCAL-FILE` when `LIBSQL_REQUIRE_PRIMARY=true`.
+
+### `GET /databases/storage-capabilities`
+
+Returns the available primary modes, public domain/protocol, and whether the
+legacy local-file escape hatch is enabled. The panel uses it to build the
+create/import selectors.
 
 ### `GET /databases/:id`
 
@@ -284,7 +299,8 @@ Request body:
 
 ### `POST /provisioning/sqlite`
 
-Creates a new SQLite database file and registers it.
+Legacy LOCAL-FILE provisioning. Under the libSQL-first policy
+(`LIBSQL_ALLOW_LOCAL_FILE=false`) this endpoint is rejected with 403.
 
 ### `POST /provisioning/libsql`
 
@@ -294,11 +310,13 @@ Registers a libsql database by URL and token.
 
 ### `POST /discovery/sqlite/scan`
 
-Scans a mounted directory for `.db` files and registers them.
+Scans a mounted directory for `.db` files. Under the libSQL-first policy this is
+skipped because it would create LOCAL-FILE records. Import files through
+`POST /databases/import-sqlite` with a libSQL `storageMode` instead.
 
 ### `POST /discovery/sqlite/adopt`
 
-Scans and adopts mounted `.db` files into the managed storage tree.
+Same as scan; skipped under the libSQL-first policy.
 
 ## Analytics
 

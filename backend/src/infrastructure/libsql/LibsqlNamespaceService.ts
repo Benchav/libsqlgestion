@@ -25,6 +25,20 @@ export class LibsqlNamespaceService {
     return Boolean(process.env.LIBSQL_ADMIN_URL || process.env.LIBSQL_ENABLE_NAMESPACES === 'true');
   }
 
+  /**
+   * Whether the namespaces have a public route suitable for libSQL clients.
+   * This must be explicit for wildcard routing; the single-host exact router
+   * can enable it by setting LIBSQL_NAMESPACE_HOST.
+   */
+  isPublicEnabled(): boolean {
+    const raw = process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED;
+    if (raw !== undefined && raw.trim() !== '') {
+      return ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
+    }
+
+    return Boolean(process.env.LIBSQL_NAMESPACE_HOST?.trim());
+  }
+
   ensureAuthKeys(): { privateKey: crypto.KeyObject; publicKeyPem: string } {
     if (this.keyPairCache) {
       return this.keyPairCache;

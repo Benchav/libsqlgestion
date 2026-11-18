@@ -427,6 +427,10 @@ export default function SettingsPage() {
                     ['DATABASE_PUBLIC_URL_TEMPLATE', 'Custom URL template for public database links'],
                     ['DATABASE_PUBLIC_HOST', 'Host used when publishing managed libSQL runtimes'],
                     ['DATABASE_PUBLIC_PROTOCOL', 'Protocol used for public database URLs'],
+                    ['LIBSQL_REQUIRE_PRIMARY', 'Require new databases/imports to be libSQL primaries'],
+                    ['LIBSQL_ALLOW_LOCAL_FILE', 'Allow legacy LOCAL-FILE creation (escape hatch)'],
+                    ['LIBSQL_PRIMARY_MODE', 'Default primary selection: auto, namespace or runtime'],
+                    ['LIBSQL_NAMESPACE_PUBLIC_ENABLED', 'Enable publicly routable shared namespaces'],
                   ].map(([key, desc]) => (
                     <tr key={key} className="border-b border-zinc-800/40 hover:bg-zinc-800/20">
                       <td className="py-2.5 px-6 font-mono text-xs text-blue-400">{key}</td>

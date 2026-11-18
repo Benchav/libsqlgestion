@@ -26,6 +26,14 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('[ErrorBoundary] Unhandled error:', error, errorInfo);
   }
 
+  private isBrowserTranslationError(error: Error | null) {
+    const message = error?.message || '';
+    return (
+      message.includes('removeChild')
+      || message.includes('not a child of this node')
+    );
+  }
+
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) {
@@ -33,7 +41,7 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6">
+        <div translate="no" className="notranslate min-h-screen bg-[#050505] flex items-center justify-center p-6">
           <div className="bg-[#0f0f0f] border border-zinc-800/80 rounded-xl p-8 max-w-[520px] w-full shadow-2xl">
             <div className="flex flex-col items-center gap-4 text-center">
               <div className="w-12 h-12 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center">
@@ -47,7 +55,13 @@ export class ErrorBoundary extends Component<Props, State> {
               <p className="text-sm text-zinc-400 max-w-xs">
                 An unexpected error occurred. Please try refreshing the page.
               </p>
-              <pre className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 mt-2 text-xs text-red-400 font-mono overflow-x-auto max-w-full">
+              {this.isBrowserTranslationError(this.state.error) && (
+                <p className="text-xs text-amber-300 max-w-sm leading-relaxed">
+                  Browser translation can modify the page DOM and trigger this error.
+                  Disable automatic translation for this site, then refresh the page.
+                </p>
+              )}
+              <pre className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 mt-2 text-xs text-red-400 font-mono overflow-x-auto max-w-full whitespace-pre-wrap break-words">
                 {this.state.error?.message || 'Unknown error'}
               </pre>
               <button

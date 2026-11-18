@@ -8,6 +8,30 @@ Check:
 - the data directory is writable
 - the control database file path is correct
 
+## `Failed to execute 'removeChild' on 'Node'` / "Something went wrong"
+
+This is a browser DOM error, usually caused by **automatic page translation**
+(Chrome/Edge/Google Translate) or an extension that rewrites the DOM. The
+translator moves or wraps React's text nodes, and React later tries to remove a
+node that is no longer its direct child.
+
+The control plane now sets:
+
+```html
+<html lang="en" translate="no" class="notranslate">
+<meta name="google" content="notranslate">
+```
+
+If the error still appears:
+
+1. Open the panel in an incognito window with extensions disabled.
+2. Disable automatic translation for the panel hostname, then reload.
+3. If it still happens, check for invalid HTML nesting or a DOM-injecting
+   extension.
+
+Automatic translation is not a substitute for localization. If the UI must be
+in Spanish, implement a real i18n layer instead of relying on the browser.
+
 ## SQLite discovery finds nothing
 
 Check:

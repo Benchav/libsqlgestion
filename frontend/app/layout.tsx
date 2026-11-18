@@ -11,12 +11,22 @@ const ibmPlexMono = IBM_Plex_Mono({ subsets: ['latin'], weight: ['400', '500'], 
 export const metadata: Metadata = {
   title: 'libsqlite',
   description: 'Self-hosted SQLite and libsql control plane',
+  // Browser translation mutates the DOM and can break React's removeChild()
+  // during conditional renders. Keep the control plane untranslated; a real
+  // i18n layer should be used if localized UI is required.
+  other: {
+    google: 'notranslate',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${manrope.variable} ${spaceGrotesk.variable} ${ibmPlexMono.variable}`}>
-      <body>
+    <html
+      lang="en"
+      translate="no"
+      className={`notranslate ${manrope.variable} ${spaceGrotesk.variable} ${ibmPlexMono.variable}`}
+    >
+      <body className="notranslate">
         <QueryProvider>
           <ErrorBoundary>
             {children}

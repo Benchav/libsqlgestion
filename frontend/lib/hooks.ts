@@ -55,6 +55,37 @@ export type DatabaseDetail = {
   project?: { id: string; name: string };
 };
 
+export type DatabaseSnapshot = {
+  id: string;
+  databaseId: string;
+  status: 'pending' | 'ready' | 'failed' | 'deleted';
+  reason: 'scheduled' | 'manual' | 'pre_restore';
+  fileName: string;
+  sizeBytes: number;
+  checksumSha256?: string;
+  takenAt: string;
+  expiresAt?: string | null;
+  pinned: boolean;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SnapshotPolicy = {
+  intervalMinutes: number;
+  fullWindowHours: number;
+  sixHourlyWindowHours: number;
+  retentionDays: number;
+  maxConcurrent: number;
+};
+
+export type SnapshotListResponse = {
+  snapshots: DatabaseSnapshot[];
+  totalSizeBytes: number;
+  hasMore: boolean;
+  policy: SnapshotPolicy;
+};
+
 export type AuditLogEntry = {
   id: string;
   action: string;
@@ -167,6 +198,72 @@ export function useCreateBackup() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['databases'] });
+    },
+  });
+}
+
+export function useSnapshots(databaseId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['snapshots', databaseId],
+    queryFn: async () => {
+      return apiRequest<SnapshotListResponse>(`/databases/${databaseId}/snapshots?limit=100`);
+    },
+    enabled: Boolean(databaseId) && enabled,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data?.snapshots?.some((snapshot) => snapshot.status === 'pending')) {
+        return 2000;
+      }
+      return 60_000;
+    },
+  });
+}
+
+export function useCreateSnapshot(databaseId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      return apiRequest<{ snapshot: DatabaseSnapshot }>(`/databases/${databaseId}/snapshots`, {
+        method: 'POST',
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['snapshots', databaseId] });
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+    },
+  });
+}
+
+export function useDeleteSnapshot(databaseId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (snapshotId: string) => {
+      await apiRequest(`/databases/${databaseId}/snapshots/${snapshotId}`, {
+        method: 'DELETE',
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['snapshots', databaseId] });
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+    },
+  });
+}
+
+export function useRestoreSnapshot(databaseId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ snapshotId, name }: { snapshotId: string; name?: string }) => {
+      return apiRequest<{ database: DatabaseDetail; token: string }>(
+        `/databases/${databaseId}/snapshots/${snapshotId}/restore`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ name: name || undefined }),
+        },
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['databases'] });
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
     },
   });
 }

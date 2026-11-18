@@ -16,6 +16,9 @@ Check:
 - the directory contains files ending in `.db`
 - the configured project ID exists
 
+Discovery intentionally ignores `projects/` and `snapshots/` directories so it
+does not register managed databases or restore points as new databases.
+
 ## Imported databases are not updated
 
 Remember:
@@ -80,6 +83,30 @@ curl -X POST http://localhost:5000/api/v1/databases/<databaseId>/convert-to-loca
 ```
 
 The endpoint copies the namespace file into managed local storage, updates the record to a normal SQLite database, and evicts the old pooled connection.
+
+## Snapshots are not being created
+
+Check:
+
+- `SNAPSHOTS_ENABLED=true` in the backend environment
+- the database is `LOCAL-FILE`; remote and `sqld` runtime databases are skipped in this version
+- the backend has free disk space above `SNAPSHOT_MIN_FREE_BYTES`
+- the backend logs contain `[snapshots]` messages
+- `/app/data/sqlite/snapshots` is inside the persistent volume
+
+Snapshots run every `SNAPSHOT_INTERVAL_MINUTES` (default 60). They are restore
+points, not continuous WAL recovery; the RPO equals the snapshot interval.
+
+## Restore fails
+
+Check:
+
+- the snapshot status is `ready`
+- the snapshot file exists under `SQLITE_STORAGE_ROOT/snapshots`
+- `SNAPSHOT_VERIFY_ON_RESTORE=true` did not detect a checksum mismatch
+- the backend can write to `SQLITE_STORAGE_ROOT/projects`
+
+Restoring always creates a new database. The original database is not modified.
 
 ## libsql connection fails
 

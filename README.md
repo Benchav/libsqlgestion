@@ -40,6 +40,7 @@ Instead of paying for managed cloud services or struggling with monolithic setup
 - **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dark-mode dashboard.
 - **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface (synchronizes perfectly with your active `libsql-server` instances).
 - **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
+- **Snapshots & Restore Points**: Scheduled, consistent SQLite snapshots with tiered retention and one-click restore into a new database.
 - **Enterprise-Grade Security**: Full RBAC, encrypted token storage via ED25519 JWT keys, comprehensive audit logging, and `HttpOnly` session hardening.
 - **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify**.
 

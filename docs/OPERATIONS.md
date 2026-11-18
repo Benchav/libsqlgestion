@@ -110,6 +110,29 @@ Operational advice:
 - `LIBSQL_NAMESPACE_IMPORTS=false` (the Compose default) stores imports as local `.db` files
 - set `LIBSQL_NAMESPACE_IMPORTS=auto` to use the `sqld` namespace when it is reachable, or `true` to require it
 
+## Snapshots and restore points
+
+`LOCAL-FILE` databases get scheduled snapshots when `SNAPSHOTS_ENABLED=true`.
+The scheduler runs every `SNAPSHOT_INTERVAL_MINUTES` (default 60), keeps all
+snapshots for 24 hours, one every 6 hours up to 72 hours, and one per day up to
+14 days. Manual snapshots are pinned.
+
+Use the database detail page to create, download or delete a snapshot and to
+restore one into a new database. The original database is never modified by a
+restore.
+
+Snapshot files are stored under `SQLITE_STORAGE_ROOT/snapshots`. They are local
+copies, not offsite backups. Continue copying the volume and `control.db` to a
+separate location.
+
+At the default 60-minute cadence with 14-day tiered retention, reserve about 43
+full database copies per database. A 152 MB database needs roughly 6.5 GB of
+snapshot space.
+
+Keep the backend at a single replica. The scheduler and stale-pending cleanup
+are process-local; the database-level pending index prevents duplicate work but
+is not a distributed lease.
+
 ### Consume a LOCAL-FILE database from another backend
 
 A `LOCAL-FILE` database is exposed through the backend's HTTP Hrana proxy. To use it from another server or container:

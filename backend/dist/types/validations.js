@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ValidationError = exports.publicDatabaseSettingsSchema = exports.pageQuerySchema = exports.adoptDatabaseSchema = exports.scanDirectorySchema = exports.auditListQuerySchema = exports.assignRoleSchema = exports.loginSchema = exports.registerUserSchema = exports.changeColumnTypeSchema = exports.renameColumnSchema = exports.addColumnSchema = exports.renameTableSchema = exports.backupDatabaseSchema = exports.createProjectSchema = exports.executeQuerySchema = exports.convertToRuntimeSchema = exports.updateDatabaseSchema = exports.importSqliteSchema = exports.createDatabaseSchema = void 0;
+exports.ValidationError = exports.publicDatabaseSettingsSchema = exports.pageQuerySchema = exports.adoptDatabaseSchema = exports.scanDirectorySchema = exports.auditListQuerySchema = exports.assignRoleSchema = exports.loginSchema = exports.registerUserSchema = exports.changeColumnTypeSchema = exports.renameColumnSchema = exports.addColumnSchema = exports.renameTableSchema = exports.restoreSnapshotSchema = exports.backupDatabaseSchema = exports.createProjectSchema = exports.executeQuerySchema = exports.convertToRuntimeSchema = exports.updateDatabaseSchema = exports.importSqliteSchema = exports.createDatabaseSchema = void 0;
 exports.parseAndValidate = parseAndValidate;
 const zod_1 = require("zod");
 const identifier = zod_1.z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -40,6 +40,9 @@ exports.createProjectSchema = zod_1.z.object({
 });
 exports.backupDatabaseSchema = zod_1.z.object({
     name: nonEmptyString,
+});
+exports.restoreSnapshotSchema = zod_1.z.object({
+    name: optionalString,
 });
 exports.renameTableSchema = zod_1.z.object({
     name: identifier,

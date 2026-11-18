@@ -46,6 +46,10 @@ export const backupDatabaseSchema = z.object({
   name: nonEmptyString,
 });
 
+export const restoreSnapshotSchema = z.object({
+  name: optionalString,
+});
+
 export const renameTableSchema = z.object({
   name: identifier,
 });

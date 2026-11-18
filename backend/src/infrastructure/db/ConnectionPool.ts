@@ -1,10 +1,9 @@
-import fs from 'fs';
-import path from 'path';
 import { Database } from '../../domain/entities/Database';
 import { SqliteClient } from '../sqlite/SqliteClient';
 import { createLibsqlClient } from '../libsql/LibsqlClient';
 import { decrypt } from '../crypto';
 import { getRuntimeConnectionUrl, resolveEffectiveDatabaseType } from '../../application/databases/database-runtime';
+import { resolveLocalDatabasePath } from '../../application/databases/local-database-path';
 
 type PooledClient = {
   client: SqliteClient | ReturnType<typeof createLibsqlClient>;
@@ -122,71 +121,15 @@ export class ConnectionPool {
   }
 
   private resolveSqliteFilePath(database: Database): string {
-    const storageRoot = process.env.SQLITE_STORAGE_ROOT || path.join(process.cwd(), 'data', 'sqlite');
-    let filePath = database.url || '';
-
-    // 1. Direct path exists
-    if (!filePath || !fs.existsSync(filePath)) {
-      // 2. If database.url contains 'projects/...', re-base onto current storageRoot
-      if (filePath && filePath.includes('projects')) {
-        const relativeSub = filePath.substring(filePath.indexOf('projects'));
-        const candidate = path.join(storageRoot, relativeSub);
-        if (fs.existsSync(candidate)) {
-          filePath = candidate;
-        }
+    try {
+      const filePath = resolveLocalDatabasePath(database, { createIfMissing: true });
+      if (!filePath) {
+        throw new Error('path could not be resolved');
       }
+      return filePath;
+    } catch (err: any) {
+      throw new Error(`Database ${database.id} file is missing and could not be initialized: ${err?.message || err}`);
     }
-
-    // 3. Try standard managed paths if project id is available
-    if (!filePath || !fs.existsSync(filePath)) {
-      if (database.project?.id) {
-        const flatDb = path.join(storageRoot, 'projects', database.project.id, 'databases', `${database.id}.db`);
-        const nestedData = path.join(storageRoot, 'projects', database.project.id, 'databases', database.id, 'dbs', 'default', 'data');
-        if (fs.existsSync(flatDb)) {
-          filePath = flatDb;
-        } else if (fs.existsSync(nestedData)) {
-          filePath = nestedData;
-        }
-      }
-    }
-
-    // 4. Scan projects directory in storageRoot for any matching database id file
-    if (!filePath || !fs.existsSync(filePath)) {
-      try {
-        const projectsDir = path.join(storageRoot, 'projects');
-        if (fs.existsSync(projectsDir)) {
-          for (const pDir of fs.readdirSync(projectsDir)) {
-            const flatCandidate = path.join(projectsDir, pDir, 'databases', `${database.id}.db`);
-            const nestedCandidate = path.join(projectsDir, pDir, 'databases', database.id, 'dbs', 'default', 'data');
-            if (fs.existsSync(flatCandidate)) {
-              filePath = flatCandidate;
-              break;
-            } else if (fs.existsSync(nestedCandidate)) {
-              filePath = nestedCandidate;
-              break;
-            }
-          }
-        }
-      } catch {
-        // Ignore scanning error
-      }
-    }
-
-    // 5. If still missing on disk but database record exists, initialize an empty SQLite database with WAL mode
-    if (!filePath || !fs.existsSync(filePath)) {
-      const projectId = database.project?.id || 'default';
-      filePath = path.join(storageRoot, 'projects', projectId, 'databases', `${database.id}.db`);
-      try {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        if (!fs.existsSync(filePath)) {
-          fs.writeFileSync(filePath, Buffer.from(''));
-        }
-      } catch (err: any) {
-        throw new Error(`Database ${database.id} file is missing and could not be initialized at ${filePath}: ${err?.message || err}`);
-      }
-    }
-
-    return filePath;
   }
 
   private async closeClient(entry: PooledClient): Promise<void> {

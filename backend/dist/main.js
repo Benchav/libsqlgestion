@@ -14,6 +14,7 @@ const DatabaseService_1 = require("./application/databases/DatabaseService");
 const PlatformSettingsService_1 = require("./application/settings/PlatformSettingsService");
 const ConnectionPool_1 = require("./infrastructure/db/ConnectionPool");
 const LibsqlNamespaceService_1 = require("./infrastructure/libsql/LibsqlNamespaceService");
+const SnapshotScheduler_1 = require("./application/snapshots/SnapshotScheduler");
 const start = async () => {
     await data_source_1.AppDataSource.initialize();
     await data_source_1.AppDataSource.runMigrations();
@@ -49,10 +50,18 @@ const start = async () => {
         app.log.error(err);
         process.exit(1);
     }
+    const snapshotScheduler = new SnapshotScheduler_1.SnapshotScheduler();
+    try {
+        snapshotScheduler.start();
+    }
+    catch (error) {
+        console.warn('[main] Could not start snapshot scheduler:', error?.message || error);
+    }
     // Graceful shutdown: close all pooled database connections before exiting
     const shutdown = async (signal) => {
         console.log(`\n${signal} received — shutting down gracefully...`);
         try {
+            await snapshotScheduler.stop();
             const pool = ConnectionPool_1.ConnectionPool.getInstance();
             console.log(`Closing ${pool.size} pooled database connection(s)...`);
             await pool.shutdown();

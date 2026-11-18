@@ -94,6 +94,43 @@ Repairs an existing `sqld-namespace` database by copying its file from the names
 
 Use this when an import was registered as a namespace database but `sqld` is no longer available and the namespace file still exists on disk.
 
+## Snapshots and restore points
+
+Snapshots are available for `LOCAL-FILE` databases. Each snapshot is a full,
+consistent SQLite copy created with `VACUUM INTO`. They provide restore points at
+the configured interval (RPO equal to the snapshot interval); they are not
+continuous WAL point-in-time recovery.
+
+### `GET /databases/:id/snapshots`
+
+Lists restore points, their sizes and the active snapshot policy.
+
+### `POST /databases/:id/snapshots`
+
+Creates a manual snapshot and marks it as pinned so automatic retention does not
+remove it. Returns `201` with the snapshot record.
+
+### `DELETE /databases/:id/snapshots/:snapshotId`
+
+Deletes a snapshot and its file.
+
+### `POST /databases/:id/snapshots/:snapshotId/restore`
+
+Creates a **new database** from a snapshot. The source database is not modified.
+
+Request body:
+
+```json
+{ "name": "insumosv1-restore-20261117" }
+```
+
+Returns `201` with the new database and its token. Clients must switch to the new
+URL and token after verifying the data.
+
+### `GET /databases/:id/snapshots/:snapshotId/download`
+
+Downloads the snapshot file for offsite storage or manual recovery.
+
 ## Schema and query
 
 ### `GET /databases/:id/schema`

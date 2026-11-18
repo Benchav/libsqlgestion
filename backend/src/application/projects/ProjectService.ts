@@ -1,7 +1,10 @@
+import fs from 'fs';
+import path from 'path';
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Project } from '../../domain/entities/Project';
 import { User } from '../../domain/entities/User';
 import { ProjectMember } from '../../domain/entities/ProjectMember';
+import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 
 export class ProjectService {
   private projectRepo = AppDataSource.getRepository(Project);
@@ -32,6 +35,13 @@ export class ProjectService {
   async deleteProject(id: string) {
     const project = await this.projectRepo.findOneByOrFail({ id });
     await this.projectRepo.remove(project);
+
+    const storageService = new SqliteStorageService();
+    await fs.promises.rm(
+      path.join(storageService.snapshotRootDirectory(), id),
+      { recursive: true, force: true },
+    ).catch(() => undefined);
+
     return { ok: true };
   }
 }

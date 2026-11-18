@@ -1,0 +1,128 @@
+import fs from 'fs';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { SnapshotService } from '../../../application/snapshots/SnapshotService';
+import { DatabaseSnapshot } from '../../../domain/entities/DatabaseSnapshot';
+import { ensureDatabaseAccess, ensurePermission } from '../guards';
+import { pageQuerySchema, parseAndValidate, restoreSnapshotSchema, ValidationError } from '../../../types/validations';
+import { presentDatabase } from '../database-presenter';
+
+function presentSnapshot(snapshot: DatabaseSnapshot) {
+  return {
+    id: snapshot.id,
+    databaseId: snapshot.databaseId,
+    status: snapshot.status,
+    reason: snapshot.reason,
+    fileName: snapshot.fileName,
+    sizeBytes: snapshot.sizeBytes,
+    checksumSha256: snapshot.checksumSha256,
+    takenAt: snapshot.takenAt,
+    expiresAt: snapshot.expiresAt,
+    pinned: snapshot.pinned,
+    errorMessage: snapshot.errorMessage,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+  };
+}
+
+export default async function snapshotRoutes(app: FastifyInstance) {
+  const snapshotService = new SnapshotService();
+
+  app.get('/databases/:id/snapshots', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.read'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    try {
+      const query = parseAndValidate(pageQuerySchema, request.query || {}, 'query');
+      const result = await snapshotService.listSnapshots(id, { limit: query.limit });
+      return reply.send({
+        ...result,
+        snapshots: result.snapshots.map(presentSnapshot),
+      });
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      return reply.status(500).send({ error: 'failed to list snapshots' });
+    }
+  });
+
+  app.post('/databases/:id/snapshots', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    try {
+      const snapshot = await snapshotService.createSnapshot(id, {
+        reason: 'manual',
+        pinned: true,
+        actorId: (request as any).user?.sub,
+        ipAddress: request.ip,
+      });
+      return reply.status(201).send({ snapshot: presentSnapshot(snapshot) });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to create snapshot' });
+    }
+  });
+
+  app.delete('/databases/:id/snapshots/:snapshotId', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id, snapshotId } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    try {
+      await snapshotService.deleteSnapshot(id, snapshotId, (request as any).user?.sub, request.ip);
+      return reply.send({ ok: true });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to delete snapshot' });
+    }
+  });
+
+  app.post('/databases/:id/snapshots/:snapshotId/restore', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id, snapshotId } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    const body = parseAndValidate(restoreSnapshotSchema, request.body || {}, 'restore snapshot');
+    try {
+      const result = await snapshotService.restoreSnapshot(id, snapshotId, {
+        name: body.name,
+        actorId: (request as any).user?.sub,
+        ipAddress: request.ip,
+      });
+      return reply.status(201).send({
+        database: presentDatabase(result.database),
+        token: result.token,
+      });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to restore snapshot' });
+    }
+  });
+
+  app.get('/databases/:id/snapshots/:snapshotId/download', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.read'))) return;
+    const { id, snapshotId } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    try {
+      const snapshot = await snapshotService.getSnapshot(id, snapshotId);
+      if (snapshot.status !== 'ready') {
+        return reply.status(409).send({ error: 'snapshot is not ready' });
+      }
+      if (!fs.existsSync(snapshot.filePath)) {
+        return reply.status(404).send({ error: 'snapshot file not found on disk' });
+      }
+
+      const timestamp = new Date(snapshot.takenAt).toISOString().replace(/[:.]/g, '-');
+      const safeName = access.name.replace(/["\r\n]/g, '-');
+      reply.header('Content-Disposition', `attachment; filename="${safeName}-${timestamp}.db"`);
+      reply.header('Content-Type', 'application/x-sqlite3');
+      return reply.send(fs.createReadStream(snapshot.filePath));
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to download snapshot' });
+    }
+  });
+}

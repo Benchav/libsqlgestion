@@ -31,6 +31,38 @@ class SqliteStorageService {
     managedProjectDirectory(projectId) {
         return path_1.default.join(this.storageRoot, 'projects', projectId, 'databases');
     }
+    snapshotRootDirectory() {
+        return process.env.SNAPSHOT_STORAGE_ROOT || path_1.default.join(this.storageRoot, 'snapshots');
+    }
+    snapshotDirectory(projectId, databaseId) {
+        return path_1.default.join(this.snapshotRootDirectory(), projectId, databaseId);
+    }
+    snapshotFilePath(projectId, databaseId, fileName) {
+        return path_1.default.join(this.snapshotDirectory(projectId, databaseId), fileName);
+    }
+    async restoreSnapshotFile(sourcePath, projectId, databaseId) {
+        const targetPath = this.managedDatabasePath(projectId, databaseId, 'sqlite');
+        fs_1.default.mkdirSync(path_1.default.dirname(targetPath), { recursive: true });
+        const tempTargetPath = `${targetPath}.restore-${Date.now()}.tmp`;
+        await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
+        try {
+            await fs_2.promises.copyFile(sourcePath, tempTargetPath);
+            const handle = await fs_2.promises.open(tempTargetPath, 'r+');
+            try {
+                await handle.sync();
+            }
+            finally {
+                await handle.close();
+            }
+            await fs_2.promises.rm(targetPath, { force: true }).catch(() => undefined);
+            await fs_2.promises.rename(tempTargetPath, targetPath);
+            return targetPath;
+        }
+        catch (error) {
+            await fs_2.promises.rm(tempTargetPath, { force: true }).catch(() => undefined);
+            throw error;
+        }
+    }
     async ensureManagedDatabaseFile(projectId, databaseId, type) {
         const filePath = this.managedDatabasePath(projectId, databaseId, type);
         fs_1.default.mkdirSync(path_1.default.dirname(filePath), { recursive: true });

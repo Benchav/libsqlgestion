@@ -64,16 +64,21 @@ class DiscoveryService {
     }
     collectSqliteFiles(rootPath) {
         const results = [];
+        const ignoredDirectories = new Set(['projects', 'snapshots']);
         const visit = (currentPath) => {
             if (!fs_1.default.existsSync(currentPath))
                 return;
             const stat = fs_1.default.statSync(currentPath);
             if (stat.isDirectory()) {
                 for (const entry of fs_1.default.readdirSync(currentPath)) {
+                    if (ignoredDirectories.has(entry))
+                        continue;
                     visit(path_1.default.join(currentPath, entry));
                 }
                 return;
             }
+            if (path_1.default.basename(currentPath).startsWith('.tmp-'))
+                return;
             if (/\.db$/i.test(currentPath)) {
                 results.push(currentPath);
             }

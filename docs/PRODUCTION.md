@@ -204,6 +204,7 @@ Backup these items separately:
 
 - `control.db`
 - managed SQLite files under `SQLITE_STORAGE_ROOT`
+- snapshot files under `SQLITE_STORAGE_ROOT/snapshots`
 - any raw discovery folder if you still keep one
 
 Suggested backup cadence:
@@ -211,6 +212,40 @@ Suggested backup cadence:
 - control plane: daily
 - managed databases: according to business criticality
 - offsite copy: at least one additional location
+
+### Restore points
+
+LibSQLite can create scheduled snapshots for `LOCAL-FILE` databases:
+
+```env
+SNAPSHOTS_ENABLED=true
+SNAPSHOT_INTERVAL_MINUTES=60
+SNAPSHOT_FULL_WINDOW_HOURS=24
+SNAPSHOT_SIX_HOURLY_WINDOW_HOURS=72
+SNAPSHOT_RETENTION_DAYS=14
+SNAPSHOT_MIN_FREE_BYTES=1073741824
+```
+
+Retention keeps every snapshot from the last 24 hours, one every 6 hours up to
+72 hours, and one per day up to 14 days. Manual snapshots are pinned and are not
+removed automatically.
+
+Snapshots live on the same server and volume. They protect against user errors,
+bad migrations and deleted rows, but **do not protect against disk or server
+loss**. Keep an offsite copy of the volume and `control.db`.
+
+With the default policy (60-minute snapshots and 14-day tiered retention), plan
+for roughly **43 full database copies per database** of steady-state snapshot
+storage. A 152 MB database therefore needs about 6.5 GB. Set
+`SNAPSHOT_INTERVAL_MINUTES` and `SNAPSHOT_RETENTION_DAYS` according to the disk
+you can reserve.
+
+Run a single backend replica. The snapshot scheduler and stale-pending cleanup
+assume one process; the per-database pending index prevents duplicate snapshots
+but does not provide a distributed scheduler lease.
+
+The RPO is the snapshot interval. For second-level recovery, use an external WAL
+archiver such as Litestream.
 
 ## 11. Restore sequence
 

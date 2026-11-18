@@ -537,6 +537,9 @@ class DatabaseService {
         else {
             await this.runtimeService.removeDatabase(database);
         }
+        if (database.project?.id) {
+            await fs_1.default.promises.rm(this.storageService.snapshotDirectory(database.project.id, database.id), { recursive: true, force: true }).catch(() => undefined);
+        }
         // Explicit physical file cleanup for SQLite files, WAL and SHM
         if ((0, database_runtime_1.resolveEffectiveDatabaseType)(database) === 'sqlite') {
             const candidates = new Set();

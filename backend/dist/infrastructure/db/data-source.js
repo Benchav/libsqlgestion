@@ -13,8 +13,10 @@ const Session_1 = require("../../domain/entities/Session");
 const ProjectMember_1 = require("../../domain/entities/ProjectMember");
 const DatabaseMigration_1 = require("../../domain/entities/DatabaseMigration");
 const PlatformSetting_1 = require("../../domain/entities/PlatformSetting");
+const DatabaseSnapshot_1 = require("../../domain/entities/DatabaseSnapshot");
 const _1710000000000_InitialControlPlane_1 = require("../../migrations/1710000000000-InitialControlPlane");
 const _1710000001000_PlatformSettings_1 = require("../../migrations/1710000001000-PlatformSettings");
+const _1710000002000_DatabaseSnapshots_1 = require("../../migrations/1710000002000-DatabaseSnapshots");
 const databaseFile = process.env.DATABASE_FILE || './data/control.db';
 exports.AppDataSource = new typeorm_1.DataSource({
     type: 'sqlite',
@@ -22,6 +24,6 @@ exports.AppDataSource = new typeorm_1.DataSource({
     synchronize: false,
     migrationsRun: false,
     logging: false,
-    entities: [User_1.User, Project_1.Project, Database_1.Database, Role_1.Role, Permission_1.Permission, UserRole_1.UserRole, AuditLog_1.AuditLog, Session_1.Session, ProjectMember_1.ProjectMember, DatabaseMigration_1.DatabaseMigration, PlatformSetting_1.PlatformSetting],
-    migrations: [_1710000000000_InitialControlPlane_1.InitialControlPlane1710000000000, _1710000001000_PlatformSettings_1.PlatformSettings1710000001000],
+    entities: [User_1.User, Project_1.Project, Database_1.Database, Role_1.Role, Permission_1.Permission, UserRole_1.UserRole, AuditLog_1.AuditLog, Session_1.Session, ProjectMember_1.ProjectMember, DatabaseMigration_1.DatabaseMigration, PlatformSetting_1.PlatformSetting, DatabaseSnapshot_1.DatabaseSnapshot],
+    migrations: [_1710000000000_InitialControlPlane_1.InitialControlPlane1710000000000, _1710000001000_PlatformSettings_1.PlatformSettings1710000001000, _1710000002000_DatabaseSnapshots_1.DatabaseSnapshots1710000002000],
 });

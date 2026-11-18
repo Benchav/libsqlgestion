@@ -207,7 +207,9 @@ export class LibsqlRuntimeService {
   }
 
   private buildPublicUrl(publicPort: string) {
-    return `${this.getPublicProtocol()}://${this.getPublicHost()}:${publicPort}`;
+    // The published host port is the raw sqld HTTP listener. TLS is added by
+    // the Traefik router for the canonical domain, never on this port.
+    return `http://${this.getPublicHost()}:${publicPort}`;
   }
 
   private buildBackendUrl(publicPort: string) {
@@ -351,6 +353,9 @@ export class LibsqlRuntimeService {
       'traefik.enable': 'true',
       ...(networkName ? { 'traefik.docker.network': networkName } : {}),
       [`${routerName}.rule`]: `Host(\`${paths.subdomain}.${this.getPublicDomain()}\`)`,
+      // A dedicated runtime must win over the shared sqld HostRegexp router
+      // when both are present.
+      [`${routerName}.priority`]: '1000',
       [`traefik.http.services.${paths.containerName}.loadbalancer.server.port`]: '8080',
     };
 
@@ -362,6 +367,12 @@ export class LibsqlRuntimeService {
       if (entrypoint) {
         labels[`${routerName}.entrypoints`] = entrypoint;
       }
+    } else if (this.getPublicDomain() && this.getPublicDomain() !== 'localhost') {
+      console.warn(
+        `[LibsqlRuntimeService] Runtime "${paths.subdomain}" has a public domain but ` +
+        'TRAEFIK_CERT_RESOLVER is not set. The HTTPS URL may serve the Traefik default ' +
+        'certificate; set TRAEFIK_CERT_RESOLVER to your Traefik resolver name.',
+      );
     }
 
     const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
@@ -459,7 +470,13 @@ export class LibsqlRuntimeService {
       if (internalCheck.ok || backendCheck.ok) {
         const chosenUrl = internalCheck.ok ? urls.internalUrl : urls.backendUrl;
         const publicChecked = Boolean(urls.publicUrl && urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl);
-        const publicCheck = publicChecked ? await this.checkConnection(urls.publicUrl, token) : { ok: backendCheck.ok || internalCheck.ok };
+        const publicCheck = publicChecked
+          ? await this.waitForPublicConnection(
+              urls.publicUrl,
+              token,
+              Math.max(2000, Math.min(30000, timeoutAt - Date.now())),
+            )
+          : { ok: backendCheck.ok || internalCheck.ok };
 
         return {
           connectionUrl: chosenUrl,
@@ -487,7 +504,35 @@ export class LibsqlRuntimeService {
     throw new Error(`Timed out waiting for libSQL to accept connections${suffix ? `: ${suffix}` : ''}`);
   }
 
-  private async checkConnection(url: string, authToken: string): Promise<{ ok: boolean; error?: string }> {
+  private async waitForPublicConnection(
+    publicUrl: string,
+    authToken: string,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const deadline = Date.now() + Math.max(1000, timeoutMs);
+    let lastResult: { ok: boolean; error?: string } = { ok: false, error: 'public check not started' };
+
+    while (Date.now() < deadline) {
+      lastResult = await this.checkConnection(publicUrl, authToken, false);
+      if (lastResult.ok) {
+        return lastResult;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+
+    console.warn(
+      `[LibsqlRuntimeService] Public route did not become ready for ${publicUrl}: ` +
+      `${lastResult.error || 'unknown error'}. ` +
+      'Check DNS, the Traefik router/TLS certificate and TRAEFIK_CERT_RESOLVER.',
+    );
+    return lastResult;
+  }
+
+  private async checkConnection(
+    url: string,
+    authToken: string,
+    logFailure = true,
+  ): Promise<{ ok: boolean; error?: string }> {
     if (!url) return { ok: false, error: 'Empty URL' };
     try {
       const client = await import('@libsql/client').then(({ createClient }) => createClient({ url, authToken }));
@@ -499,7 +544,9 @@ export class LibsqlRuntimeService {
       }
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${errMsg}`);
+      if (logFailure) {
+        console.warn(`[LibsqlRuntimeService] connection check failed for ${url}: ${errMsg}`);
+      }
       return { ok: false, error: errMsg };
     }
   }

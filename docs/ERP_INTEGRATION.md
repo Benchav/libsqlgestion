@@ -76,6 +76,11 @@ Public URL: libsql://erp-db.example.com
 
 Then rotate the token if needed and copy the JWT. The JWT is the value for `TURSO_AUTH_TOKEN`.
 
+If the panel shows `<subdomain>.localhost`, the **Wildcard domain** is empty.
+The **Base URL** is only for `LOCAL-FILE` databases. Set the Wildcard domain,
+ensure `TRAEFIK_CERT_RESOLVER` is configured, redeploy the backend, and rotate
+the token so the runtime container is recreated with the new host/TLS labels.
+
 ## 2. DNS and TLS
 
 Expose the fixed hostname through Cloudflare Tunnel or your Traefik/DNS setup:

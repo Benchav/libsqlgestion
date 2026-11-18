@@ -191,6 +191,9 @@ export default function SettingsPage() {
                       className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
                     />
                   </div>
+                  <p className="-mt-2 ml-44 text-xs text-zinc-500">
+                    Required for libSQL runtime/namespace URLs. The Base URL below is only used by LOCAL-FILE databases.
+                  </p>
 
                   <div className="flex items-center gap-4">
                     <label className="w-40 text-sm font-medium text-zinc-300">Protocol</label>

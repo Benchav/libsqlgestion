@@ -39,6 +39,8 @@ services:
       # Namespace routing uses its own domain so it never captures the root
       # domain used by the apps or by single-database libSQL containers.
       - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${SQLD_PUBLIC_DOMAIN:-localhost}`)"
+      # Keep the shared wildcard below dedicated runtime/namespace routers.
+      - "traefik.http.routers.sqld.priority=10"
       - "traefik.http.services.sqld.loadbalancer.server.port=8080"
       # Exact namespace host used by embedded replicas. The first DNS label
       # must match the namespace (for example erp-db.data.example.com).

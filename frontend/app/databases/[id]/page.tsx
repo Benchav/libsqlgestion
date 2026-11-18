@@ -506,8 +506,18 @@ export default function DatabaseDetailPage() {
                   </div>
                   {publicUrl && /localhost|127\.0\.0\.1/.test(publicUrl) && (
                     <p className="mt-2 text-xs text-amber-400">
-                      This URL is not reachable from another server. Set the public Base URL in{' '}
-                      <a href="/settings" className="underline hover:text-amber-300">Settings</a>.
+                      {database?.runtimeProvider === 'local-file' ? (
+                        <>
+                          This URL is not reachable from another server. Set the public Base URL in{' '}
+                          <a href="/settings" className="underline hover:text-amber-300">Settings</a>.
+                        </>
+                      ) : (
+                        <>
+                          This runtime URL is still using localhost. Set the <strong>Wildcard domain</strong>{' '}
+                          in <a href="/settings" className="underline hover:text-amber-300">Settings</a>, then
+                          recreate the runtime (rotate its token) so Traefik receives the new host and TLS labels.
+                        </>
+                      )}
                     </p>
                   )}
                 </div>

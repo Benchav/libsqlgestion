@@ -45,6 +45,28 @@ https://libsql.example.com/api/v1/databases/<id>/
 
 The wildcard domain setting is only used by `sqld` namespaces, not by `LOCAL-FILE` databases.
 
+## Runtime URL shows `<name>.localhost` or Backend health fails
+
+For a dedicated runtime or a shared namespace, the **Wildcard domain** setting
+builds the public URL. The **Base URL** setting is only for `LOCAL-FILE`
+databases. If the Wildcard domain is empty, the panel falls back to
+`https://<subdomain>.localhost`.
+
+Fix:
+
+1. Set **Wildcard domain** to the parent domain, for example `data.example.com`.
+2. Set `TRAEFIK_CERT_RESOLVER` to the resolver used by your Traefik instance.
+3. Redeploy/restart the backend so it reads the new environment.
+4. Rotate the runtime token. This recreates the container with the new
+   `Host(...)` and TLS labels. Changing only the panel setting does not update
+   an existing container's Docker labels.
+
+The runtime's internal URL is `http://container:8080`; the published host port is
+also HTTP. Only the canonical public URL is HTTPS, terminated by Traefik. Older
+builds used `https://host.docker.internal:<port>` for the Backend check; current
+builds use `http://`. If you still see the HTTPS host-port URL, redeploy the
+updated backend and rotate the runtime token.
+
 ## Embedded replica fails with `Invalid header bit 123 expected 0 or 1`
 
 This error comes from the libSQL replication client, not from SQLite or the token.

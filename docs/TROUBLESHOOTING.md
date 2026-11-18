@@ -94,8 +94,11 @@ Check:
 - the backend logs contain `[snapshots]` messages
 - `/app/data/sqlite/snapshots` is inside the persistent volume
 
-Snapshots run every `SNAPSHOT_INTERVAL_MINUTES` (default 60). They are restore
-points, not continuous WAL recovery; the RPO equals the snapshot interval.
+The scheduler wakes every `SNAPSHOT_SCHEDULER_TICK_MINUTES` (default 5) and uses
+each database's backup policy. The default restore-point interval is
+`SNAPSHOT_INTERVAL_MINUTES` (60), editable from the database detail page. They
+are restore points, not continuous WAL recovery; the RPO equals the configured
+restore-point interval.
 
 ## Restore fails
 

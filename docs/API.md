@@ -103,7 +103,39 @@ continuous WAL point-in-time recovery.
 
 ### `GET /databases/:id/snapshots`
 
-Lists restore points, their sizes and the active snapshot policy.
+Lists restore points, their sizes and the active snapshot engine policy. Use
+`?before=<ISO timestamp>` to resolve a point-in-time restore; the result is the
+nearest snapshot at or before that timestamp.
+
+### `GET /databases/:id/snapshot-policy`
+
+Returns the per-database backup policy. If the database has no saved policy, the
+defaults are returned with `isDefault: true`.
+
+### `PUT /databases/:id/snapshot-policy`
+
+Saves a partial or complete policy:
+
+```json
+{
+  "restorePointIntervalMinutes": 60,
+  "dailyEnabled": true,
+  "dailyAtHour": 2,
+  "dailyRetention": 14,
+  "weeklyEnabled": true,
+  "weeklyDayOfWeek": 1,
+  "weeklyAtHour": 2,
+  "weeklyRetention": 8,
+  "monthlyEnabled": true,
+  "monthlyDayOfMonth": 1,
+  "monthlyAtHour": 2,
+  "monthlyRetention": 12,
+  "timezone": "UTC"
+}
+```
+
+`weeklyDayOfWeek` uses `0=Sunday` through `6=Saturday`. Hours are in the
+configured IANA timezone.
 
 ### `POST /databases/:id/snapshots`
 

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ValidationError = exports.publicDatabaseSettingsSchema = exports.pageQuerySchema = exports.adoptDatabaseSchema = exports.scanDirectorySchema = exports.auditListQuerySchema = exports.assignRoleSchema = exports.loginSchema = exports.registerUserSchema = exports.changeColumnTypeSchema = exports.renameColumnSchema = exports.addColumnSchema = exports.renameTableSchema = exports.restoreSnapshotSchema = exports.backupDatabaseSchema = exports.createProjectSchema = exports.executeQuerySchema = exports.convertToRuntimeSchema = exports.updateDatabaseSchema = exports.importSqliteSchema = exports.createDatabaseSchema = void 0;
+exports.ValidationError = exports.publicDatabaseSettingsSchema = exports.pageQuerySchema = exports.adoptDatabaseSchema = exports.scanDirectorySchema = exports.auditListQuerySchema = exports.assignRoleSchema = exports.loginSchema = exports.registerUserSchema = exports.changeColumnTypeSchema = exports.renameColumnSchema = exports.addColumnSchema = exports.renameTableSchema = exports.snapshotPolicySchema = exports.snapshotListQuerySchema = exports.restoreSnapshotSchema = exports.backupDatabaseSchema = exports.createProjectSchema = exports.executeQuerySchema = exports.convertToRuntimeSchema = exports.updateDatabaseSchema = exports.importSqliteSchema = exports.createDatabaseSchema = void 0;
 exports.parseAndValidate = parseAndValidate;
 const zod_1 = require("zod");
 const identifier = zod_1.z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -43,6 +43,25 @@ exports.backupDatabaseSchema = zod_1.z.object({
 });
 exports.restoreSnapshotSchema = zod_1.z.object({
     name: optionalString,
+});
+exports.snapshotListQuerySchema = zod_1.z.object({
+    limit: zod_1.z.coerce.number().int().min(1).max(100).optional(),
+    before: zod_1.z.coerce.date().optional(),
+});
+exports.snapshotPolicySchema = zod_1.z.object({
+    restorePointIntervalMinutes: zod_1.z.coerce.number().int().min(5).max(1440).optional(),
+    dailyEnabled: zod_1.z.boolean().optional(),
+    dailyAtHour: zod_1.z.coerce.number().int().min(0).max(23).optional(),
+    dailyRetention: zod_1.z.coerce.number().int().min(1).max(365).optional(),
+    weeklyEnabled: zod_1.z.boolean().optional(),
+    weeklyDayOfWeek: zod_1.z.coerce.number().int().min(0).max(6).optional(),
+    weeklyAtHour: zod_1.z.coerce.number().int().min(0).max(23).optional(),
+    weeklyRetention: zod_1.z.coerce.number().int().min(1).max(365).optional(),
+    monthlyEnabled: zod_1.z.boolean().optional(),
+    monthlyDayOfMonth: zod_1.z.coerce.number().int().min(1).max(28).optional(),
+    monthlyAtHour: zod_1.z.coerce.number().int().min(0).max(23).optional(),
+    monthlyRetention: zod_1.z.coerce.number().int().min(1).max(365).optional(),
+    timezone: zod_1.z.string().trim().min(1).max(64).optional(),
 });
 exports.renameTableSchema = zod_1.z.object({
     name: identifier,

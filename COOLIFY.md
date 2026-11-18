@@ -58,6 +58,8 @@ SNAPSHOT_INTERVAL_MINUTES=60
 SNAPSHOT_FULL_WINDOW_HOURS=24
 SNAPSHOT_SIX_HOURLY_WINDOW_HOURS=72
 SNAPSHOT_RETENTION_DAYS=14
+SNAPSHOT_SCHEDULER_TICK_MINUTES=5
+SNAPSHOT_TIMEZONE=UTC
 SNAPSHOT_MIN_FREE_BYTES=1073741824
 SNAPSHOT_STALE_MINUTES=30
 SNAPSHOT_VERIFY_ON_RESTORE=true
@@ -83,7 +85,7 @@ Notes:
 - `ALLOW_PUBLIC_REGISTRATION=false` is recommended after the first admin is created.
 - `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
-- `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
+- `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - `LIBSQL_NAMESPACE_IMPORTS=false` keeps imports local by default. Use `auto` to try the namespace when `sqld` is reachable, or `true` to require it.
 - If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume. Otherwise imports will fail or fall back to local storage depending on `LIBSQL_NAMESPACE_IMPORTS`.

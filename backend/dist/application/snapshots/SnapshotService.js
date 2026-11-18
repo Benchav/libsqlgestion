@@ -19,6 +19,8 @@ const SqliteStorageService_1 = require("../../infrastructure/storage/SqliteStora
 const database_runtime_1 = require("../databases/database-runtime");
 const local_database_path_1 = require("../databases/local-database-path");
 const snapshot_config_1 = require("./snapshot-config");
+const SnapshotPolicyService_1 = require("./SnapshotPolicyService");
+const snapshot_schedule_1 = require("./snapshot-schedule");
 const AuditService_1 = require("../audit/AuditService");
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,6 +56,7 @@ class SnapshotService {
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
         this.storageService = new SqliteStorageService_1.SqliteStorageService();
         this.auditService = new AuditService_1.AuditService();
+        this.policyService = new SnapshotPolicyService_1.SnapshotPolicyService();
     }
     async acquireRunSlot() {
         const maxConcurrent = Math.max(1, (0, snapshot_config_1.getSnapshotConfig)().maxConcurrent);
@@ -89,12 +92,15 @@ class SnapshotService {
     async listSnapshots(databaseId, options = {}) {
         const limit = Math.min(100, Math.max(1, Math.floor(options.limit || 50)));
         const snapshots = await this.snapshotRepo.find({
-            where: { databaseId, status: (0, typeorm_1.Not)('deleted') },
+            where: {
+                databaseId,
+                status: (0, typeorm_1.Not)('deleted'),
+                ...(options.before ? { takenAt: (0, typeorm_1.LessThan)(options.before) } : {}),
+            },
             order: { takenAt: 'DESC' },
             take: limit + 1,
         });
-        const visible = snapshots
-            .filter((snapshot) => !options.before || new Date(snapshot.takenAt).getTime() < options.before.getTime());
+        const visible = snapshots;
         const page = visible.slice(0, limit);
         const totalSizeBytes = visible
             .filter((snapshot) => snapshot.status === 'ready')
@@ -114,14 +120,38 @@ class SnapshotService {
         return snapshot;
     }
     async getSchedulerState(databaseId) {
-        const [latest, pending] = await Promise.all([
+        const [latest, latestReady, pending] = await Promise.all([
             this.snapshotRepo.findOne({ where: { databaseId }, order: { takenAt: 'DESC' } }),
+            this.snapshotRepo.findOne({ where: { databaseId, status: 'ready' }, order: { takenAt: 'DESC' } }),
             this.snapshotRepo.findOne({ where: { databaseId, status: 'pending' } }),
         ]);
         return {
             latest: latest && latest.status !== 'deleted' ? latest : null,
+            latestReady: latestReady || null,
             pending: Boolean(pending),
         };
+    }
+    async getReadySnapshots(databaseId) {
+        return this.snapshotRepo.find({
+            where: { databaseId, status: 'ready' },
+            order: { takenAt: 'DESC' },
+        });
+    }
+    async applyMilestones(snapshotId, due) {
+        if (due.length === 0)
+            return null;
+        const snapshot = await this.snapshotRepo.findOne({ where: { id: snapshotId } });
+        if (!snapshot)
+            throw httpError(404, 'snapshot not found');
+        const milestones = { ...(0, snapshot_schedule_1.getMilestones)(snapshot) };
+        for (const item of due) {
+            milestones[item.type] = item.key;
+        }
+        snapshot.metadata = {
+            ...(snapshot.metadata ?? {}),
+            milestones,
+        };
+        return this.snapshotRepo.save(snapshot);
     }
     async createSnapshot(databaseId, options = {}) {
         const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
@@ -379,8 +409,9 @@ class SnapshotService {
             throw httpError(500, `failed to restore snapshot: ${error?.message || error}`);
         }
     }
-    async pruneSnapshots(databaseId, now = new Date()) {
+    async pruneSnapshots(databaseId, now = new Date(), policyOverride) {
         const config = (0, snapshot_config_1.getSnapshotConfig)();
+        const policy = policyOverride || await this.policyService.getPolicy(databaseId);
         const snapshots = await this.snapshotRepo.find({
             where: { databaseId, status: 'ready' },
             order: { takenAt: 'DESC' },
@@ -421,6 +452,34 @@ class SnapshotService {
                 }
             }
         });
+        for (const type of ['daily', 'weekly', 'monthly']) {
+            const enabled = type === 'daily'
+                ? policy.dailyEnabled
+                : type === 'weekly'
+                    ? policy.weeklyEnabled
+                    : policy.monthlyEnabled;
+            if (!enabled)
+                continue;
+            const retention = type === 'daily'
+                ? policy.dailyRetention
+                : type === 'weekly'
+                    ? policy.weeklyRetention
+                    : policy.monthlyRetention;
+            const byKey = new Map();
+            for (const snapshot of snapshots) {
+                const key = (0, snapshot_schedule_1.getMilestones)(snapshot)[type];
+                if (key && !byKey.has(key)) {
+                    byKey.set(key, snapshot.id);
+                }
+            }
+            let kept = 0;
+            for (const snapshotId of byKey.values()) {
+                if (kept >= retention)
+                    break;
+                keep.add(snapshotId);
+                kept += 1;
+            }
+        }
         let deleted = 0;
         for (const snapshot of snapshots) {
             if (keep.has(snapshot.id))
@@ -449,6 +508,11 @@ class SnapshotService {
                     deleted,
                     kept: keep.size,
                     retentionDays: config.retentionDays,
+                    backupPolicy: {
+                        dailyEnabled: policy.dailyEnabled,
+                        weeklyEnabled: policy.weeklyEnabled,
+                        monthlyEnabled: policy.monthlyEnabled,
+                    },
                 },
             });
         }

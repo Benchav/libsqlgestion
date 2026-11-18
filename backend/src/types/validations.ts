@@ -50,6 +50,27 @@ export const restoreSnapshotSchema = z.object({
   name: optionalString,
 });
 
+export const snapshotListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  before: z.coerce.date().optional(),
+});
+
+export const snapshotPolicySchema = z.object({
+  restorePointIntervalMinutes: z.coerce.number().int().min(5).max(1440).optional(),
+  dailyEnabled: z.boolean().optional(),
+  dailyAtHour: z.coerce.number().int().min(0).max(23).optional(),
+  dailyRetention: z.coerce.number().int().min(1).max(365).optional(),
+  weeklyEnabled: z.boolean().optional(),
+  weeklyDayOfWeek: z.coerce.number().int().min(0).max(6).optional(),
+  weeklyAtHour: z.coerce.number().int().min(0).max(23).optional(),
+  weeklyRetention: z.coerce.number().int().min(1).max(365).optional(),
+  monthlyEnabled: z.boolean().optional(),
+  monthlyDayOfMonth: z.coerce.number().int().min(1).max(28).optional(),
+  monthlyAtHour: z.coerce.number().int().min(0).max(23).optional(),
+  monthlyRetention: z.coerce.number().int().min(1).max(365).optional(),
+  timezone: z.string().trim().min(1).max(64).optional(),
+});
+
 export const renameTableSchema = z.object({
   name: identifier,
 });

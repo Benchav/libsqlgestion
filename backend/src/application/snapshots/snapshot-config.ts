@@ -47,6 +47,27 @@ export function getSnapshotConfig() {
     staleMinutes: positiveInt(process.env.SNAPSHOT_STALE_MINUTES, 30),
     verifyOnRestore: booleanValue(process.env.SNAPSHOT_VERIFY_ON_RESTORE, true),
     initialDelayMs: positiveInt(process.env.SNAPSHOT_INITIAL_DELAY_SECONDS, 120) * 1000,
+    tickMinutes: positiveInt(process.env.SNAPSHOT_SCHEDULER_TICK_MINUTES, 5),
+    defaultTimezone: process.env.SNAPSHOT_TIMEZONE || 'UTC',
+  };
+}
+
+export function getDefaultSnapshotPolicyConfig() {
+  const config = getSnapshotConfig();
+  return {
+    restorePointIntervalMinutes: config.intervalMinutes,
+    dailyEnabled: booleanValue(process.env.SNAPSHOT_DAILY_ENABLED, true),
+    dailyAtHour: positiveInt(process.env.SNAPSHOT_DAILY_AT_HOUR, 2),
+    dailyRetention: positiveInt(process.env.SNAPSHOT_DAILY_RETENTION, config.retentionDays),
+    weeklyEnabled: booleanValue(process.env.SNAPSHOT_WEEKLY_ENABLED, false),
+    weeklyDayOfWeek: positiveInt(process.env.SNAPSHOT_WEEKLY_DAY, 0) % 7,
+    weeklyAtHour: positiveInt(process.env.SNAPSHOT_WEEKLY_AT_HOUR, 2),
+    weeklyRetention: positiveInt(process.env.SNAPSHOT_WEEKLY_RETENTION, 8),
+    monthlyEnabled: booleanValue(process.env.SNAPSHOT_MONTHLY_ENABLED, false),
+    monthlyDayOfMonth: Math.min(28, positiveInt(process.env.SNAPSHOT_MONTHLY_DAY, 1)),
+    monthlyAtHour: positiveInt(process.env.SNAPSHOT_MONTHLY_AT_HOUR, 2),
+    monthlyRetention: positiveInt(process.env.SNAPSHOT_MONTHLY_RETENTION, 12),
+    timezone: config.defaultTimezone,
   };
 }
 

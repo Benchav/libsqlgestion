@@ -63,6 +63,7 @@ export type DatabaseSnapshot = {
   fileName: string;
   sizeBytes: number;
   checksumSha256?: string;
+  milestones?: Partial<Record<'daily' | 'weekly' | 'monthly', string>>;
   takenAt: string;
   expiresAt?: string | null;
   pinned: boolean;
@@ -71,7 +72,7 @@ export type DatabaseSnapshot = {
   updatedAt: string;
 };
 
-export type SnapshotPolicy = {
+export type SnapshotEnginePolicy = {
   intervalMinutes: number;
   fullWindowHours: number;
   sixHourlyWindowHours: number;
@@ -83,7 +84,25 @@ export type SnapshotListResponse = {
   snapshots: DatabaseSnapshot[];
   totalSizeBytes: number;
   hasMore: boolean;
-  policy: SnapshotPolicy;
+  policy: SnapshotEnginePolicy;
+};
+
+export type DatabaseSnapshotPolicy = {
+  databaseId: string;
+  restorePointIntervalMinutes: number;
+  dailyEnabled: boolean;
+  dailyAtHour: number;
+  dailyRetention: number;
+  weeklyEnabled: boolean;
+  weeklyDayOfWeek: number;
+  weeklyAtHour: number;
+  weeklyRetention: number;
+  monthlyEnabled: boolean;
+  monthlyDayOfMonth: number;
+  monthlyAtHour: number;
+  monthlyRetention: number;
+  timezone: string;
+  isDefault: boolean;
 };
 
 export type AuditLogEntry = {
@@ -215,6 +234,32 @@ export function useSnapshots(databaseId: string | undefined, enabled = true) {
         return 2000;
       }
       return 60_000;
+    },
+  });
+}
+
+export function useSnapshotPolicy(databaseId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['snapshot-policy', databaseId],
+    queryFn: async () => {
+      return apiRequest<{ policy: DatabaseSnapshotPolicy }>(`/databases/${databaseId}/snapshot-policy`);
+    },
+    enabled: Boolean(databaseId) && enabled,
+  });
+}
+
+export function useUpdateSnapshotPolicy(databaseId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Partial<Omit<DatabaseSnapshotPolicy, 'databaseId' | 'isDefault'>>) => {
+      return apiRequest<{ policy: DatabaseSnapshotPolicy }>(`/databases/${databaseId}/snapshot-policy`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['snapshot-policy', databaseId] });
+      queryClient.invalidateQueries({ queryKey: ['snapshots', databaseId] });
     },
   });
 }

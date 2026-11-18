@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { Not } from 'typeorm';
+import { LessThan, Not } from 'typeorm';
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
 import {
@@ -16,6 +16,8 @@ import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorage
 import { resolveEffectiveDatabaseType } from '../databases/database-runtime';
 import { resolveLocalDatabasePath } from '../databases/local-database-path';
 import { getSnapshotConfig, getSnapshotPolicy } from './snapshot-config';
+import { SnapshotPolicyService, SnapshotPolicyView } from './SnapshotPolicyService';
+import { getMilestones, MilestoneDue } from './snapshot-schedule';
 import { AuditService } from '../audit/AuditService';
 
 type SnapshotListOptions = {
@@ -75,6 +77,7 @@ export class SnapshotService {
   private databaseRepo = AppDataSource.getRepository(Database);
   private storageService = new SqliteStorageService();
   private auditService = new AuditService();
+  private policyService = new SnapshotPolicyService();
 
   private async acquireRunSlot() {
     const maxConcurrent = Math.max(1, getSnapshotConfig().maxConcurrent);
@@ -114,14 +117,16 @@ export class SnapshotService {
   async listSnapshots(databaseId: string, options: SnapshotListOptions = {}) {
     const limit = Math.min(100, Math.max(1, Math.floor(options.limit || 50)));
     const snapshots = await this.snapshotRepo.find({
-      where: { databaseId, status: Not('deleted') },
+      where: {
+        databaseId,
+        status: Not('deleted'),
+        ...(options.before ? { takenAt: LessThan(options.before) } : {}),
+      },
       order: { takenAt: 'DESC' },
       take: limit + 1,
     });
 
-    const visible = snapshots
-      .filter((snapshot) => !options.before || new Date(snapshot.takenAt).getTime() < options.before.getTime());
-
+    const visible = snapshots;
     const page = visible.slice(0, limit);
     const totalSizeBytes = visible
       .filter((snapshot) => snapshot.status === 'ready')
@@ -144,15 +149,41 @@ export class SnapshotService {
   }
 
   async getSchedulerState(databaseId: string) {
-    const [latest, pending] = await Promise.all([
+    const [latest, latestReady, pending] = await Promise.all([
       this.snapshotRepo.findOne({ where: { databaseId }, order: { takenAt: 'DESC' } }),
+      this.snapshotRepo.findOne({ where: { databaseId, status: 'ready' }, order: { takenAt: 'DESC' } }),
       this.snapshotRepo.findOne({ where: { databaseId, status: 'pending' } }),
     ]);
 
     return {
       latest: latest && latest.status !== 'deleted' ? latest : null,
+      latestReady: latestReady || null,
       pending: Boolean(pending),
     };
+  }
+
+  async getReadySnapshots(databaseId: string) {
+    return this.snapshotRepo.find({
+      where: { databaseId, status: 'ready' },
+      order: { takenAt: 'DESC' },
+    });
+  }
+
+  async applyMilestones(snapshotId: string, due: MilestoneDue[]) {
+    if (due.length === 0) return null;
+    const snapshot = await this.snapshotRepo.findOne({ where: { id: snapshotId } });
+    if (!snapshot) throw httpError(404, 'snapshot not found');
+
+    const milestones = { ...(getMilestones(snapshot) as Record<string, string>) };
+    for (const item of due) {
+      milestones[item.type] = item.key;
+    }
+
+    snapshot.metadata = {
+      ...(snapshot.metadata ?? {}),
+      milestones,
+    };
+    return this.snapshotRepo.save(snapshot);
   }
 
   async createSnapshot(databaseId: string, options: CreateSnapshotOptions = {}) {
@@ -439,8 +470,9 @@ export class SnapshotService {
     }
   }
 
-  async pruneSnapshots(databaseId: string, now = new Date()) {
+  async pruneSnapshots(databaseId: string, now = new Date(), policyOverride?: SnapshotPolicyView) {
     const config = getSnapshotConfig();
+    const policy = policyOverride || await this.policyService.getPolicy(databaseId);
     const snapshots = await this.snapshotRepo.find({
       where: { databaseId, status: 'ready' },
       order: { takenAt: 'DESC' },
@@ -488,6 +520,36 @@ export class SnapshotService {
       }
     });
 
+    for (const type of ['daily', 'weekly', 'monthly'] as const) {
+      const enabled = type === 'daily'
+        ? policy.dailyEnabled
+        : type === 'weekly'
+          ? policy.weeklyEnabled
+          : policy.monthlyEnabled;
+      if (!enabled) continue;
+
+      const retention = type === 'daily'
+        ? policy.dailyRetention
+        : type === 'weekly'
+          ? policy.weeklyRetention
+          : policy.monthlyRetention;
+
+      const byKey = new Map<string, string>();
+      for (const snapshot of snapshots) {
+        const key = getMilestones(snapshot)[type];
+        if (key && !byKey.has(key)) {
+          byKey.set(key, snapshot.id);
+        }
+      }
+
+      let kept = 0;
+      for (const snapshotId of byKey.values()) {
+        if (kept >= retention) break;
+        keep.add(snapshotId);
+        kept += 1;
+      }
+    }
+
     let deleted = 0;
     for (const snapshot of snapshots) {
       if (keep.has(snapshot.id)) continue;
@@ -515,6 +577,11 @@ export class SnapshotService {
           deleted,
           kept: keep.size,
           retentionDays: config.retentionDays,
+          backupPolicy: {
+            dailyEnabled: policy.dailyEnabled,
+            weeklyEnabled: policy.weeklyEnabled,
+            monthlyEnabled: policy.monthlyEnabled,
+          },
         },
       });
     }

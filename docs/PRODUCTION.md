@@ -213,7 +213,7 @@ Suggested backup cadence:
 - managed databases: according to business criticality
 - offsite copy: at least one additional location
 
-### Restore points
+### Restore points and long-term backups
 
 LibSQLite can create scheduled snapshots for `LOCAL-FILE` databases:
 
@@ -223,12 +223,30 @@ SNAPSHOT_INTERVAL_MINUTES=60
 SNAPSHOT_FULL_WINDOW_HOURS=24
 SNAPSHOT_SIX_HOURLY_WINDOW_HOURS=72
 SNAPSHOT_RETENTION_DAYS=14
+SNAPSHOT_SCHEDULER_TICK_MINUTES=5
 SNAPSHOT_MIN_FREE_BYTES=1073741824
 ```
 
-Retention keeps every snapshot from the last 24 hours, one every 6 hours up to
-72 hours, and one per day up to 14 days. Manual snapshots are pinned and are not
-removed automatically.
+`SNAPSHOT_INTERVAL_MINUTES` is the default for databases without a saved policy;
+each database can override it from its detail page.
+
+Each database has an editable backup policy from its detail page:
+
+- restore point interval: 15/30/60/120 minutes,
+- daily backups at a chosen hour,
+- weekly backups on a chosen day/hour,
+- monthly backups on a chosen day/hour,
+- independent retention counts,
+- IANA timezone.
+
+The scheduler wakes every 5 minutes to catch daily/weekly/monthly boundaries.
+When a milestone is due it tags the latest snapshot instead of duplicating the
+file when possible.
+
+The base retention keeps every snapshot from the last 24 hours, one every 6
+hours up to 72 hours, and one per day up to 14 days. Manual snapshots are pinned
+and are not removed automatically. Daily/weekly/monthly tags are retained
+according to the per-database policy counts.
 
 Snapshots live on the same server and volume. They protect against user errors,
 bad migrations and deleted rows, but **do not protect against disk or server

@@ -1,9 +1,18 @@
 import fs from 'fs';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { SnapshotService } from '../../../application/snapshots/SnapshotService';
+import { SnapshotPolicyService } from '../../../application/snapshots/SnapshotPolicyService';
+import { getMilestones } from '../../../application/snapshots/snapshot-schedule';
 import { DatabaseSnapshot } from '../../../domain/entities/DatabaseSnapshot';
+import { AuditService } from '../../../application/audit/AuditService';
 import { ensureDatabaseAccess, ensurePermission } from '../guards';
-import { pageQuerySchema, parseAndValidate, restoreSnapshotSchema, ValidationError } from '../../../types/validations';
+import {
+  parseAndValidate,
+  restoreSnapshotSchema,
+  snapshotListQuerySchema,
+  snapshotPolicySchema,
+  ValidationError,
+} from '../../../types/validations';
 import { presentDatabase } from '../database-presenter';
 
 function presentSnapshot(snapshot: DatabaseSnapshot) {
@@ -15,6 +24,7 @@ function presentSnapshot(snapshot: DatabaseSnapshot) {
     fileName: snapshot.fileName,
     sizeBytes: snapshot.sizeBytes,
     checksumSha256: snapshot.checksumSha256,
+    milestones: getMilestones(snapshot),
     takenAt: snapshot.takenAt,
     expiresAt: snapshot.expiresAt,
     pinned: snapshot.pinned,
@@ -26,6 +36,8 @@ function presentSnapshot(snapshot: DatabaseSnapshot) {
 
 export default async function snapshotRoutes(app: FastifyInstance) {
   const snapshotService = new SnapshotService();
+  const policyService = new SnapshotPolicyService();
+  const auditService = new AuditService();
 
   app.get('/databases/:id/snapshots', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.read'))) return;
@@ -34,8 +46,11 @@ export default async function snapshotRoutes(app: FastifyInstance) {
     if (!access) return;
 
     try {
-      const query = parseAndValidate(pageQuerySchema, request.query || {}, 'query');
-      const result = await snapshotService.listSnapshots(id, { limit: query.limit });
+      const query = parseAndValidate(snapshotListQuerySchema, request.query || {}, 'query');
+      const result = await snapshotService.listSnapshots(id, {
+        limit: query.limit,
+        before: query.before,
+      });
       return reply.send({
         ...result,
         snapshots: result.snapshots.map(presentSnapshot),
@@ -43,6 +58,42 @@ export default async function snapshotRoutes(app: FastifyInstance) {
     } catch (error) {
       if (error instanceof ValidationError) throw error;
       return reply.status(500).send({ error: 'failed to list snapshots' });
+    }
+  });
+
+  app.get('/databases/:id/snapshot-policy', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.read'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    try {
+      return reply.send({ policy: await policyService.getPolicy(id) });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to load snapshot policy' });
+    }
+  });
+
+  app.put('/databases/:id/snapshot-policy', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    const body = parseAndValidate(snapshotPolicySchema, request.body || {}, 'snapshot policy');
+    try {
+      const policy = await policyService.upsertPolicy(id, body);
+      await auditService.record({
+        action: 'database.snapshot.policy',
+        resourceType: 'database',
+        resourceId: id,
+        actorId: (request as any).user?.sub,
+        ipAddress: request.ip,
+        metadata: { ...policy },
+      });
+      return reply.send({ policy });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to save snapshot policy' });
     }
   });
 

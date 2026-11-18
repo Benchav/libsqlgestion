@@ -5,17 +5,22 @@ const data_source_1 = require("../../infrastructure/db/data-source");
 const Database_1 = require("../../domain/entities/Database");
 const snapshot_config_1 = require("./snapshot-config");
 const SnapshotService_1 = require("./SnapshotService");
+const SnapshotPolicyService_1 = require("./SnapshotPolicyService");
+const snapshot_schedule_1 = require("./snapshot-schedule");
 class SnapshotScheduler {
     constructor(service = new SnapshotService_1.SnapshotService()) {
         this.service = service;
         this.databaseRepo = data_source_1.AppDataSource.getRepository(Database_1.Database);
+        this.policyService = new SnapshotPolicyService_1.SnapshotPolicyService();
         this.timer = null;
         this.stopped = true;
         this.running = null;
         this.failures = new Map();
+        this.lastCleanupAt = 0;
     }
     async start() {
-        if (!(0, snapshot_config_1.getSnapshotConfig)().enabled || this.timer)
+        const config = (0, snapshot_config_1.getSnapshotConfig)();
+        if (!config.enabled || this.timer)
             return;
         this.stopped = false;
         try {
@@ -24,8 +29,8 @@ class SnapshotScheduler {
         catch (error) {
             console.warn('[snapshots] could not recover interrupted snapshots:', error?.message || error);
         }
-        this.schedule((0, snapshot_config_1.getSnapshotConfig)().initialDelayMs);
-        console.log(`[snapshots] scheduler enabled (every ${(0, snapshot_config_1.getSnapshotConfig)().intervalMinutes} min)`);
+        this.schedule(config.initialDelayMs);
+        console.log(`[snapshots] scheduler enabled (tick every ${config.tickMinutes} min, default restore interval ${config.intervalMinutes} min)`);
     }
     async stop() {
         this.stopped = true;
@@ -44,7 +49,10 @@ class SnapshotScheduler {
         const config = (0, snapshot_config_1.getSnapshotConfig)();
         if (!config.enabled)
             return { scanned: 0, created: 0 };
-        await this.service.cleanupOrphans();
+        if (now.getTime() - this.lastCleanupAt > 30 * 60 * 1000) {
+            await this.service.cleanupOrphans();
+            this.lastCleanupAt = now.getTime();
+        }
         const databases = await this.databaseRepo.find({ relations: ['project'] });
         let scanned = 0;
         let created = 0;
@@ -60,18 +68,31 @@ class SnapshotScheduler {
             const failure = this.failures.get(database.id);
             if (failure && failure.retryAt > now.getTime())
                 continue;
-            if (state.latest?.status === 'ready') {
-                const ageMs = now.getTime() - new Date(state.latest.takenAt).getTime();
-                if (ageMs < config.intervalMinutes * 60 * 1000)
-                    continue;
-            }
+            const policy = await this.policyService.getPolicy(database.id);
+            const readySnapshots = await this.service.getReadySnapshots(database.id);
+            const dueMilestones = (0, snapshot_schedule_1.getDueMilestones)(now, policy, readySnapshots);
+            const latestReadyAge = state.latestReady
+                ? now.getTime() - new Date(state.latestReady.takenAt).getTime()
+                : Infinity;
+            const restoreDue = !state.latestReady
+                || latestReadyAge >= policy.restorePointIntervalMinutes * 60 * 1000;
+            if (!restoreDue && dueMilestones.length === 0)
+                continue;
             try {
-                await this.service.createSnapshot(database.id, {
-                    reason: 'scheduled',
-                    pinned: false,
-                });
+                let snapshot = state.latestReady;
+                const recentEnoughToTag = latestReadyAge <= config.tickMinutes * 2 * 60 * 1000;
+                if (restoreDue || !snapshot || !recentEnoughToTag) {
+                    snapshot = await this.service.createSnapshot(database.id, {
+                        reason: 'scheduled',
+                        pinned: false,
+                    });
+                    created += 1;
+                }
+                if (dueMilestones.length > 0) {
+                    await this.service.applyMilestones(snapshot.id, dueMilestones);
+                    await this.service.pruneSnapshots(database.id, now, policy);
+                }
                 this.failures.delete(database.id);
-                created += 1;
             }
             catch (error) {
                 const attempts = (failure?.attempts || 0) + 1;
@@ -108,7 +129,7 @@ class SnapshotScheduler {
         finally {
             this.running = null;
             if (!this.stopped) {
-                this.schedule((0, snapshot_config_1.getSnapshotConfig)().intervalMinutes * 60 * 1000);
+                this.schedule((0, snapshot_config_1.getSnapshotConfig)().tickMinutes * 60 * 1000);
             }
         }
     }

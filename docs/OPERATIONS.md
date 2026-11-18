@@ -113,13 +113,15 @@ Operational advice:
 ## Snapshots and restore points
 
 `LOCAL-FILE` databases get scheduled snapshots when `SNAPSHOTS_ENABLED=true`.
-The scheduler runs every `SNAPSHOT_INTERVAL_MINUTES` (default 60), keeps all
-snapshots for 24 hours, one every 6 hours up to 72 hours, and one per day up to
-14 days. Manual snapshots are pinned.
+The scheduler wakes every `SNAPSHOT_SCHEDULER_TICK_MINUTES` (default 5) and uses
+each database's backup policy to create restore points and daily/weekly/monthly
+milestones. The base tiered retention keeps all snapshots for 24 hours, one
+every 6 hours up to 72 hours, and one per day up to 14 days. Manual snapshots
+are pinned.
 
-Use the database detail page to create, download or delete a snapshot and to
-restore one into a new database. The original database is never modified by a
-restore.
+Use the database detail page to edit the backup policy, create/download/delete
+snapshots, restore an exact snapshot, or use the point-in-time selector. The
+original database is never modified by a restore.
 
 Snapshot files are stored under `SQLITE_STORAGE_ROOT/snapshots`. They are local
 copies, not offsite backups. Continue copying the volume and `control.db` to a

@@ -27,6 +27,8 @@ const { AppDataSource } = require('../dist/infrastructure/db/data-source');
 const { bootstrapSecurityCatalog } = require('../dist/application/auth/auth.bootstrap');
 const { SnapshotService } = require('../dist/application/snapshots/SnapshotService');
 const { SnapshotScheduler } = require('../dist/application/snapshots/SnapshotScheduler');
+const { SnapshotPolicyService } = require('../dist/application/snapshots/SnapshotPolicyService');
+const { getDueMilestones, getPeriodKeys } = require('../dist/application/snapshots/snapshot-schedule');
 const { DiscoveryService } = require('../dist/application/databases/DiscoveryService');
 const { Project } = require('../dist/domain/entities/Project');
 const { Database } = require('../dist/domain/entities/Database');
@@ -260,6 +262,131 @@ test.describe('Snapshots and restore points', () => {
     assert.ok(remaining.some((item) => item.pinned && item.status === 'ready'));
   });
 
+  test('stores per-database backup policy and validates timezones', async () => {
+    const policyService = new SnapshotPolicyService();
+    const defaults = await policyService.getPolicy(sourceDatabase.id);
+    assert.equal(defaults.isDefault, true);
+    assert.equal(defaults.restorePointIntervalMinutes, 60);
+    assert.equal(defaults.dailyEnabled, true);
+
+    const saved = await policyService.upsertPolicy(sourceDatabase.id, {
+      restorePointIntervalMinutes: 30,
+      dailyEnabled: true,
+      dailyRetention: 7,
+      weeklyEnabled: true,
+      weeklyDayOfWeek: 1,
+      weeklyAtHour: 3,
+      weeklyRetention: 4,
+      monthlyEnabled: true,
+      monthlyDayOfMonth: 5,
+      monthlyAtHour: 4,
+      monthlyRetention: 6,
+      timezone: 'UTC',
+    });
+
+    assert.equal(saved.isDefault, false);
+    assert.equal(saved.restorePointIntervalMinutes, 30);
+    assert.equal(saved.weeklyDayOfWeek, 1);
+    assert.equal(saved.monthlyRetention, 6);
+
+    await assert.rejects(
+      policyService.upsertPolicy(sourceDatabase.id, { timezone: 'Not/A_Timezone' }),
+      /invalid timezone/,
+    );
+  });
+
+  test('calculates daily, weekly and monthly milestone boundaries', () => {
+    const policy = {
+      databaseId: sourceDatabase.id,
+      restorePointIntervalMinutes: 60,
+      dailyEnabled: true,
+      dailyAtHour: 2,
+      dailyRetention: 14,
+      weeklyEnabled: true,
+      weeklyDayOfWeek: 1,
+      weeklyAtHour: 3,
+      weeklyRetention: 8,
+      monthlyEnabled: true,
+      monthlyDayOfMonth: 1,
+      monthlyAtHour: 2,
+      monthlyRetention: 12,
+      timezone: 'UTC',
+      isDefault: false,
+    };
+
+    const wednesday = new Date('2026-11-18T04:00:00.000Z');
+    const due = getDueMilestones(wednesday, policy, []);
+    assert.deepEqual(due.map((item) => item.type), ['daily', 'weekly', 'monthly']);
+
+    const { dailyKey, weeklyKey, monthlyKey } = getPeriodKeys(wednesday, 'UTC');
+    const tagged = [{
+      metadata: { milestones: { daily: dailyKey, weekly: weeklyKey, monthly: monthlyKey } },
+    }];
+    assert.deepEqual(getDueMilestones(wednesday, policy, tagged), []);
+
+    const sundayPolicy = { ...policy, weeklyDayOfWeek: 0 };
+    assert.ok(!getDueMilestones(wednesday, sundayPolicy, []).some((item) => item.type === 'weekly'));
+    assert.ok(getDueMilestones(new Date('2026-11-22T03:00:00.000Z'), sundayPolicy, [])
+      .some((item) => item.type === 'weekly'));
+  });
+
+  test('keeps long-term milestone snapshots outside the tiered window', async () => {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const snapshotRepo = AppDataSource.getRepository(DatabaseSnapshot);
+    const milestonePath = path.join(tempDir, 'milestone.db');
+    const milestoneFile = new SqliteClient(milestonePath);
+    await milestoneFile.exec('CREATE TABLE milestone_items (id INTEGER PRIMARY KEY);');
+    await milestoneFile.close();
+
+    const policyDb = await databaseRepo.save(databaseRepo.create({
+      name: 'milestone-database',
+      type: 'sqlite',
+      status: 'active',
+      url: milestonePath,
+      subdomain: 'milestone-database',
+      project: sourceProject,
+    }));
+
+    const directory = path.join(snapshotRoot, sourceProject.id, policyDb.id);
+    fs.mkdirSync(directory, { recursive: true });
+    const now = new Date('2026-01-15T12:00:00.000Z');
+    const ages = [20, 30, 40, 50];
+    const rows = [];
+
+    for (const [index, days] of ages.entries()) {
+      const fileName = `milestone-${index}.db`;
+      const filePath = path.join(directory, fileName);
+      fs.writeFileSync(filePath, 'snapshot');
+      rows.push(await snapshotRepo.save(snapshotRepo.create({
+        databaseId: policyDb.id,
+        projectId: sourceProject.id,
+        status: 'ready',
+        reason: 'scheduled',
+        filePath,
+        fileName,
+        sizeBytes: 8,
+        takenAt: new Date(now.getTime() - days * 24 * 60 * 60 * 1000),
+        metadata: days === 40 ? { milestones: { daily: '2025-12-06' } } : undefined,
+      })));
+    }
+
+    const policyService = new SnapshotPolicyService();
+    const policy = await policyService.upsertPolicy(policyDb.id, {
+      dailyEnabled: true,
+      dailyRetention: 1,
+      weeklyEnabled: false,
+      monthlyEnabled: false,
+      timezone: 'UTC',
+    });
+
+    await snapshotService.pruneSnapshots(policyDb.id, now, policy);
+
+    const updated = await snapshotRepo.find({ where: { databaseId: policyDb.id } });
+    const byId = new Map(updated.map((row) => [row.id, row]));
+    assert.equal(byId.get(rows[2].id).status, 'ready');
+    assert.equal(byId.get(rows[3].id).status, 'deleted');
+  });
+
   test('discovery ignores managed and snapshot directories', () => {
     const root = path.join(tempDir, 'discovery-root');
     fs.mkdirSync(path.join(root, 'projects', 'p1'), { recursive: true });
@@ -331,6 +458,51 @@ test.describe('Snapshots and restore points', () => {
     assert.equal(listRes.statusCode, 200);
     const list = JSON.parse(listRes.payload);
     assert.ok(list.snapshots.some((item) => item.id === created.id));
+    assert.deepEqual(list.snapshots.find((item) => item.id === created.id).milestones, {});
+
+    const futureRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/databases/${apiDatabaseId}/snapshots?before=2099-01-01T00:00:00.000Z`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(futureRes.statusCode, 200);
+    assert.ok(JSON.parse(futureRes.payload).snapshots.some((item) => item.id === created.id));
+
+    const pastRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/databases/${apiDatabaseId}/snapshots?before=2000-01-01T00:00:00.000Z`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(pastRes.statusCode, 200);
+    assert.equal(JSON.parse(pastRes.payload).snapshots.length, 0);
+
+    const policyRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/databases/${apiDatabaseId}/snapshot-policy`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(policyRes.statusCode, 200);
+    assert.equal(JSON.parse(policyRes.payload).policy.isDefault, true);
+
+    const updatePolicyRes = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/databases/${apiDatabaseId}/snapshot-policy`,
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+      payload: {
+        restorePointIntervalMinutes: 30,
+        dailyEnabled: true,
+        dailyRetention: 3,
+        weeklyEnabled: true,
+        weeklyDayOfWeek: 1,
+        monthlyEnabled: false,
+        timezone: 'UTC',
+      },
+    });
+    assert.equal(updatePolicyRes.statusCode, 200, updatePolicyRes.payload);
+    const updatedPolicy = JSON.parse(updatePolicyRes.payload).policy;
+    assert.equal(updatedPolicy.restorePointIntervalMinutes, 30);
+    assert.equal(updatedPolicy.dailyRetention, 3);
+    assert.equal(updatedPolicy.weeklyEnabled, true);
 
     const restoreRes = await app.inject({
       method: 'POST',

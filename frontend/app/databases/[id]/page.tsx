@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '../../../components/AppShell';
@@ -76,6 +76,8 @@ export default function DatabaseDetailPage() {
   const [tokenMessage, setTokenMessage] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [downloadState, setDownloadState] = useState<'idle' | 'working' | 'success'>('idle');
+  const downloadResetTimer = useRef<number | null>(null);
   const [copiedKey, setCopiedKey] = useState('');
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isConvertOpen, setIsConvertOpen] = useState(false);
@@ -105,6 +107,12 @@ export default function DatabaseDetailPage() {
     }, 2500);
     return () => clearInterval(interval);
   }, [id, database?.status]);
+
+  useEffect(() => () => {
+    if (downloadResetTimer.current !== null) {
+      window.clearTimeout(downloadResetTimer.current);
+    }
+  }, []);
 
   async function handleTestConnection() {
     setTestStatus('testing');
@@ -193,13 +201,29 @@ export default function DatabaseDetailPage() {
   }
 
   async function handleDownloadDatabase() {
+    if (downloadState === 'working') return;
+
+    if (downloadResetTimer.current !== null) {
+      window.clearTimeout(downloadResetTimer.current);
+      downloadResetTimer.current = null;
+    }
+
+    setError('');
+    setDownloadState('working');
     try {
       const response = await fetch(`/api/v1/databases/${id}/download`, {
         method: 'GET',
         credentials: 'include',
       });
       if (!response.ok) {
-        throw new Error('Failed to download database file');
+        let details = '';
+        try {
+          const payload = await response.json();
+          details = typeof payload?.error === 'string' ? payload.error : '';
+        } catch {
+          // The error response may not be JSON.
+        }
+        throw new Error(details || `Failed to download database file (${response.status})`);
       }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -210,8 +234,14 @@ export default function DatabaseDetailPage() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+      setDownloadState('success');
+      downloadResetTimer.current = window.setTimeout(() => {
+        setDownloadState('idle');
+        downloadResetTimer.current = null;
+      }, 3000);
     } catch (err: any) {
-      setError(err.message || 'Error downloading database');
+      setDownloadState('idle');
+      setError(err?.message || 'Error downloading database');
     }
   }
 
@@ -346,9 +376,12 @@ export default function DatabaseDetailPage() {
               </button>
               <button
                 onClick={handleDownloadDatabase}
-                className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                disabled={downloadState === 'working'}
+                aria-busy={downloadState === 'working'}
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-wait disabled:opacity-60"
               >
-                <Download size={16} /> Download
+                <RefreshCw size={16} className={downloadState === 'working' ? 'animate-spin' : ''} />
+                {downloadState === 'working' ? 'Downloading...' : 'Download'}
               </button>
               <button
                 onClick={handleDeleteDatabase}
@@ -366,6 +399,22 @@ export default function DatabaseDetailPage() {
             </div>
           </div>
         </div>
+
+        {downloadState !== 'idle' && (
+          <div className="mb-6 flex items-center gap-2 text-sm" role="status" aria-live="polite">
+            {downloadState === 'working' ? (
+              <>
+                <RefreshCw size={16} className="animate-spin text-zinc-400" />
+                <span className="text-zinc-400">Preparing database file...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={16} className="text-emerald-400" />
+                <span className="text-emerald-400">Download started. Check your browser downloads.</span>
+              </>
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
@@ -934,7 +983,7 @@ function BackupDatabaseModal({
             <h2 className="text-xl font-semibold text-zinc-100">Create Database from Backup</h2>
             <p className="mt-1 text-sm text-zinc-400">Create a new database with the same schema and data as this one at a specific point in time.</p>
           </div>
-          <button onClick={onClose} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300">
+          <button onClick={onClose} disabled={creating} className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40">
             <X size={20} />
           </button>
         </div>
@@ -953,7 +1002,8 @@ function BackupDatabaseModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="backup-mydb"
-              className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              disabled={creating}
+              className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
 
@@ -963,7 +1013,8 @@ function BackupDatabaseModal({
               <select
                 value={restoreMode}
                 onChange={(e) => setRestoreMode(e.target.value as 'now' | 'custom')}
-                className="rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                disabled={creating}
+                className="rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="now">Now</option>
                 <option value="custom">Custom</option>
@@ -973,21 +1024,33 @@ function BackupDatabaseModal({
                   type="date"
                   value={customDate}
                   onChange={(e) => setCustomDate(e.target.value)}
-                  className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                  disabled={creating}
+                  className="flex-1 rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 />
               )}
             </div>
           </div>
 
+          {creating && (
+            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" role="status" aria-live="polite">
+              <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
+              <span>
+                Creating the backup database and generating credentials...
+                <span className="block text-zinc-500">This can take a moment for large databases.</span>
+              </span>
+            </div>
+          )}
+
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">
+            <button type="button" onClick={onClose} disabled={creating} className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40">
               Cancel
             </button>
             <button
               type="submit"
               disabled={creating || !name.trim()}
-              className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:cursor-wait disabled:opacity-50"
             >
+              {creating && <RefreshCw size={14} className="animate-spin" />}
               {creating ? 'Creating...' : 'Create Database'}
             </button>
           </div>

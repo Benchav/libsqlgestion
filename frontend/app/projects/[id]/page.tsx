@@ -6,7 +6,7 @@ import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { apiRequest } from '../../../lib/api';
 import { clearEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../../lib/token-cache';
-import { Database, Plus, ChevronRight, Activity, Users, HardDrive, X } from 'lucide-react';
+import { Database, Plus, ChevronRight, Activity, Users, HardDrive, X, RefreshCw } from 'lucide-react';
 
 type ProjectDetail = {
   id: string;
@@ -276,7 +276,7 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
             <h2 className="text-xl font-semibold text-zinc-100">Create Database</h2>
             <p className="text-sm text-zinc-400 mt-1">Add a new database to this project.</p>
           </div>
-          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors">
+          <button onClick={onClose} disabled={creating} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40">
             <X size={20} />
           </button>
         </div>
@@ -287,7 +287,7 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
           </div>
         )}
 
-        <form onSubmit={handleCreate} className="space-y-4">
+        <form onSubmit={handleCreate} className="space-y-4" aria-busy={creating}>
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Name</label>
             <input 
@@ -295,7 +295,8 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
               placeholder="e.g. production-db" 
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+              disabled={creating}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
           <div className="flex items-center gap-4">
@@ -303,7 +304,8 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
             <select 
               value={type} 
               onChange={(e) => setType(e.target.value as any)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={creating}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="sqlite">Local SQLite</option>
               <option value="libsql">Local libsql</option>
@@ -320,7 +322,8 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
                   placeholder="libsql://..." 
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+                  disabled={creating}
+                  className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
               <div className="flex items-center gap-4">
@@ -330,15 +333,27 @@ function CreateDatabaseModal({ projectId, onClose, onSuccess }: { projectId: str
                   placeholder="eyJh..." 
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
-                  className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600" 
+                  disabled={creating}
+                  className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
             </>
           )}
 
+          {creating && (
+            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" role="status" aria-live="polite">
+              <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
+              <span>
+                Creating the database and generating credentials...
+                <span className="block text-zinc-500">This can take a moment. Keep this window open.</span>
+              </span>
+            </div>
+          )}
+
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-            <button type="submit" disabled={creating || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+            <button type="button" onClick={onClose} disabled={creating} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40">Cancel</button>
+            <button type="submit" disabled={creating || !name.trim()} className="inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:cursor-wait disabled:opacity-50">
+              {creating && <RefreshCw size={14} className="animate-spin" />}
               {creating ? 'Creating...' : 'Create Database'}
             </button>
           </div>

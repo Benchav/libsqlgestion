@@ -13,6 +13,18 @@ function getDatabaseTypeLabel(database: DatabaseInfo) {
   return (database.effectiveType || database.type || 'sqlite').toUpperCase();
 }
 
+function formatFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
 export default function DatabasesPage() {
   const router = useRouter();
   const { data: databases = [], isLoading, error, refetch } = useDatabases();
@@ -249,7 +261,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
 
   async function handleImport(e: FormEvent) {
     e.preventDefault();
-    if (!projectId) return;
+    if (!projectId || importing) return;
 
     if (mode === 'path' && !sourcePath.trim()) {
       setError('Provide a server path to the .db file.');
@@ -304,7 +316,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
             <h2 className="text-xl font-semibold text-zinc-100">Import Database</h2>
             <p className="text-sm text-zinc-400 mt-1">Import a SQLite file from the server or upload one from your computer.</p>
           </div>
-          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors">
+          <button onClick={onClose} disabled={importing} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40">
             <X size={20} />
           </button>
         </div>
@@ -315,13 +327,14 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
           </div>
         )}
 
-        <form onSubmit={handleImport} className="space-y-4">
+        <form onSubmit={handleImport} className="space-y-4" aria-busy={importing}>
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Project</label>
             <select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={importing}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="" disabled>Select a project</option>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
@@ -335,7 +348,8 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               placeholder="e.g. legacy-db"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={importing}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
 
@@ -346,7 +360,8 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               placeholder="leave blank to auto-generate"
               value={subdomain}
               onChange={(e) => setSubdomain(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={importing}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
           <p className="-mt-2 ml-24 text-xs text-zinc-500">
@@ -354,10 +369,10 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
           </p>
 
           <div className="flex items-center gap-2 bg-[#050505] border border-zinc-800 rounded-lg p-1">
-            <button type="button" onClick={() => setMode('file')} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${mode === 'file' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
+            <button type="button" onClick={() => setMode('file')} disabled={importing} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${mode === 'file' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
               Upload from computer
             </button>
-            <button type="button" onClick={() => setMode('path')} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${mode === 'path' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
+            <button type="button" onClick={() => setMode('path')} disabled={importing} className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${mode === 'path' ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:text-zinc-200'}`}>
               Server path
             </button>
           </div>
@@ -368,6 +383,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               <input
                 type="file"
                 accept=".db,.sqlite,.sqlite3"
+                disabled={importing}
                 onChange={(e) => {
                   const selectedFile = e.target.files?.[0] || null;
                   setFile(selectedFile);
@@ -375,7 +391,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                     setName(deriveNameFromFile(selectedFile.name));
                   }
                 }}
-                className="flex-1 text-sm text-zinc-300 file:mr-4 file:px-3 file:py-2 file:rounded-md file:border-0 file:bg-zinc-100 file:text-zinc-900 hover:file:bg-white"
+                className="flex-1 text-sm text-zinc-300 file:mr-4 file:px-3 file:py-2 file:rounded-md file:border-0 file:bg-zinc-100 file:text-zinc-900 hover:file:bg-white disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
           ) : (
@@ -386,14 +402,28 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                 placeholder="/mnt/imports/example.db"
                 value={sourcePath}
                 onChange={(e) => setSourcePath(e.target.value)}
-                className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                disabled={importing}
+                className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
           )}
 
+          {importing && (
+            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" role="status" aria-live="polite">
+              <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
+              <span>
+                {mode === 'file' && file
+                  ? `Uploading and importing ${file.name}${file.size > 0 ? ` (${formatFileSize(file.size)})` : ''}...`
+                  : 'Importing database from the server path...'}
+                <span className="block text-zinc-500">This can take a moment for large files. Keep this window open.</span>
+              </span>
+            </div>
+          )}
+
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-            <button type="submit" disabled={importing || !projectId || (mode === 'path' ? !sourcePath.trim() : !file)} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+            <button type="button" onClick={onClose} disabled={importing} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40">Cancel</button>
+            <button type="submit" disabled={importing || !projectId || (mode === 'path' ? !sourcePath.trim() : !file)} className="inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:cursor-wait disabled:opacity-50">
+              {importing && <RefreshCw size={14} className="animate-spin" />}
               {importing ? 'Importing...' : 'Import Database'}
             </button>
           </div>
@@ -408,6 +438,8 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
   const [name, setName] = useState('');
   const [type, setType] = useState<'sqlite' | 'libsql' | 'remote'>('sqlite');
   const [error, setError] = useState(createError || '');
+  const [submitting, setSubmitting] = useState(false);
+  const busy = submitting || isCreating;
 
   useEffect(() => {
     if (createError) setError(createError);
@@ -415,8 +447,9 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
-    if (!projectId || !name.trim()) return;
+    if (!projectId || !name.trim() || busy) return;
     setError('');
+    setSubmitting(true);
     try {
       const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases', {
         method: 'POST',
@@ -425,6 +458,8 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
       onSuccess(result.token, result.database.name, result.database.id);
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -436,7 +471,7 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
             <h2 className="text-xl font-semibold text-zinc-100">Create Database</h2>
             <p className="text-sm text-zinc-400 mt-1">Create a new local SQLite database</p>
           </div>
-          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors">
+          <button onClick={onClose} disabled={busy} className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40">
             <X size={20} />
           </button>
         </div>
@@ -447,13 +482,14 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
           </div>
         )}
 
-        <form onSubmit={handleCreate} className="space-y-4">
+        <form onSubmit={handleCreate} className="space-y-4" aria-busy={busy}>
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Project</label>
             <select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={busy}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="" disabled>Select a project</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -466,7 +502,8 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
               placeholder="e.g. production-db"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={busy}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
           <div className="flex items-center gap-4">
@@ -474,7 +511,8 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
             <select
               value={type}
               onChange={(e) => setType(e.target.value as any)}
-              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              disabled={busy}
+              className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="sqlite">Local SQLite</option>
               <option value="libsql">Local libsql</option>
@@ -485,10 +523,21 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
             The backend will auto-generate a public subdomain for the new database.
           </p>
 
+          {busy && (
+            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" role="status" aria-live="polite">
+              <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
+              <span>
+                Creating the database and generating credentials...
+                <span className="block text-zinc-500">This can take a moment. Keep this window open.</span>
+              </span>
+            </div>
+          )}
+
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-            <button type="submit" disabled={isCreating || !projectId || !name.trim()} className="bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
-              {isCreating ? 'Creating...' : 'Create Database'}
+            <button type="button" onClick={onClose} disabled={busy} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40">Cancel</button>
+            <button type="submit" disabled={busy || !projectId || !name.trim()} className="inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:cursor-wait disabled:opacity-50">
+              {busy && <RefreshCw size={14} className="animate-spin" />}
+              {busy ? 'Creating...' : 'Create Database'}
             </button>
           </div>
         </form>

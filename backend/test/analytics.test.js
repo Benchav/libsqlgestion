@@ -99,6 +99,15 @@ test.describe('Analytics', () => {
       rowsWritten: 2,
       success: true,
     });
+    analyticsCollector.recordQuery({
+      databaseId: database.id,
+      projectId: project.id,
+      source: 'pipeline',
+      sql: "DELETE FROM sales WHERE id = 999",
+      durationMs: 20,
+      success: false,
+      errorCode: 'SQLITE_ERROR',
+    });
     analyticsCollector.recordTraffic({
       databaseId: database.id,
       method: 'POST',
@@ -107,6 +116,15 @@ test.describe('Analytics', () => {
       responseBytes: 4000,
       statusCode: 200,
       durationMs: 40,
+    });
+    analyticsCollector.recordTraffic({
+      databaseId: database.id,
+      method: 'POST',
+      path: `/api/v1/databases/${database.id}/v2/pipeline`,
+      requestBytes: 100,
+      responseBytes: 50,
+      statusCode: 500,
+      durationMs: 25,
     });
     const storageRepo = AppDataSource.getRepository(StorageSample);
     await storageRepo.save(storageRepo.create({
@@ -118,24 +136,107 @@ test.describe('Analytics', () => {
 
     await analyticsCollector.flush();
 
+    const from = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const to = new Date(Date.now() + 1000);
+    const params = new URLSearchParams({
+      range: 'today',
+      from: from.toISOString(),
+      to: to.toISOString(),
+    });
     const response = await app.inject({
       method: 'GET',
-      url: '/api/v1/analytics?range=today',
+      url: `/api/v1/analytics?${params.toString()}`,
       headers: { cookie: cookieHeader },
     });
     assert.equal(response.statusCode, 200, response.payload);
     const body = JSON.parse(response.payload);
     assert.equal(body.summary.rowsRead, 100);
     assert.equal(body.summary.rowsWritten, 2);
-    assert.equal(body.summary.queries, 2);
-    assert.ok(body.summary.trafficInBytes >= 1200);
-    assert.ok(body.summary.trafficOutBytes >= 4000);
+    assert.equal(body.summary.queries, 3);
+    assert.equal(body.summary.errors, 1);
+    assert.ok(Math.abs(body.summary.errorRate - 1 / 3) < 0.0001);
+    assert.ok(body.summary.trafficInBytes >= 1300);
+    assert.ok(body.summary.trafficOutBytes >= 4050);
     assert.ok(body.summary.storageBytes >= 1024);
-    assert.ok(body.series.labels.length >= 1);
+    assert.equal(body.summary.requests, 2);
+    assert.equal(body.series.labels.length, 3);
+    assert.deepEqual(body.series.queries, [0, 0, 3]);
+    assert.deepEqual(body.series.errors, [0, 0, 1]);
+    assert.equal(body.series.latencyAvg[0], null);
+    assert.equal(body.series.latencyP95[0], null);
+    assert.equal(body.series.latencyP95[2], 35);
+    assert.ok(body.series.trafficIn[2] >= 1300);
+    assert.ok(body.series.trafficOut[2] >= 4050);
+    assert.equal(body.series.storage[0], 0);
+    assert.ok(body.series.storage[2] >= 1024);
+    assert.equal(body.sources[0].source, 'pipeline');
+    assert.equal(body.sources[0].queries, 3);
+    assert.deepEqual(
+      body.statusCodes.map((row) => row.statusCode).sort(),
+      [200, 500],
+    );
     assert.equal(body.topDatabases[0].name, 'analytics-db');
+    assert.equal(body.topProjects[0].name, 'Analytics Project');
     assert.ok(body.topQueries.length >= 1);
     assert.ok(body.topQueries[0].sqlPreview.includes('?'));
     assert.ok(!body.topQueries[0].sqlPreview.includes('person@example.com'));
+    assert.ok(body.topQueriesByRowsRead[0].rowsRead >= 100);
+    assert.ok(Array.isArray(body.topQueriesByRowsWritten));
+    assert.ok(Array.isArray(body.topQueriesByFrequency));
+    assert.equal(body.topErrors[0].errorCode, 'SQLITE_ERROR');
+    assert.ok(body.topErrors[0].lastSeenAt);
+  });
+
+  test('zero-fills day buckets and carries storage forward', async () => {
+    const otherDatabaseId = '00000000-0000-4000-8000-000000000001';
+    const to = new Date(Date.now() - 60 * 60 * 1000);
+    const from = new Date(to.getTime() - 4 * 24 * 60 * 60 * 1000 - 60 * 1000);
+    const sqlDate = (value) => value.toISOString().slice(0, 19).replace('T', ' ');
+    const HOUR = 60 * 60 * 1000;
+    const DAY = 24 * HOUR;
+
+    const samples = [
+      { offset: HOUR, size: 100 },
+      { offset: DAY + HOUR, size: 200 },
+      { offset: 2 * DAY + HOUR, size: 300 },
+      { offset: 3 * DAY + HOUR, size: 400 },
+    ];
+    for (const sample of samples) {
+      await AppDataSource.query(
+        `INSERT INTO storage_samples (databaseId, projectId, sizeBytes, sampledAt)
+         VALUES (?, ?, ?, ?)`,
+        [otherDatabaseId, project.id, sample.size, sqlDate(new Date(from.getTime() + sample.offset))],
+      );
+    }
+
+    const queries = [
+      { offset: HOUR, durationMs: 10 },
+      { offset: 2 * DAY + HOUR, durationMs: 50 },
+      { offset: 2 * DAY + 2 * HOUR, durationMs: 30 },
+    ];
+    for (const query of queries) {
+      await AppDataSource.query(
+        `INSERT INTO query_metrics
+           (databaseId, projectId, source, operation, sqlFingerprint, sqlPreview, durationMs, rowsRead, rowsWritten, success, createdAt)
+         VALUES (?, ?, 'api', 'select', 'bucket-test', 'SELECT 1', ?, 0, 0, 1, ?)`,
+        [otherDatabaseId, project.id, query.durationMs, sqlDate(new Date(from.getTime() + query.offset))],
+      );
+    }
+
+    const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = JSON.parse(response.payload);
+    assert.equal(body.bucket, 'day');
+    assert.equal(body.series.labels.length, 5);
+    assert.deepEqual(body.series.queries, [1, 0, 2, 0, 0]);
+    assert.deepEqual(body.series.latencyP95, [10, null, 50, null, null]);
+    assert.equal(body.series.latencyAvg[2], 40);
+    assert.deepEqual(body.series.storage, [100, 200, 300, 400, 400]);
   });
 
   test('flushes large batches in chunks', async () => {
@@ -156,6 +257,6 @@ test.describe('Analytics', () => {
 
     await analyticsCollector.flush();
     const total = await repo.countBy({ databaseId: database.id });
-    assert.equal(total, 1202);
+    assert.equal(total, 1203);
   });
 });

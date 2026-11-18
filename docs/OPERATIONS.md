@@ -122,9 +122,17 @@ the data plane:
 - inbound/outbound traffic,
 - hourly storage samples.
 
-The `/analytics` page shows summary cards, latency, rows, traffic and storage
-charts, plus top databases and top queries. Metrics begin at the first start of
-this version; there is no historical backfill.
+The `/analytics` page shows summary cards, zero-filled timeseries for query
+volume and errors, average/p95 latency, rows, traffic and storage, plus source
+and HTTP status breakdowns, top databases, top projects, and query leaderboards
+ranked by latency, rows read, rows written and frequency. Failed queries are
+grouped by error code with redacted previews.
+
+Ranges follow the browser timezone: the frontend sends local `from`/`to`
+boundaries, so "Today" starts at local midnight. Periods without activity are
+filled with zeroes, while latency stays empty instead of showing a false zero.
+Metrics begin at the first start of this version; there is no historical
+backfill.
 
 SQL previews redact string and numeric literals. Raw metrics are retained for
 `ANALYTICS_RAW_RETENTION_DAYS` (default 14), and storage samples for

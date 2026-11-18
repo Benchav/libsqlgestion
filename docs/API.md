@@ -314,12 +314,25 @@ from=<ISO timestamp>
 to=<ISO timestamp>
 ```
 
-The response includes summary totals, a timeseries for latency, rows,
-traffic and storage, the top databases, and the top normalized queries. SQL
-literals are redacted and never stored in analytics previews.
+The response includes:
 
-Metrics are collected from the moment the analytics-enabled backend starts.
-The raw metrics retention is controlled by `ANALYTICS_RAW_RETENTION_DAYS`.
+- summary totals: queries, errors, error rate, rows read/written, average and
+  p95 latency, storage, traffic bytes and database API request count,
+- a zero-filled timeseries with queries, errors, rows, average/p95/max latency,
+  traffic and storage,
+- query source and HTTP status breakdowns,
+- top databases and projects,
+- top normalized queries ranked by latency, rows read, rows written and
+  frequency,
+- top error codes with redacted SQL previews.
+
+When `from` and `to` are supplied, the window and its buckets use those exact
+instants. The dashboard sends local-time boundaries so "Today" and "This month"
+match the browser timezone. Without them, the server falls back to UTC.
+
+SQL literals are redacted and never stored in analytics previews. Metrics are
+collected from the moment the analytics-enabled backend starts. The raw
+metrics retention is controlled by `ANALYTICS_RAW_RETENTION_DAYS`.
 
 ## Audit and health
 

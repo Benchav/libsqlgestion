@@ -35,11 +35,12 @@ type SnapshotsCardProps = {
   onRestored: (databaseId: string, token: string, databaseName?: string) => void;
 };
 
-type PointInTimePreset = '1h' | '6h' | '12h' | '24h' | '48h' | '72h' | '1w' | '2w' | 'custom';
+type PointInTimePreset = 'latest' | '1h' | '6h' | '12h' | '24h' | '48h' | '72h' | '1w' | '2w' | 'custom';
 
 type PolicyForm = Omit<DatabaseSnapshotPolicy, 'databaseId' | 'isDefault'>;
 
 const POINT_IN_TIME_PRESETS: Array<{ value: PointInTimePreset; label: string; ms?: number }> = [
+  { value: 'latest', label: 'Latest snapshot' },
   { value: '1h', label: '1 Hour Ago', ms: 60 * 60 * 1000 },
   { value: '6h', label: '6 Hours Ago', ms: 6 * 60 * 60 * 1000 },
   { value: '12h', label: '12 Hours Ago', ms: 12 * 60 * 60 * 1000 },
@@ -214,7 +215,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
   const [policyForm, setPolicyForm] = useState<PolicyForm>(defaultPolicyForm());
   const [policyError, setPolicyError] = useState('');
   const [pointInTimeOpen, setPointInTimeOpen] = useState(false);
-  const [pointInTimePreset, setPointInTimePreset] = useState<PointInTimePreset>('1h');
+  const [pointInTimePreset, setPointInTimePreset] = useState<PointInTimePreset>('latest');
   const [pointInTimeCustom, setPointInTimeCustom] = useState('');
   const [pointInTimeName, setPointInTimeName] = useState('');
   const [pointInTimeError, setPointInTimeError] = useState('');
@@ -226,7 +227,17 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
   const snapshotInProgress = createSnapshot.isPending
     || snapshots.some((snapshot) => snapshot.status === 'pending');
 
+  const oldestReadySnapshot = readySnapshots.length > 0
+    ? readySnapshots[readySnapshots.length - 1]
+    : null;
+  const hasHistoricalPresets = POINT_IN_TIME_PRESETS.some((preset) => {
+    if (preset.value === 'latest' || preset.value === 'custom' || !preset.ms) return false;
+    const target = Date.now() - preset.ms;
+    return readySnapshots.some((snapshot) => new Date(snapshot.takenAt).getTime() <= target);
+  });
+
   const pointInTimeTargetMs = (() => {
+    if (pointInTimePreset === 'latest') return Date.now();
     if (pointInTimePreset === 'custom') {
       const parsed = pointInTimeCustom ? new Date(pointInTimeCustom).getTime() : NaN;
       return Number.isFinite(parsed) ? parsed : null;
@@ -235,9 +246,11 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
     return preset?.ms ? Date.now() - preset.ms : null;
   })();
 
-  const pointInTimeSnapshot = pointInTimeTargetMs == null
-    ? null
-    : readySnapshots.find((snapshot) => new Date(snapshot.takenAt).getTime() <= pointInTimeTargetMs) || null;
+  const pointInTimeSnapshot = pointInTimePreset === 'latest'
+    ? readySnapshots[0] || null
+    : pointInTimeTargetMs == null
+      ? null
+      : readySnapshots.find((snapshot) => new Date(snapshot.takenAt).getTime() <= pointInTimeTargetMs) || null;
 
   async function handleCreateSnapshot() {
     setActionError('');
@@ -291,11 +304,11 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
   function openPointInTimeModal() {
     const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
     const firstAvailable = POINT_IN_TIME_PRESETS.find((preset) => {
-      if (preset.value === 'custom' || !preset.ms) return false;
+      if (preset.value === 'latest' || preset.value === 'custom' || !preset.ms) return false;
       const target = Date.now() - preset.ms;
       return readySnapshots.some((snapshot) => new Date(snapshot.takenAt).getTime() <= target);
     });
-    setPointInTimePreset(firstAvailable?.value || 'custom');
+    setPointInTimePreset(firstAvailable?.value || 'latest');
     setPointInTimeCustom(toDateTimeLocal(
       firstAvailable ? new Date(Date.now() - 60 * 60 * 1000) : new Date(),
     ));
@@ -607,6 +620,9 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                   className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {POINT_IN_TIME_PRESETS.map((preset) => {
+                    if (preset.value === 'latest') {
+                      return <option key={preset.value} value={preset.value}>{preset.label}</option>;
+                    }
                     if (preset.value === 'custom') {
                       return <option key={preset.value} value={preset.value}>{preset.label}</option>;
                     }
@@ -616,12 +632,25 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                     );
                     return (
                       <option key={preset.value} value={preset.value} disabled={!available}>
-                        {preset.label}{available ? '' : ' (no snapshot)'}
+                        {preset.label}{available ? '' : ' — no snapshot before this time'}
                       </option>
                     );
                   })}
                 </select>
               </div>
+
+              {readySnapshots.length > 0 && !hasHistoricalPresets && (
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-xs text-blue-300">
+                  Only a recent snapshot exists. Historical points become available as the scheduler accumulates
+                  restore points.
+                </div>
+              )}
+
+              {oldestReadySnapshot && (
+                <p className="text-xs text-zinc-500">
+                  Earliest snapshot: {formatTimestamp(oldestReadySnapshot.takenAt)} ({formatAge(oldestReadySnapshot.takenAt)})
+                </p>
+              )}
 
               {pointInTimePreset === 'custom' && (
                 <div>
@@ -639,7 +668,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
               <div className="rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-xs text-zinc-400">
                 {pointInTimeSnapshot ? (
                   <>
-                    <p><span className="text-zinc-500">Nearest snapshot:</span> {formatTimestamp(pointInTimeSnapshot.takenAt)}</p>
+                    <p><span className="text-zinc-500">Selected snapshot:</span> {formatTimestamp(pointInTimeSnapshot.takenAt)}</p>
                     <p><span className="text-zinc-500">Age:</span> {formatAge(pointInTimeSnapshot.takenAt)}</p>
                     <p><span className="text-zinc-500">Size:</span> {formatBytes(pointInTimeSnapshot.sizeBytes)}</p>
                   </>

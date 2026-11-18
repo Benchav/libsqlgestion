@@ -11,6 +11,7 @@ type Project = {
   name: string;
   createdAt: string;
   owner?: { email: string };
+  databaseCount?: number;
   databases?: Array<{ id: string }>;
 };
 
@@ -118,7 +119,9 @@ export default function ProjectsPage() {
                 <div className="mt-auto pt-4 border-t border-zinc-800/50 flex items-center justify-between">
                   <div className="flex flex-col">
                     <span className="text-xs text-zinc-500 uppercase font-semibold tracking-wider">Databases</span>
-                    <span className="text-zinc-200 font-medium">{project.databases?.length || 0}</span>
+                    <span className="text-zinc-200 font-medium">
+                      {project.databaseCount ?? project.databases?.length ?? 0}
+                    </span>
                   </div>
                   <button 
                     onClick={() => router.push(`/projects/${project.id}`)}

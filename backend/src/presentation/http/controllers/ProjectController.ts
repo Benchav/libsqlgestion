@@ -8,8 +8,15 @@ import { createProjectSchema, parseAndValidate } from '../../../types/validation
 import { presentDatabase } from '../database-presenter';
 
 function presentProject(project: any) {
+  const databaseCount = typeof project?.databaseCount === 'number'
+    ? project.databaseCount
+    : Array.isArray(project?.databases)
+      ? project.databases.length
+      : 0;
+
   return {
     ...project,
+    databaseCount,
     databases: Array.isArray(project?.databases) ? project.databases.map((database: any) => presentDatabase(database)) : project?.databases,
   };
 }

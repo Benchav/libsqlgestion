@@ -8,7 +8,7 @@ import { apiRequest } from '../lib/api';
 import { 
   Database, Activity, FileText, CreditCard, Settings, HelpCircle, 
   ChevronDown, ChevronRight, Search, Plus, RefreshCw, LayoutList, 
-  Filter, ArrowUpDown, Columns, MoreHorizontal, Copy, Moon, 
+  Filter, ArrowUpDown, Columns, MoreHorizontal, Copy, Moon, UserRound,
   Sidebar as SidebarIcon, Terminal, Table2, Clock, History, Check, X
 } from 'lucide-react';
 
@@ -154,8 +154,8 @@ function Sidebar({ onOpenCreateDb }: { onOpenCreateDb: () => void }) {
 
       <div className="p-4 border-t border-zinc-800/60 flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden">
-          <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center overflow-hidden shrink-0">
-             <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.email || 'Admin'}&backgroundColor=27272a`} alt="User" className="w-full h-full" />
+          <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center shrink-0">
+            <UserRound size={15} className="text-zinc-300" />
           </div>
           <span className="text-xs text-zinc-400 truncate">{user?.email}</span>
         </div>

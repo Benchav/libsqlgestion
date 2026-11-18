@@ -476,6 +476,16 @@ test.describe('Snapshots and restore points', () => {
     assert.equal(pastRes.statusCode, 200);
     assert.equal(JSON.parse(pastRes.payload).snapshots.length, 0);
 
+    const projectsRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/projects',
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(projectsRes.statusCode, 200);
+    const apiProject = JSON.parse(projectsRes.payload).projects.find((project) => project.name === 'Snapshots API Project');
+    assert.ok(apiProject);
+    assert.equal(apiProject.databaseCount, 1);
+
     const policyRes = await app.inject({
       method: 'GET',
       url: `/api/v1/databases/${apiDatabaseId}/snapshot-policy`,

@@ -9,8 +9,14 @@ const AuditService_1 = require("../../../application/audit/AuditService");
 const validations_1 = require("../../../types/validations");
 const database_presenter_1 = require("../database-presenter");
 function presentProject(project) {
+    const databaseCount = typeof project?.databaseCount === 'number'
+        ? project.databaseCount
+        : Array.isArray(project?.databases)
+            ? project.databases.length
+            : 0;
     return {
         ...project,
+        databaseCount,
         databases: Array.isArray(project?.databases) ? project.databases.map((database) => (0, database_presenter_1.presentDatabase)(database)) : project?.databases,
     };
 }

@@ -37,7 +37,8 @@ Returns the authenticated user.
 
 ### `GET /projects`
 
-Lists accessible projects.
+Lists accessible projects. Each project includes `databaseCount`, the real
+number of databases stored for that project.
 
 ### `POST /projects`
 

@@ -77,6 +77,8 @@ export default function DatabaseDetailPage() {
   const [revealedToken, setRevealedToken] = useState('');
   const [tokenStatus, setTokenStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [tokenMessage, setTokenMessage] = useState('');
+  const [healthStatus, setHealthStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [healthMessage, setHealthMessage] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [downloadState, setDownloadState] = useState<'idle' | 'working' | 'success'>('idle');
@@ -125,6 +127,21 @@ export default function DatabaseDetailPage() {
     } catch (err: any) {
       setTestStatus('error');
       setTestMessage(err.message);
+    }
+  }
+
+  async function handleRefreshHealth() {
+    setHealthStatus('loading');
+    setHealthMessage('');
+    try {
+      const result = await apiRequest<{ database: DatabaseDetail }>(`/databases/${id}/health-check`, { method: 'POST' });
+      setDatabase(result.database);
+      setHealthStatus('success');
+      setHealthMessage('Runtime health refreshed.');
+      queryClient.invalidateQueries({ queryKey: ['databases'] });
+    } catch (err: any) {
+      setHealthStatus('error');
+      setHealthMessage(err.message);
     }
   }
 
@@ -595,7 +612,20 @@ export default function DatabaseDetailPage() {
 
                 {database?.runtimeHealth && (
                   <div>
-                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Runtime Health</label>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">Runtime Health</label>
+                      {database.runtimeProvider === 'docker-libsql' && (
+                        <button
+                          type="button"
+                          onClick={handleRefreshHealth}
+                          disabled={healthStatus === 'loading'}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-50"
+                        >
+                          <RefreshCw size={12} className={healthStatus === 'loading' ? 'animate-spin' : ''} />
+                          {healthStatus === 'loading' ? 'Checking...' : 'Re-check'}
+                        </button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {[
                         ['Internal', database.runtimeHealth.internalOk],
@@ -613,6 +643,11 @@ export default function DatabaseDetailPage() {
                     {database.runtimeHealth.checkedAt && (
                       <p className="mt-2 text-xs text-zinc-500">Checked {new Date(database.runtimeHealth.checkedAt).toLocaleString()}</p>
                     )}
+                    {healthMessage && (
+                      <p className={`mt-1 text-xs ${healthStatus === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>
+                        {healthMessage}
+                      </p>
+                    )}
                     {(runtimeInternalFailed || runtimePublicFailed) && (
                       <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200 space-y-1">
                         {runtimeInternalFailed && (
@@ -626,13 +661,13 @@ export default function DatabaseDetailPage() {
                         {runtimePublicFailed && (
                           <p>
                             <strong>Public: Fail</strong> — check the wildcard domain, DNS and{' '}
-                            <code className="text-amber-100">TRAEFIK_CERT_RESOLVER</code>, then use{' '}
-                            <strong>Create new token</strong> so the container gets updated Traefik labels.
+                            <code className="text-amber-100">TRAEFIK_CERT_RESOLVER</code>. After fixing the route,
+                            press <strong>Re-check</strong>. If labels changed, use <strong>Create new token</strong>.
                           </p>
                         )}
                         <p className="text-amber-300/80">
-                          This health snapshot is from provisioning. Attaching the network manually does not
-                          update the stored route health.
+                          This is the last stored health check. Use <strong>Re-check</strong> to refresh it
+                          without rotating the token.
                         </p>
                       </div>
                     )}

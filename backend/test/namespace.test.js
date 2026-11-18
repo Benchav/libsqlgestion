@@ -124,6 +124,30 @@ test.describe('LibsqlNamespaceService Multitenancy Tests', () => {
     assert.ok(urls.backendUrl.endsWith('/dev/mi-tienda/'));
   });
 
+  test('distinguishes exact-host routing from wildcard routing', () => {
+    const previousPublic = process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED;
+    const previousHost = process.env.LIBSQL_NAMESPACE_HOST;
+    try {
+      process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED = 'false';
+      process.env.LIBSQL_NAMESPACE_HOST = 'erp-db.data.example.com';
+
+      const exact = new LibsqlNamespaceService();
+      assert.equal(exact.isPublicEnabled(), true);
+      assert.equal(exact.isWildcardPublicEnabled(), false);
+      assert.equal(exact.getExactPublicHost(), 'erp-db.data.example.com');
+
+      process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED = 'true';
+      const wildcard = new LibsqlNamespaceService();
+      assert.equal(wildcard.isPublicEnabled(), true);
+      assert.equal(wildcard.isWildcardPublicEnabled(), true);
+    } finally {
+      if (previousPublic === undefined) delete process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED;
+      else process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED = previousPublic;
+      if (previousHost === undefined) delete process.env.LIBSQL_NAMESPACE_HOST;
+      else process.env.LIBSQL_NAMESPACE_HOST = previousHost;
+    }
+  });
+
   test('normalizes legacy namespace URLs without a trailing slash', () => {
     const url = getRuntimeConnectionUrl({
       type: 'libsql',

@@ -91,61 +91,108 @@ export class SqliteStorageService {
     return filePath;
   }
 
-  async importDatabaseFile(sourcePath: string, projectId: string, databaseId: string, type?: string) {
+  async importDatabaseFile(
+    sourcePath: string,
+    projectId: string,
+    databaseId: string,
+    type?: string,
+    options: { consistentSnapshot?: boolean; moveSource?: boolean } = {},
+  ) {
     const targetPath = this.managedDatabasePath(projectId, databaseId, type);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
-    const tempTargetPath = `${targetPath}.import-${Date.now()}.tmp`;
-    await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
-
-    try {
-      // Create a consistent snapshot from the live SQLite database.
-      // This captures committed WAL contents as seen by SQLite and avoids
-      // importing a stale/blank main database file from ERP workloads.
-      const client = new SqliteClient(sourcePath);
-      try {
-        await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
-      } finally {
-        await client.close();
-      }
-
-      await fsp.rm(targetPath, { force: true }).catch(() => undefined);
-      await fsp.rename(tempTargetPath, targetPath);
-      if (type === 'libsql') {
-        this.applySqldOwnership(path.dirname(targetPath), targetPath);
-      }
-    } catch (error) {
-      await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
-      throw error;
+    await this.copySqliteFile(sourcePath, targetPath, options);
+    if (type === 'libsql') {
+      this.applySqldOwnership(path.dirname(targetPath), targetPath);
     }
 
     return targetPath;
   }
 
-  async importToNamespace(sourcePath: string, namespace: string) {
+  async importToNamespace(
+    sourcePath: string,
+    namespace: string,
+    options: { consistentSnapshot?: boolean; moveSource?: boolean } = {},
+  ) {
     const targetPath = this.namespaceDatabasePath(namespace);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
+    await this.copySqliteFile(sourcePath, targetPath, options);
+    this.applySqldOwnership(path.dirname(targetPath), targetPath);
+
+    return targetPath;
+  }
+
+  private async copySqliteFile(
+    sourcePath: string,
+    targetPath: string,
+    options: { consistentSnapshot?: boolean; moveSource?: boolean },
+  ) {
     const tempTargetPath = `${targetPath}.import-${Date.now()}.tmp`;
     await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
+    this.assertSqliteHeader(sourcePath);
 
     try {
-      const client = new SqliteClient(sourcePath);
-      try {
-        await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
-      } finally {
-        await client.close();
+      if (options.moveSource) {
+        // Uploaded files live in a staging directory on the same data volume.
+        // Rename avoids copying the file a second time. Fall back to copy when
+        // staging is configured on another filesystem.
+        try {
+          await fsp.rename(sourcePath, tempTargetPath);
+        } catch (error: any) {
+          if (error?.code !== 'EXDEV') throw error;
+          await fsp.copyFile(sourcePath, tempTargetPath);
+        }
+      } else if (options.consistentSnapshot === false) {
+        // Uploaded files are already a closed snapshot in a staging directory.
+        await fsp.copyFile(sourcePath, tempTargetPath);
+      } else {
+        // Server paths may belong to a live ERP database. VACUUM INTO captures
+        // committed WAL contents without blocking the source for long.
+        const client = new SqliteClient(sourcePath);
+        try {
+          await client.exec(`VACUUM INTO '${escapeSqliteString(tempTargetPath)}';`);
+        } finally {
+          await client.close();
+        }
       }
 
       await fsp.rm(targetPath, { force: true }).catch(() => undefined);
       await fsp.rename(tempTargetPath, targetPath);
-      this.applySqldOwnership(path.dirname(targetPath), targetPath);
     } catch (error) {
       await fsp.rm(tempTargetPath, { force: true }).catch(() => undefined);
       throw error;
     }
+  }
 
-    return targetPath;
+  private assertSqliteHeader(filePath: string) {
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(filePath, 'r');
+      const header = Buffer.alloc(16);
+      const bytesRead = fs.readSync(fd, header, 0, header.length, 0);
+      const magic = header.toString('ascii', 0, 15);
+      if (bytesRead < 16 || magic !== 'SQLite format 3') {
+        const error: any = new Error(
+          'The selected file is not a valid SQLite database (missing SQLite header).',
+        );
+        error.statusCode = 422;
+        throw error;
+      }
+    } catch (error: any) {
+      if (error?.statusCode) throw error;
+      const wrapped: any = new Error(`Unable to read the SQLite file: ${error?.message || error}`);
+      wrapped.statusCode = 422;
+      throw wrapped;
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // Best effort.
+        }
+      }
+    }
   }
 
   async adoptExistingFile(sourcePath: string, projectId: string, databaseId: string, type?: string) {

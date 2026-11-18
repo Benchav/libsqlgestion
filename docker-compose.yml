@@ -117,6 +117,10 @@ services:
       # runtime never falls back to the default bridge network.
       LIBSQL_RUNTIME_NETWORK: ${LIBSQL_RUNTIME_NETWORK:-}
       LIBSQL_BACKEND_CONTAINER_ID: ${LIBSQL_BACKEND_CONTAINER_ID:-}
+      # Import uploads are staged on the data volume to avoid cross-device
+      # copies. The frontend shows progress; large files can use Server path.
+      IMPORT_STAGING_DIR: ${IMPORT_STAGING_DIR:-/app/data/tmp}
+      MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-524288000}
       DB_CONNECTION_POOL_MAX_SIZE: ${DB_CONNECTION_POOL_MAX_SIZE:-256}
       DB_CONNECTION_POOL_IDLE_TTL_MS: ${DB_CONNECTION_POOL_IDLE_TTL_MS:-1800000}
       SQLITE_PERFORMANCE_PROFILE: ${SQLITE_PERFORMANCE_PROFILE:-performance}

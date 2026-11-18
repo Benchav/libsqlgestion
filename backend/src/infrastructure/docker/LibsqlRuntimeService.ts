@@ -9,6 +9,14 @@ import { resolveEffectiveDatabaseType } from '../../application/databases/databa
 
 type DockerJson = Record<string, any>;
 
+export type RuntimeRouteHealth = {
+  checkedAt: string;
+  internalOk: boolean;
+  backendOk: boolean;
+  publicOk: boolean;
+  publicChecked: boolean;
+};
+
 type RuntimeMetadata = {
   provider: 'docker-libsql';
   image: string;
@@ -23,13 +31,7 @@ type RuntimeMetadata = {
   publicHost: string;
   publicPort: string;
   publicUrl: string;
-  routeHealth: {
-    checkedAt: string;
-    internalOk: boolean;
-    backendOk: boolean;
-    publicOk: boolean;
-    publicChecked: boolean;
-  };
+  routeHealth: RuntimeRouteHealth;
 };
 
 type RuntimeBundle = {
@@ -60,6 +62,7 @@ export class LibsqlRuntimeService {
   async provisionDatabase(database: Database, databasePath: string): Promise<RuntimeBundle> {
     this.assertAvailable();
 
+    const provisionStartedAt = Date.now();
     const paths = this.resolvePaths(database, databasePath);
     const authBundle = this.generateAuthBundle();
     let createdContainerId: string | undefined;
@@ -75,8 +78,13 @@ export class LibsqlRuntimeService {
       const readiness = await this.waitForReady(createdContainerId, {
         internalUrl,
         backendUrl,
-        publicUrl,
       }, authBundle.token);
+
+      console.log(
+        `[LibsqlRuntimeService] provisioned ${database.id} in ${Date.now() - provisionStartedAt}ms ` +
+        `(network=${networkName}, internal=${readiness.routeHealth.internalOk}, ` +
+        `backend=${readiness.routeHealth.backendOk}; public check deferred)`,
+      );
 
       return {
         token: authBundle.token,
@@ -111,6 +119,7 @@ export class LibsqlRuntimeService {
     const runtime = this.readRuntimeMetadata(database);
     if (!runtime) return null;
 
+    const rotateStartedAt = Date.now();
     // Resolve the network before removing the current runtime. If Docker
     // inspection fails, the existing primary must stay online.
     const networkName = await this.resolveBackendNetworkName();
@@ -129,8 +138,12 @@ export class LibsqlRuntimeService {
       const readiness = await this.waitForReady(createdContainerId, {
         internalUrl,
         backendUrl,
-        publicUrl,
       }, authBundle.token);
+      console.log(
+        `[LibsqlRuntimeService] rotated ${database.id} in ${Date.now() - rotateStartedAt}ms ` +
+        `(network=${networkName}, internal=${readiness.routeHealth.internalOk}, ` +
+        `backend=${readiness.routeHealth.backendOk}; public check deferred)`,
+      );
       return {
         token: authBundle.token,
         metadata: {
@@ -473,7 +486,45 @@ export class LibsqlRuntimeService {
     throw new Error('Timed out waiting for the libSQL server port to become available');
   }
 
-  private async waitForReady(containerId: string, urls: { internalUrl: string; backendUrl: string; publicUrl: string }, token: string) {
+  async checkRouteHealth(
+    database: Database,
+    token: string,
+    options: { publicTimeoutMs?: number } = {},
+  ): Promise<RuntimeRouteHealth | null> {
+    const runtime = this.readRuntimeMetadata(database);
+    if (!runtime) return null;
+
+    const internalCheck = await this.checkConnection(runtime.internalUrl, token, false);
+    const backendCheck = await this.checkConnection(runtime.backendUrl, token, false);
+    // Recompute the canonical public URL from the current settings so a manual
+    // health check reflects a wildcard-domain/TLS change without rotating.
+    const publicUrl = database.subdomain
+      ? this.buildCanonicalPublicUrl(database.subdomain, runtime.publicPort)
+      : runtime.publicUrl;
+    const publicChecked = Boolean(
+      publicUrl
+      && publicUrl !== runtime.backendUrl
+      && publicUrl !== runtime.internalUrl,
+    );
+
+    let publicCheck: { ok: boolean; error?: string } = { ok: true };
+    if (publicChecked) {
+      const publicTimeoutMs = Math.max(0, Number(options.publicTimeoutMs || 0));
+      publicCheck = publicTimeoutMs > 0
+        ? await this.waitForPublicConnection(publicUrl, token, publicTimeoutMs)
+        : await this.checkConnection(publicUrl, token, false);
+    }
+
+    return {
+      checkedAt: new Date().toISOString(),
+      internalOk: internalCheck.ok,
+      backendOk: backendCheck.ok,
+      publicOk: publicCheck.ok,
+      publicChecked,
+    };
+  }
+
+  private async waitForReady(containerId: string, urls: { internalUrl: string; backendUrl: string }, token: string) {
     const timeoutAt = Date.now() + 60000;
     let lastErrorMessage = '';
     let attempt = 0;
@@ -490,24 +541,16 @@ export class LibsqlRuntimeService {
       const backendCheck = await this.checkConnection(urls.backendUrl, token);
 
       if (internalCheck.ok || backendCheck.ok) {
-        const chosenUrl = internalCheck.ok ? urls.internalUrl : urls.backendUrl;
-        const publicChecked = Boolean(urls.publicUrl && urls.publicUrl !== urls.backendUrl && urls.publicUrl !== urls.internalUrl);
-        const publicCheck = publicChecked
-          ? await this.waitForPublicConnection(
-              urls.publicUrl,
-              token,
-              Math.max(2000, Math.min(30000, timeoutAt - Date.now())),
-            )
-          : { ok: backendCheck.ok || internalCheck.ok };
-
         return {
-          connectionUrl: chosenUrl,
+          connectionUrl: internalCheck.ok ? urls.internalUrl : urls.backendUrl,
           routeHealth: {
             checkedAt: new Date().toISOString(),
             internalOk: internalCheck.ok,
             backendOk: backendCheck.ok,
-            publicOk: publicCheck.ok,
-            publicChecked,
+            // The public route is checked after the import response. Waiting
+            // for DNS/TLS here added up to 30 seconds to every import.
+            publicOk: false,
+            publicChecked: false,
           },
         };
       }

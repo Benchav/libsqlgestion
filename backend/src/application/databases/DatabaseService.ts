@@ -77,6 +77,7 @@ export class DatabaseService {
     }
 
     if (storageMode === 'namespace') {
+      this.assertNamespaceHost(subdomain);
       const namespace = await this.namespaceService.createNamespace(subdomain);
       if (!namespace.ok) {
         throw new NamespaceUnavailableError(
@@ -198,7 +199,7 @@ export class DatabaseService {
             projectId, type: input.type, subdomain: input.subdomain, primaryMode: 'runtime',
           }, false);
           if (!provisioned) {
-            throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
+            throw await this.buildProvisioningFailure(database.id);
           }
           return { database: provisioned.database, token: provisioned.token };
         }
@@ -211,7 +212,7 @@ export class DatabaseService {
     }
   }
 
-  async importExistingSqlite(projectId: string, input: { name?: string; sourceName?: string; sourcePath: string; subdomain?: string; token?: string; storageMode?: string; metadata?: Record<string, unknown> }) {
+  async importExistingSqlite(projectId: string, input: { name?: string; sourceName?: string; sourcePath: string; subdomain?: string; token?: string; storageMode?: string; sourceIsUpload?: boolean; metadata?: Record<string, unknown> }) {
     const project = await this.projectRepo.findOneByOrFail({ id: projectId });
     if (!fs.existsSync(input.sourcePath)) {
       throw new Error('sourcePath does not exist');
@@ -219,13 +220,27 @@ export class DatabaseService {
     const databaseName = deriveDatabaseName(input.name, input.sourceName, input.sourcePath);
     const subdomain = input.subdomain ? assertValidSubdomainLabel(input.subdomain) : ensureSubdomain(databaseName, randomToken());
     const storageMode = await this.resolveImportStorageMode(input.storageMode);
+    const importStartedAt = Date.now();
+    const sourceSize = (() => {
+      try {
+        return fs.statSync(input.sourcePath).size;
+      } catch {
+        return 0;
+      }
+    })();
 
     if (storageMode === 'namespace') {
+      this.assertNamespaceHost(subdomain);
+      const copyStartedAt = Date.now();
       try {
-        await this.storageService.importToNamespace(input.sourcePath, subdomain);
+        await this.storageService.importToNamespace(input.sourcePath, subdomain, {
+          consistentSnapshot: !input.sourceIsUpload,
+          moveSource: Boolean(input.sourceIsUpload),
+        });
       } catch (error: any) {
         throw new Error(`No se pudo copiar la base al namespace "${subdomain}": ${error?.message || error}`);
       }
+      const namespaceCopyMs = Date.now() - copyStartedAt;
 
       const namespace = await this.namespaceService.createNamespace(subdomain);
       if (!namespace.ok) {
@@ -248,7 +263,8 @@ export class DatabaseService {
         metadata: {
           ...(input.metadata ?? {}),
           imported: true,
-          sourcePath: input.sourcePath,
+          sourceName: input.sourceName,
+          sourcePath: input.sourceIsUpload ? null : input.sourcePath,
           runtime: {
             provider: 'sqld-namespace',
             namespace: subdomain,
@@ -266,9 +282,13 @@ export class DatabaseService {
         action: 'database.import',
         resourceType: 'database',
         resourceId: database.id,
-        metadata: { projectId, sourcePath: input.sourcePath, subdomain, runtime: 'sqld-namespace', storageMode: 'namespace' },
+        metadata: { projectId, sourcePath: input.sourceIsUpload ? input.sourceName : input.sourcePath, subdomain, runtime: 'sqld-namespace', storageMode: 'namespace' },
       });
 
+      console.log(
+        `[DatabaseService] imported ${database.id} (${sourceSize} bytes) as namespace in ` +
+        `${Date.now() - importStartedAt}ms (copy ${namespaceCopyMs}ms)`,
+      );
       return { database, token };
     }
 
@@ -280,13 +300,27 @@ export class DatabaseService {
       type: 'sqlite',
       status: willProvisionRuntime ? 'provisioning' : 'inactive',
       subdomain,
-      metadata: { ...(input.metadata ?? {}), imported: true, sourcePath: input.sourcePath },
+      metadata: { ...(input.metadata ?? {}), imported: true, sourceName: input.sourceName, sourcePath: input.sourceIsUpload ? null : input.sourcePath },
       project,
     }));
 
-    const managedPath = await this.storageService.importDatabaseFile(input.sourcePath, project.id, database.id, storageType);
+    let managedPath = '';
+    let copyMs = 0;
 
     try {
+      const copyStartedAt = Date.now();
+      managedPath = await this.storageService.importDatabaseFile(
+        input.sourcePath,
+        project.id,
+        database.id,
+        storageType,
+        {
+          consistentSnapshot: !input.sourceIsUpload,
+          moveSource: Boolean(input.sourceIsUpload),
+        },
+      );
+      copyMs = Date.now() - copyStartedAt;
+
       const token = input.token ?? randomToken();
 
       database.url = managedPath;
@@ -307,7 +341,7 @@ export class DatabaseService {
         resourceId: database.id,
         metadata: {
           projectId,
-          sourcePath: input.sourcePath,
+          sourcePath: input.sourceIsUpload ? input.sourceName : input.sourcePath,
           subdomain: input.subdomain,
           runtime: willProvisionRuntime ? 'docker-libsql' : 'local-file',
           storageMode,
@@ -317,18 +351,30 @@ export class DatabaseService {
       if (willProvisionRuntime) {
         // Import requests must return the real runtime JWT. Provisioning in the
         // background would return a token that is immediately invalid.
+        const provisionStartedAt = Date.now();
         const provisioned = await this.attemptRuntimeProvisioning(database.id, managedPath, 'database.import', {
-          projectId, sourcePath: input.sourcePath, subdomain: input.subdomain, primaryMode: 'runtime',
+          projectId,
+          sourcePath: input.sourceIsUpload ? input.sourceName : input.sourcePath,
+          subdomain: input.subdomain,
+          primaryMode: 'runtime',
         }, false);
         if (!provisioned) {
-          throw new Error('No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.');
+          throw await this.buildProvisioningFailure(database.id);
         }
+        console.log(
+          `[DatabaseService] imported ${database.id} (${sourceSize} bytes) as runtime in ` +
+          `${Date.now() - importStartedAt}ms (copy ${copyMs}ms, primary ${Date.now() - provisionStartedAt}ms)`,
+        );
         return { database: provisioned.database, token: provisioned.token };
       }
 
+      console.log(
+        `[DatabaseService] imported ${database.id} (${sourceSize} bytes) as ${storageMode} in ` +
+        `${Date.now() - importStartedAt}ms (copy ${copyMs}ms)`,
+      );
       return { database, token };
     } catch (error) {
-      await this.cleanupCreatedDatabase(database.id, [managedPath]);
+      await this.cleanupCreatedDatabase(database.id, managedPath ? [managedPath] : []);
       throw error;
     }
   }
@@ -745,6 +791,9 @@ export class DatabaseService {
       database.metadata = mergeRuntimeMetadata(database.metadata, runtimeBundle.metadata);
       await this.databaseRepo.save(database);
       await this.auditService.record({ action: 'database.rotate-token', resourceType: 'database', resourceId: database.id });
+      if (runtimeBundle.metadata.routeHealth?.publicChecked === false) {
+        this.scheduleRuntimeHealthRefresh(database.id);
+      }
       return { database, token: runtimeBundle.token };
     }
 
@@ -1050,6 +1099,25 @@ export class DatabaseService {
     this.assertPrimaryPublicDomain();
   }
 
+  private assertNamespaceHost(subdomain: string) {
+    if (this.namespaceService.isWildcardPublicEnabled()) {
+      return;
+    }
+
+    const exactHost = this.namespaceService.getExactPublicHost();
+    const expectedLabel = exactHost?.split('.')[0]?.trim().toLowerCase();
+    if (!exactHost || !expectedLabel || subdomain.toLowerCase() === expectedLabel) {
+      return;
+    }
+
+    const error: any = new Error(
+      `Only the configured namespace host "${exactHost}" is publicly routed. ` +
+      `Use subdomain "${expectedLabel}" or enable wildcard namespace routing.`,
+    );
+    error.statusCode = 422;
+    throw error;
+  }
+
   private async resolvePrimaryMode(requested?: string): Promise<StorageMode> {
     const mode = this.getRequestedPrimaryMode(requested);
 
@@ -1151,6 +1219,10 @@ export class DatabaseService {
     const localAllowed = this.isLocalFileAllowed();
     const requirePrimary = this.isPrimaryRequired();
     const preferredMode = this.getRequestedPrimaryMode();
+    const configuredMaxUploadBytes = Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000);
+    const maxUploadBytes = Number.isFinite(configuredMaxUploadBytes) && configuredMaxUploadBytes > 0
+      ? configuredMaxUploadBytes
+      : 524288000;
 
     let defaultMode: StorageMode | null = null;
     if (preferredMode === 'namespace') {
@@ -1193,6 +1265,7 @@ export class DatabaseService {
       publicDomain: settings.domain || '',
       publicProtocol: settings.protocol || 'https',
       runtimeTlsConfigured: Boolean(process.env.TRAEFIK_CERT_RESOLVER?.trim()),
+      maxUploadBytes,
     };
   }
 
@@ -1287,6 +1360,11 @@ export class DatabaseService {
         resourceId: database.id,
         metadata: { ...auditMetadata, runtime: managedRuntime.metadata.provider, asyncProvisioned },
       });
+      if (managedRuntime.metadata.routeHealth?.publicChecked === false) {
+        // The public route is not part of the critical provisioning path. Check
+        // it shortly after the primary is ready and persist the result.
+        this.scheduleRuntimeHealthRefresh(database.id);
+      }
       return { token: managedRuntime.token, database };
     } catch (error) {
       const errorMessage = this.runtimeService.getRuntimeErrorMessage(error);
@@ -1305,6 +1383,105 @@ export class DatabaseService {
       });
       return null;
     }
+  }
+
+  private async buildProvisioningFailure(databaseId: string) {
+    const database = await this.databaseRepo.findOne({ where: { id: databaseId } });
+    const rawError = database?.metadata?.runtimeError;
+    const detail = typeof rawError === 'string' && rawError.trim() ? rawError.trim() : '';
+    const error: any = new Error(
+      detail
+        ? `No se pudo aprovisionar el runtime libSQL. Causa: ${detail}`
+        : 'No se pudo aprovisionar el runtime libSQL. Revisa los logs del backend y el estado del socket Docker.',
+    );
+    error.statusCode = 502;
+    return error;
+  }
+
+  async refreshRuntimeHealth(id: string, options: { publicTimeoutMs?: number } = {}) {
+    const database = await this.databaseRepo.findOne({
+      where: { id },
+      relations: ['project', 'project.owner'],
+    });
+
+    if (!database) {
+      const error: any = new Error('database not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const runtime = database.metadata?.runtime as Record<string, unknown> | undefined;
+    if (runtime?.provider !== 'docker-libsql') {
+      const error: any = new Error('Health checks are only available for dedicated libSQL runtimes.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (!database.encryptedToken) {
+      const error: any = new Error('database has no token');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    let token: string;
+    try {
+      token = decrypt(database.encryptedToken);
+    } catch (error: any) {
+      const wrapped: any = new Error(`Failed to decrypt database token: ${error?.message || error}. Check MASTER_KEY.`);
+      wrapped.statusCode = 500;
+      throw wrapped;
+    }
+
+    const health = await this.runtimeService.checkRouteHealth(database, token, options);
+    if (!health) {
+      const error: any = new Error('Runtime metadata is missing or incomplete.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    database.metadata = {
+      ...(database.metadata ?? {}),
+      runtime: {
+        ...runtime,
+        routeHealth: health,
+      },
+    };
+    await this.databaseRepo.save(database);
+
+    await this.auditService.record({
+      action: 'database.health_check',
+      resourceType: 'database',
+      resourceId: database.id,
+      metadata: {
+        internalOk: health.internalOk,
+        backendOk: health.backendOk,
+        publicOk: health.publicOk,
+        publicChecked: health.publicChecked,
+      },
+    });
+
+    return database;
+  }
+
+  private scheduleRuntimeHealthRefresh(databaseId: string, delayMs = 3000, attempt = 1) {
+    const timer = setTimeout(async () => {
+      try {
+        const database = await this.refreshRuntimeHealth(databaseId);
+        const health = database.metadata?.runtime as
+          | { routeHealth?: { publicChecked?: boolean; publicOk?: boolean } }
+          | undefined;
+        const routeHealth = health?.routeHealth;
+        if (routeHealth?.publicChecked && !routeHealth.publicOk && attempt < 3) {
+          this.scheduleRuntimeHealthRefresh(databaseId, 5000 * attempt, attempt + 1);
+        }
+      } catch (error: any) {
+        console.warn(
+          `[DatabaseService] Background health check failed for ${databaseId}: ` +
+          `${error?.message || error}`,
+        );
+      }
+    }, Math.max(0, delayMs));
+    timer.unref?.();
   }
 
   private isRuntimeProvisioningAsync(): boolean {

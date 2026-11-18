@@ -164,6 +164,45 @@ docker compose -f docker-compose.yml -f docker-compose.wildcard.yml up -d
 with a DNS-01 resolver in `TRAEFIK_WILDCARD_CERT_RESOLVER`. For a single host,
 set `LIBSQL_NAMESPACE_HOST` to that exact host and use the exact router.
 
+Set `LIBSQL_NAMESPACE_PUBLIC_ENABLED` in the Coolify/compose environment, not
+only in `backend/.env`: the compose `environment` block overrides `env_file`.
+The same applies to `SQLD_PUBLIC_DOMAIN` and `LIBSQL_RUNTIME_NETWORK`.
+
+If you use only `LIBSQL_NAMESPACE_HOST`, the import subdomain must match its
+first DNS label. Wildcard routing (`LIBSQL_NAMESPACE_PUBLIC_ENABLED=true`) is
+what allows arbitrary namespace names.
+
+## Import stays on "Importing" or takes a long time
+
+The import response waits only for the primary to accept connections; public
+DNS/TLS health is now checked in the background. If an import is still slow:
+
+1. Prefer **Server path** when the `.db` is already on the server. Uploading a
+   large file depends on the client's connection.
+2. Check `MAX_UPLOAD_SIZE_BYTES` (default 500 MB). A reverse proxy or Cloudflare
+   may impose a lower limit.
+3. Look at the backend log lines:
+   ```text
+   [DatabaseService] imported <id> (...) as runtime in ...ms (copy ..., primary ...)
+   [LibsqlRuntimeService] provisioned <id> in ...ms
+   ```
+   They show whether time is spent in the upload, the file copy or the container.
+4. If the import fails, check Audit for `database.provision_failed`. The real
+   Docker/libSQL error is stored there.
+5. Confirm the runtime is on the shared Docker network and that
+   `LIBSQL_RUNTIME_NETWORK=coolify` is set. A runtime on `bridge` cannot be
+   reached by container name.
+
+Uploaded files are copied directly; server-side paths use `VACUUM INTO` to
+capture a consistent snapshot from a live database. For a namespace import,
+`storageMode=namespace` is much faster because it does not create a container.
+
+## Runtime health stays stale after fixing DNS/TLS
+
+Use **Re-check** in the database detail page. It calls
+`POST /databases/:id/health-check` and updates the stored route health without
+rotating the token. The background check runs a few times after provisioning.
+
 ## Embedded replica fails with `Invalid header bit 123 expected 0 or 1`
 
 This error comes from the libSQL replication client, not from SQLite or the token.

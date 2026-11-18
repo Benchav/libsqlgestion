@@ -115,6 +115,12 @@ Operational advice:
 - import copies the database into the managed storage tree
 - after import, treat the managed copy as the source of truth
 - keep the original file untouched if you still need it as a fallback
+- prefer **Server path** for large databases; browser uploads are limited by
+  `MAX_UPLOAD_SIZE_BYTES` (default 500 MB) and your connection speed
+- uploaded files are staged under `IMPORT_STAGING_DIR` (default `<data>/tmp`)
+  and copied directly; live server paths use `VACUUM INTO`
+- the import waits only for the primary to accept connections; public route
+  health is checked in the background
 - with the libSQL-first policy (`LIBSQL_REQUIRE_PRIMARY=true`,
   `LIBSQL_ALLOW_LOCAL_FILE=false`), add `storageMode` to choose
   `namespace` or `runtime`; imports without a primary fail instead of

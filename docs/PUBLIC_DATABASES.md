@@ -108,17 +108,14 @@ discovery, which produces `Internal: Fail` and `Public: Fail`.
   **Create new token** so they pick up the correct network and labels.
 
 ### Runtime health expectation
-Managed public databases are considered healthy only when LibSQLite can verify all of the following:
+Provisioning waits for the container to be running and for the internal or
+backend URL to accept connections. The public subdomain is checked separately
+in the background so DNS/TLS propagation does not block imports.
 
-1. the `libsql-server` container is running
-2. the internal runtime URL responds
-3. the backend-reachable URL responds
-4. the public subdomain responds when a real public domain is configured
-
-Provisioning fails if neither the internal nor the backend URL responds. A
-public-route failure is stored in `routeHealth.publicOk` with a warning because
-DNS/TLS may still be propagating; the database remains usable through its
-internal/backend URL.
+The database detail page stores the last check. Use **Re-check** to refresh it
+after changing DNS, Traefik or certificates. A public-route failure does not
+make the primary unusable internally; embedded replicas still need the public
+URL to be healthy.
 
 ## 5. Using the Database in your ERP / API
 

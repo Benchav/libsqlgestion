@@ -31,12 +31,34 @@ export class LibsqlNamespaceService {
    * can enable it by setting LIBSQL_NAMESPACE_HOST.
    */
   isPublicEnabled(): boolean {
+    // A single exact host is enough to make the namespace publicly routable.
+    // This must win over an explicit LIBSQL_NAMESPACE_PUBLIC_ENABLED=false so
+    // the single-host fallback works with the default wildcard flag.
+    if (process.env.LIBSQL_NAMESPACE_HOST?.trim()) {
+      return true;
+    }
+
     const raw = process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED;
     if (raw !== undefined && raw.trim() !== '') {
       return ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
     }
 
-    return Boolean(process.env.LIBSQL_NAMESPACE_HOST?.trim());
+    return false;
+  }
+
+  /**
+   * True when the wildcard flag is explicitly enabled. In that mode every
+   * `<namespace>.<public-domain>` host is expected to be routed.
+   */
+  isWildcardPublicEnabled(): boolean {
+    const raw = process.env.LIBSQL_NAMESPACE_PUBLIC_ENABLED;
+    return raw !== undefined
+      && raw.trim() !== ''
+      && ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
+  }
+
+  getExactPublicHost(): string | null {
+    return process.env.LIBSQL_NAMESPACE_HOST?.trim() || null;
   }
 
   ensureAuthKeys(): { privateKey: crypto.KeyObject; publicKeyPem: string } {

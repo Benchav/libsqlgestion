@@ -4,8 +4,8 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { TokenReveal } from '../../components/TokenReveal';
-import { apiRequest } from '../../lib/api';
-import { useDatabases, useProjects, useCreateDatabase, useStorageCapabilities, DatabaseInfo, ProjectInfo, StorageCapabilities } from '../../lib/hooks';
+import { apiRequest, apiUpload } from '../../lib/api';
+import { useDatabases, useProjects, useCreateDatabase, useStorageCapabilities, DatabaseInfo, ProjectInfo } from '../../lib/hooks';
 import { clearEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../lib/token-cache';
 import { Database, Table2, X, Plus, Search, HardDrive, Upload, RefreshCw } from 'lucide-react';
 
@@ -260,6 +260,9 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const { data: capabilities, isLoading: capabilitiesLoading, error: capabilitiesError } = useStorageCapabilities();
   const [storageMode, setStorageMode] = useState<'namespace' | 'runtime' | 'local'>('runtime');
   const [storageModeTouched, setStorageModeTouched] = useState(false);
+  const [stage, setStage] = useState<'idle' | 'uploading' | 'processing'>('idle');
+  const [uploadProgress, setUploadProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
     if (!projectId && projects[0]?.id) {
@@ -276,6 +279,20 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
     }
   }, [capabilities, storageModeTouched]);
 
+  useEffect(() => {
+    if (!importing) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [importing]);
+
   const publicDomain = capabilities?.publicDomain || '';
   const publicHost = subdomain.trim() && publicDomain
     ? `${subdomain.trim()}.${publicDomain}`
@@ -284,6 +301,11 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const runtimeUnavailable = !capabilities?.runtime.available;
   const noPrimaryAvailable = namespaceUnavailable && runtimeUnavailable;
   const publicDomainMissing = !publicDomain || /localhost|127\.0\.0\.1/.test(publicDomain);
+  const maxUploadBytes = capabilities?.maxUploadBytes || 0;
+  const fileTooLarge = Boolean(file && maxUploadBytes > 0 && file.size > maxUploadBytes);
+  const uploadPercent = uploadProgress && uploadProgress.total > 0
+    ? Math.min(100, Math.round((uploadProgress.loaded / uploadProgress.total) * 100))
+    : null;
 
   function deriveNameFromFile(fileName: string) {
     return fileName.replace(/\.[^.]+$/, '').trim();
@@ -293,43 +315,16 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
     e.preventDefault();
     if (!projectId || importing) return;
 
-    if (!capabilities) {
-      setError('Storage capabilities are still loading. Try again in a moment.');
-      return;
-    }
-
-    if (storageMode === 'namespace' && !capabilities.namespace.usable) {
-      setError(capabilities.namespace.reason || 'Shared namespace is not available.');
-      return;
-    }
-
-    if (storageMode === 'runtime' && !capabilities.runtime.available) {
-      setError(capabilities.runtime.reason || 'Dedicated runtime is not available.');
-      return;
-    }
-
-    if (storageMode === 'local' && !capabilities.local.allowed) {
-      setError('LOCAL-FILE imports are disabled by policy.');
-      return;
-    }
-
-    if (storageMode === 'namespace' && !subdomain.trim()) {
-      setError('A fixed subdomain is required for a shared namespace.');
-      return;
-    }
-
-    if (mode === 'path' && !sourcePath.trim()) {
-      setError('Provide a server path to the .db file.');
-      return;
-    }
-
-    if (mode === 'file' && !file) {
-      setError('Choose a .db file to upload.');
+    const validationError = getImportBlockReason();
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
     setError('');
     setImporting(true);
+    setStage(mode === 'file' ? 'uploading' : 'processing');
+    setUploadProgress(mode === 'file' && file ? { loaded: 0, total: file.size } : null);
 
     try {
       if (mode === 'path') {
@@ -352,18 +347,63 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
         formData.append('storageMode', storageMode);
         if (file) formData.append('file', file);
 
-        const result = await apiRequest<{ database: { id: string; name: string }; token: string }>('/databases/import-upload', {
-          method: 'POST',
-          body: formData,
-        });
+        const result = await apiUpload<{ database: { id: string; name: string }; token: string }>(
+          '/databases/import-upload',
+          formData,
+          {
+            onProgress: (progress) => {
+              setUploadProgress(progress);
+              if (progress.total > 0 && progress.loaded >= progress.total) {
+                setStage('processing');
+              }
+            },
+            onUploadComplete: () => setStage('processing'),
+            timeoutMs: 30 * 60 * 1000,
+          },
+        );
         onSuccess(result.token, result.database.name, result.database.id);
       }
     } catch (err: any) {
       setError(err.message);
     } finally {
       setImporting(false);
+      setStage('idle');
+      setUploadProgress(null);
     }
   }
+
+  function getImportBlockReason(): string | null {
+    if (importing) return null;
+    if (capabilitiesLoading) return 'Checking available libSQL primaries...';
+    if (capabilitiesError) return 'Unable to read storage capabilities. Refresh the page and try again.';
+    if (!capabilities) return 'Storage capabilities are still loading. Try again in a moment.';
+    if (!projectId) return 'Select a project.';
+    if (mode === 'path' ? !sourcePath.trim() : !file) {
+      return mode === 'path' ? 'Provide a server path to the .db file.' : 'Choose a .db file to upload.';
+    }
+    if (fileTooLarge) {
+      const maxMb = Math.round(maxUploadBytes / (1024 * 1024));
+      return `This file is larger than the ${maxMb} MB upload limit. Use Server path for larger databases.`;
+    }
+    if (storageMode === 'namespace' && namespaceUnavailable) {
+      return capabilities.namespace.reason || 'Shared namespace is not available.';
+    }
+    if (storageMode === 'namespace' && !subdomain.trim()) {
+      return 'A fixed subdomain is required for a shared namespace.';
+    }
+    if (storageMode === 'runtime' && runtimeUnavailable) {
+      return capabilities.runtime.reason || 'Dedicated runtime is not available.';
+    }
+    if (storageMode === 'local' && !capabilities.local.allowed) {
+      return 'LOCAL-FILE imports are disabled by policy.';
+    }
+    if (storageMode !== 'local' && publicDomainMissing) {
+      return 'Configure the Wildcard domain in Settings before importing a libSQL primary.';
+    }
+    return null;
+  }
+
+  const submitBlockReason = getImportBlockReason();
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
@@ -414,7 +454,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
             <label className="w-20 text-sm font-medium text-zinc-300">Subdomain</label>
             <input
               type="text"
-              placeholder="leave blank to auto-generate"
+              placeholder={storageMode === 'namespace' ? 'required, e.g. erp-db' : 'leave blank to auto-generate'}
               value={subdomain}
               onChange={(e) => setSubdomain(e.target.value)}
               disabled={importing}
@@ -471,6 +511,11 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                   Legacy LOCAL-FILE only exposes the HTTP pipeline and cannot be used as TURSO_SYNC_URL.
                 </p>
               )}
+              {namespaceUnavailable && storageMode !== 'namespace' && (
+                <p className="text-amber-400">
+                  Shared sqld namespace unavailable: {capabilities?.namespace.reason || 'not configured.'}
+                </p>
+              )}
               {noPrimaryAvailable && (
                 <p className="text-red-400">
                   No libSQL primary is available. Configure sqld or the Docker socket before importing.
@@ -481,9 +526,19 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                   Wildcard domain is not configured. The public URL will use localhost and will not be usable.
                 </p>
               )}
+              {storageMode === 'runtime' && capabilities && !capabilities.runtimeTlsConfigured && (
+                <p className="text-amber-400">
+                  TRAEFIK_CERT_RESOLVER is not configured. The runtime HTTPS URL may fail until TLS is configured.
+                </p>
+              )}
               {storageMode !== 'local' && publicHost && (
                 <p className="text-zinc-500">
                   Public host: <code className="text-zinc-300">{publicHost}</code>
+                </p>
+              )}
+              {mode === 'file' && maxUploadBytes > 0 && (
+                <p className="text-zinc-500">
+                  Maximum upload size: {formatFileSize(maxUploadBytes)}. Use Server path for larger databases.
                 </p>
               )}
             </div>
@@ -499,21 +554,34 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
           </div>
 
           {mode === 'file' ? (
-            <div className="flex items-center gap-4">
-              <label className="w-20 text-sm font-medium text-zinc-300">File</label>
-              <input
-                type="file"
-                accept=".db,.sqlite,.sqlite3"
-                disabled={importing}
-                onChange={(e) => {
-                  const selectedFile = e.target.files?.[0] || null;
-                  setFile(selectedFile);
-                  if (selectedFile && !name.trim()) {
-                    setName(deriveNameFromFile(selectedFile.name));
-                  }
-                }}
-                className="flex-1 text-sm text-zinc-300 file:mr-4 file:px-3 file:py-2 file:rounded-md file:border-0 file:bg-zinc-100 file:text-zinc-900 hover:file:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-              />
+            <div className="space-y-2">
+              <div className="flex items-center gap-4">
+                <label className="w-20 text-sm font-medium text-zinc-300">File</label>
+                <input
+                  type="file"
+                  accept=".db,.db3,.sqlite,.sqlite3"
+                  disabled={importing}
+                  onChange={(e) => {
+                    const selectedFile = e.target.files?.[0] || null;
+                    setFile(selectedFile);
+                    if (selectedFile && !name.trim()) {
+                      setName(deriveNameFromFile(selectedFile.name));
+                    }
+                  }}
+                  className="flex-1 text-sm text-zinc-300 file:mr-4 file:px-3 file:py-2 file:rounded-md file:border-0 file:bg-zinc-100 file:text-zinc-900 hover:file:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </div>
+              {file && (
+                <p className="ml-24 text-xs text-zinc-500">
+                  {file.name} · {formatFileSize(file.size)}
+                  {uploadPercent !== null && stage === 'uploading' ? ` · uploading ${uploadPercent}%` : ''}
+                </p>
+              )}
+              {fileTooLarge && (
+                <p className="ml-24 text-xs text-amber-400">
+                  This file is larger than the upload limit. Use Server path instead.
+                </p>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-4">
@@ -530,17 +598,38 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
           )}
 
           {importing && (
-            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" role="status" aria-live="polite">
-              <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
-              <span>
-                {mode === 'file' && file
-                  ? `Uploading and importing ${file.name}${file.size > 0 ? ` (${formatFileSize(file.size)})` : ''} as ${storageMode}...`
-                  : `Importing database from the server path as ${storageMode}...`}
-                <span className="block text-zinc-500">
-                  This can take a moment for large files. Keep this window open.
-                  {storageMode === 'runtime' ? ' Dedicated runtimes can take up to a minute to provision.' : ''}
-                </span>
-              </span>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" role="status" aria-live="polite">
+              <div className="flex items-start gap-2">
+                <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p>
+                    {stage === 'uploading' && file
+                      ? `Uploading ${file.name} (${formatFileSize(file.size)})...`
+                      : storageMode === 'namespace'
+                        ? `Copying ${mode === 'file' ? file?.name || 'database' : sourcePath} into the shared namespace...`
+                        : `Creating the libSQL primary${mode === 'file' && file ? ` for ${file.name}` : ''}...`}
+                  </p>
+                  {stage === 'uploading' && uploadPercent !== null && uploadProgress && (
+                    <div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                        <div
+                          className="h-full rounded-full bg-emerald-400 transition-all duration-200"
+                          style={{ width: `${uploadPercent}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-zinc-500">
+                        {uploadPercent}% · {formatFileSize(uploadProgress.loaded)} of {formatFileSize(uploadProgress.total)}
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-zinc-500">
+                    {stage === 'uploading'
+                      ? 'Keep this window open while the file uploads.'
+                      : 'Usually a few seconds. Public route health is checked in the background.'}
+                  </p>
+                  <p className="text-zinc-600">Elapsed: {elapsedSeconds}s</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -548,23 +637,16 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
             <button type="button" onClick={onClose} disabled={importing} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40">Cancel</button>
             <button
               type="submit"
-              disabled={
-                importing
-                || capabilitiesLoading
-                || !capabilities
-                || !projectId
-                || (mode === 'path' ? !sourcePath.trim() : !file)
-                || (storageMode === 'namespace' && (namespaceUnavailable || !subdomain.trim()))
-                || (storageMode === 'runtime' && runtimeUnavailable)
-                || (storageMode === 'local' && !capabilities?.local.allowed)
-                || (storageMode !== 'local' && publicDomainMissing)
-              }
-              className="inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:cursor-wait disabled:opacity-50"
+              disabled={importing || Boolean(submitBlockReason)}
+              className={`inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50 ${importing ? 'cursor-wait' : 'disabled:cursor-not-allowed'}`}
             >
               {importing && <RefreshCw size={14} className="animate-spin" />}
               {importing ? 'Importing...' : 'Import Database'}
             </button>
           </div>
+          {!importing && submitBlockReason && (
+            <p className="text-right text-xs text-amber-400">{submitBlockReason}</p>
+          )}
         </form>
       </div>
     </div>
@@ -813,7 +895,7 @@ function CreateDatabaseModal({ projects, onClose, onSuccess, isCreating, createE
                 || (!legacyLocal && primaryMode === 'runtime' && runtimeUnavailable)
                 || (!legacyLocal && publicDomainMissing)
               }
-              className="inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:cursor-wait disabled:opacity-50"
+              className={`inline-flex items-center gap-2 bg-zinc-100 hover:bg-white text-zinc-900 font-medium px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50 ${busy ? 'cursor-wait' : 'disabled:cursor-not-allowed'}`}
             >
               {busy && <RefreshCw size={14} className="animate-spin" />}
               {busy ? 'Creating...' : 'Create Database'}

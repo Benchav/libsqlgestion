@@ -64,6 +64,7 @@ TRAEFIK_ENTRYPOINT=websecure
 - `LIBSQL_PRIMARY_MODE=runtime` makes new databases and imports provision a dedicated `libsql-server`.
 - `LIBSQL_RUNTIME_NETWORK` must be the network shared by the backend and Traefik (usually `coolify`). Without it, the runtime cannot be reached by container name or routed publicly; the backend now fails provisioning instead of creating it on the default `bridge` network.
 - `LIBSQL_PROVISION_ASYNC=false` makes the import wait for the container and return the real runtime JWT. If you keep it `true`, use **Rotate Token** after the database becomes active.
+- Imports wait only for the internal/backend URL. The public route is checked in the background, so DNS/TLS propagation no longer blocks the JWT response.
 
 Import the ERP database with a fixed subdomain, for example:
 

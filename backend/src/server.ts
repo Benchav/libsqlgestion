@@ -10,6 +10,13 @@ import { ValidationError } from './types/validations';
 import { getUserRoles } from './application/auth/authorization';
 import { analyticsCollector } from './application/analytics/AnalyticsCollector';
 
+const DEFAULT_MAX_UPLOAD_BYTES = 524288000;
+
+function getMaxUploadBytes() {
+  const configured = Number(process.env.MAX_UPLOAD_SIZE_BYTES || DEFAULT_MAX_UPLOAD_BYTES);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_UPLOAD_BYTES;
+}
+
 export function buildServer() {
   const app = fastify({ logger: true, trustProxy: true, ignoreTrailingSlash: true });
   const authService = new AuthService();
@@ -17,7 +24,7 @@ export function buildServer() {
   app.register(compress, { global: true });
   app.register(multipart, {
     limits: {
-      fileSize: Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000),
+      fileSize: getMaxUploadBytes(),
     },
   });
   app.register(securityPlugin);

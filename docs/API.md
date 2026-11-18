@@ -118,15 +118,38 @@ With the default policy, imports must target a libSQL primary; `local` is only
 allowed when `LIBSQL_ALLOW_LOCAL_FILE=true`. `auto` selects the configured
 primary and never falls back to `LOCAL-FILE` when `LIBSQL_REQUIRE_PRIMARY=true`.
 
+Server-side paths may belong to a live database, so they are copied with
+`VACUUM INTO`.
+
+### `POST /databases/import-upload`
+
+Multipart upload of a `.db` file. Fields: `projectId`, optional `name`,
+optional `subdomain`, `storageMode`, and `file`.
+
+- Uploads are staged under `IMPORT_STAGING_DIR` (default: `<data>/tmp`).
+- Uploaded files are already a closed snapshot, so they use a direct copy
+  instead of `VACUUM INTO`, which roughly halves import I/O.
+- The maximum size is `MAX_UPLOAD_SIZE_BYTES` (default 500 MB). Larger files
+  should use the server-path endpoint.
+- The response is returned after the primary accepts connections. Public route
+  health is checked in the background, so DNS/TLS propagation does not block
+  the import.
+
 ### `GET /databases/storage-capabilities`
 
-Returns the available primary modes, public domain/protocol, and whether the
-legacy local-file escape hatch is enabled. The panel uses it to build the
-create/import selectors.
+Returns the available primary modes, public domain/protocol, whether the
+legacy local-file escape hatch is enabled, and `maxUploadBytes`. The panel uses
+it to build the create/import selectors and to explain why a mode is disabled.
 
 ### `GET /databases/:id`
 
 Returns a single database record.
+
+### `POST /databases/:id/health-check`
+
+Re-checks the dedicated runtime's internal, backend and public URLs and stores
+the result in `metadata.runtime.routeHealth`. It does not rotate the token. This
+is used by the **Re-check** button in the database detail page.
 
 ### `PATCH /databases/:id/rotate-token`
 

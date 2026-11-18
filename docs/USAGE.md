@@ -176,8 +176,15 @@ primary fail instead of creating a legacy LOCAL-FILE database.
 What happens:
 
 - the file is copied into a libSQL runtime or namespace
+- uploaded files use a direct copy; live server paths use `VACUUM INTO`
 - the database is registered with a `libsql://` URL and JWT
 - the original source file is left untouched
+- public route health is checked in the background after the primary is ready
+
+For large databases, prefer the **Server path** mode. Uploading depends on your
+connection speed and is limited by `MAX_UPLOAD_SIZE_BYTES` (default 500 MB).
+Uploads are staged under `IMPORT_STAGING_DIR` (default `<data>/tmp`) so they do
+not cross filesystems.
 
 ## 8. Discover existing `.db` files from a mounted folder
 

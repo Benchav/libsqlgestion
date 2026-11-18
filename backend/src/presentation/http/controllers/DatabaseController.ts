@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import crypto from 'crypto';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
@@ -16,6 +15,7 @@ import { SqliteClient } from '../../../infrastructure/sqlite/SqliteClient';
 import { LibsqlNamespaceService } from '../../../infrastructure/libsql/LibsqlNamespaceService';
 import { presentDatabase } from '../database-presenter';
 import { analyticsCollector } from '../../../application/analytics/AnalyticsCollector';
+import { resolveImportStagingRoot, sanitizeUploadFileName } from '../upload-utils';
 
 function formatHranaValue(val: any) {
   if (val === null || val === undefined) return { type: 'null' };
@@ -98,54 +98,76 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const fields: Record<string, string> = {};
     let uploadedPath = '';
     let uploadedFileName = '';
+    let uploadedTempDir = '';
 
-    for await (const part of request.parts() as any) {
-      if (part.type === 'file') {
-        if (part.fieldname !== 'file') {
-          part.file.resume();
+    const cleanupUpload = async () => {
+      if (!uploadedTempDir) return;
+      const directory = uploadedTempDir;
+      uploadedTempDir = '';
+      await fs.promises.rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    };
+
+    try {
+      for await (const part of request.parts() as any) {
+        if (part.type === 'file') {
+          // Ignore extra file parts instead of leaking temporary directories.
+          if (part.fieldname !== 'file' || uploadedPath) {
+            part.file.resume();
+            continue;
+          }
+
+          const stagingRoot = resolveImportStagingRoot();
+          await fs.promises.mkdir(stagingRoot, { recursive: true });
+          uploadedTempDir = await fs.promises.mkdtemp(path.join(stagingRoot, 'upload-'));
+          uploadedFileName = sanitizeUploadFileName(part.filename);
+          uploadedPath = path.join(uploadedTempDir, uploadedFileName);
+          await pipeline(part.file, fs.createWriteStream(uploadedPath));
           continue;
         }
 
-        const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'libsqlite-upload-'));
-        uploadedFileName = part.filename || 'database.db';
-        uploadedPath = path.join(tempRoot, uploadedFileName);
-        await pipeline(part.file, fs.createWriteStream(uploadedPath));
-        continue;
+        if (typeof part.value === 'string') {
+          fields[part.fieldname] = part.value;
+        }
       }
 
-      if (typeof part.value === 'string') {
-        fields[part.fieldname] = part.value;
+      if (!fields.projectId || !uploadedPath) {
+        return reply.status(400).send({ error: 'projectId and file required' });
       }
-    }
 
-    if (!fields.projectId || !uploadedPath) {
-      return reply.status(400).send({ error: 'projectId and file required' });
-    }
+      const parsedStorageMode = storageModeSchema.safeParse(fields.storageMode || 'auto');
+      if (!parsedStorageMode.success) {
+        return reply.status(422).send({ error: 'storageMode must be auto, local, namespace or runtime' });
+      }
 
-    const parsedStorageMode = storageModeSchema.safeParse(fields.storageMode || 'auto');
-    if (!parsedStorageMode.success) {
-      return reply.status(422).send({ error: 'storageMode must be auto, local, namespace or runtime' });
-    }
+      const access = await ensureProjectAccess(request, reply, fields.projectId);
+      if (!access) return;
 
-    const access = await ensureProjectAccess(request, reply, fields.projectId);
-    if (!access) return;
-
-    try {
       const result = await databaseService.importExistingSqlite(fields.projectId, {
         name: fields.name,
         sourceName: uploadedFileName,
         sourcePath: uploadedPath,
         subdomain: fields.subdomain || undefined,
         storageMode: parsedStorageMode.data,
+        sourceIsUpload: true,
       });
+      await cleanupUpload();
       return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
-      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to import uploaded database' });
-    } finally {
-      if (uploadedPath) {
-        const tempDir = path.dirname(uploadedPath);
-        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      await cleanupUpload();
+      if (err?.code === 'FST_REQ_FILE_TOO_LARGE') {
+        const configured = Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000);
+        const maxBytes = Number.isFinite(configured) && configured > 0 ? configured : 524288000;
+        const maxMb = Math.round(maxBytes / (1024 * 1024));
+        return reply.status(413).send({
+          error: `File exceeds the maximum upload size (${maxMb} MB). Use Server path for larger databases or raise MAX_UPLOAD_SIZE_BYTES.`,
+        });
       }
+
+      return reply.status(err?.statusCode || 500).send({
+        error: err?.message || 'failed to import uploaded database',
+      });
+    } finally {
+      await cleanupUpload();
     }
   });
 
@@ -157,6 +179,21 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const database = await databaseService.getDatabase(id);
     if (!database) return reply.status(404).send({ error: 'database not found' });
     return reply.send({ database: presentDatabase(database) });
+  });
+
+  app.post('/databases/:id/health-check', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.read'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    try {
+      const database = await databaseService.refreshRuntimeHealth(id, { publicTimeoutMs: 5000 });
+      return reply.send({ database: presentDatabase(database) });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({
+        error: err?.message || 'failed to check runtime health',
+      });
+    }
   });
 
   app.patch('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {

@@ -141,6 +141,89 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   return response.json();
 }
 
+export type UploadProgress = {
+  loaded: number;
+  total: number;
+};
+
+type UploadOptions = {
+  onProgress?: (progress: UploadProgress) => void;
+  onUploadComplete?: () => void;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+};
+
+/**
+ * Upload a FormData body with real progress events. `fetch` does not expose
+ * upload progress in browsers, so this intentionally uses XMLHttpRequest.
+ */
+export async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  options: UploadOptions = {},
+): Promise<T> {
+  const send = () => new Promise<{ status: number; statusText: string; text: string }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_URL}${path}`);
+    xhr.withCredentials = true;
+    xhr.timeout = options.timeoutMs ?? 15 * 60 * 1000;
+
+    const headers = buildHeaders(undefined, formData, 'POST');
+    headers.forEach((value, key) => xhr.setRequestHeader(key, value));
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      options.onProgress?.({ loaded: event.loaded, total: event.total });
+    };
+    xhr.upload.onload = () => options.onUploadComplete?.();
+    xhr.onload = () => resolve({
+      status: xhr.status,
+      statusText: xhr.statusText,
+      text: xhr.responseText || '',
+    });
+    xhr.onerror = () => reject(new Error('Upload failed due to a network error. Check your connection and try again.'));
+    xhr.ontimeout = () => reject(new Error('Upload timed out. Use Server path for large databases or try again.'));
+    xhr.onabort = () => reject(new Error('Upload cancelled.'));
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      options.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+
+    xhr.send(formData);
+  });
+
+  let response = await send();
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      response = await send();
+    }
+  }
+
+  let payload: unknown = response.text;
+  if (response.text) {
+    try {
+      payload = JSON.parse(response.text);
+    } catch {
+      payload = response.text;
+    }
+  }
+
+  if (response.status < 200 || response.status >= 300) {
+    if (response.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      clearSession();
+      window.location.href = '/login';
+    }
+    throw new Error(normalizeErrorMessage(payload, response.statusText || 'Upload failed'));
+  }
+
+  return (payload && typeof payload === 'object' ? payload : {}) as T;
+}
+
 export function createApiHooks<TRead, TWrite = Partial<TRead>>(basePath: string) {
   const listPath = basePath;
   const itemPath = (id: string) => `${basePath}/${id}`;

@@ -16,6 +16,7 @@ const sourceFilePath = path.join(tempDir, 'fixtures', 'source.db');
 process.env.DATABASE_FILE = testDbPath;
 process.env.SQLITE_STORAGE_ROOT = storageRoot;
 process.env.SQLD_DATA_DIR = sqldDataDir;
+process.env.MAX_UPLOAD_SIZE_BYTES = '1048576';
 process.env.MASTER_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 process.env.DATABASE_PUBLIC_DOMAIN = 'data.example.com';
 process.env.DATABASE_PUBLIC_PROTOCOL = 'https';
@@ -114,6 +115,7 @@ test.describe('libSQL-first storage policy', () => {
     assert.equal(body.local.allowed, false);
     assert.equal(body.requirePrimary, true);
     assert.equal(body.defaultMode, null);
+    assert.equal(body.maxUploadBytes, 1048576);
   });
 
   test('refuses to create a libSQL database when no primary is available', async () => {
@@ -217,6 +219,49 @@ test.describe('libSQL-first storage policy', () => {
       assert.equal(body.database.type, 'sqlite');
       assert.equal(body.database.runtimeProvider, 'local-file');
       assert.equal(body.database.syncUrl, '');
+    } finally {
+      process.env.LIBSQL_ALLOW_LOCAL_FILE = 'false';
+      process.env.LIBSQL_REQUIRE_PRIMARY = 'true';
+    }
+  });
+
+  test('uploaded imports sanitize the filename and clean their staging directory', async () => {
+    process.env.LIBSQL_ALLOW_LOCAL_FILE = 'true';
+    process.env.LIBSQL_REQUIRE_PRIMARY = 'false';
+
+    try {
+      const boundary = '----libsqlite-test-boundary';
+      const fileContent = fs.readFileSync(sourceFilePath);
+      const payload = Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="projectId"\r\n\r\n${projectId}\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="name"\r\n\r\nuploaded-local\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="storageMode"\r\n\r\nlocal\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="../../escape.db"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+        fileContent,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/databases/import-upload',
+        headers: {
+          cookie: cookieHeader,
+          'x-csrf-token-v2': csrfToken,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+          'content-length': String(payload.length),
+        },
+        payload,
+      });
+
+      assert.equal(res.statusCode, 201, res.payload);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.database.name, 'uploaded-local');
+      assert.equal(body.database.metadata.sourceName, 'escape.db');
+      assert.equal(body.database.metadata.sourcePath, null);
+
+      const stagingRoot = path.join(tempDir, 'tmp');
+      const leftovers = fs.existsSync(stagingRoot) ? fs.readdirSync(stagingRoot) : [];
+      assert.deepEqual(leftovers, []);
     } finally {
       process.env.LIBSQL_ALLOW_LOCAL_FILE = 'false';
       process.env.LIBSQL_REQUIRE_PRIMARY = 'true';

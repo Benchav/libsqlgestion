@@ -11,6 +11,18 @@ TURSO_SYNC_INTERVAL=60
 
 That setup needs a real libSQL server for `TURSO_SYNC_URL`. A `LOCAL-FILE` database only exposes the backend HTTP pipeline; it does not implement the replication protocol used by embedded replicas.
 
+LibSQLite supports two kinds of real primary:
+
+1. a dedicated `libsql-server` runtime, normally published as `libsql://erp-db.example.com`;
+2. a shared `sqld` namespace, published as `libsql://erp-db.example.com` (the first DNS label must match the namespace).
+
+Both work with embedded replicas. Use the dedicated runtime when you want one container per database; use the shared namespace when you already run the `sqld` service from `docker-compose.yml`.
+
+> **Important:** embedded replica sync selects the namespace from the host header
+> (first DNS label) or the `x-namespace` header, not from the `/dev/<namespace>/`
+> URL path. A path-based URL such as `https://panel.example.com/dev/erp-db/`
+> works for HTTP pipeline clients but **cannot** be used as `TURSO_SYNC_URL`.
+
 ## Recommended topology
 
 For one ERP database, use a dedicated `libsql-server` runtime with a fixed subdomain:
@@ -21,7 +33,10 @@ Database:    libsql://erp-db.example.com
 Replica:     file:/persistent/erp.db
 ```
 
-Do not use a two-level DB host such as `erp-db.data.example.com` on Cloudflare Free; the normal certificate only covers one wildcard level under the root domain.
+Cloudflare Universal SSL does not cover a two-level DB host such as
+`erp-db.data.example.com`. For that shape, let Traefik issue a per-host
+certificate with the DNS record set to DNS-only, or use an advanced/wildcard
+certificate. The shared-namespace section below uses the per-host Traefik route.
 
 ## 1. LibSQLite configuration
 
@@ -34,6 +49,11 @@ LIBSQL_NAMESPACE_IMPORTS=false
 LIBSQL_IMPORT_RUNTIME=true
 LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=31536000
 SQLD_PUBLIC_DOMAIN=
+
+# TLS labels applied to dynamically created dedicated runtimes.
+# Use the resolver name configured in your Traefik/Coolify instance.
+TRAEFIK_CERT_RESOLVER=letsencrypt
+TRAEFIK_ENTRYPOINT=websecure
 ```
 
 - `DATABASE_PUBLIC_DOMAIN` is the parent used for the runtime URL (`erp-db.example.com`).
@@ -92,6 +112,67 @@ TURSO_AUTH_TOKEN=<JWT>
 ```
 
 Remote-only is simpler, but it loses the local replica and the ERP's degraded-local-read mode.
+
+## Shared `sqld` namespace (host-based alternative)
+
+If you deploy the whole project with the included `docker-compose.yml`, the
+`sqld` service is already a real primary. You can publish a namespace on its own
+host:
+
+```text
+Panel:      https://data.example.com
+Database:   libsql://erp-db.data.example.com
+Replica:    file:/persistent/erp.db
+```
+
+The **first DNS label must match the namespace** (`erp-db`). This is how the
+libSQL replication client selects the namespace; the `/dev/<namespace>/` path is
+only used by HTTP pipeline clients.
+
+Backend environment:
+
+```env
+LIBSQL_NAMESPACE_IMPORTS=true
+LIBSQL_CONVERSION_MODE=namespace
+DATABASE_PUBLIC_DOMAIN=data.example.com
+DATABASE_PUBLIC_PROTOCOL=https
+```
+
+Compose/Traefik environment:
+
+```env
+# Exact host routed to the shared sqld container, with a normal certificate.
+LIBSQL_NAMESPACE_HOST=erp-db.data.example.com
+TRAEFIK_CERT_RESOLVER=letsencrypt
+TRAEFIK_ENTRYPOINT=websecure
+```
+
+The compose file adds a `sqld-namespace` router for that exact host with TLS.
+For multiple namespaces, add one exact router per host or configure a wildcard
+certificate for `*.data.example.com`.
+
+If you use a **dedicated runtime** instead, leave `LIBSQL_NAMESPACE_HOST` empty
+and leave `SQLD_PUBLIC_DOMAIN` empty so the shared `sqld` routers do not capture
+the runtime hostname.
+
+After converting/importing the database, use the namespace URL in the ERP:
+
+```env
+TURSO_DATABASE_URL=file:/persistent/erp.db
+TURSO_SYNC_URL=libsql://erp-db.data.example.com
+TURSO_AUTH_TOKEN=<JWT from the panel>
+TURSO_SYNC_INTERVAL=60
+```
+
+Validate it with the embedded test before switching production:
+
+```bash
+cd backend
+npm run test:external -- libsql://erp-db.data.example.com "<JWT>" --embedded
+```
+
+If the shared-namespace host is not suitable, use the dedicated runtime
+topology above instead.
 
 ## 4. Migrate data before switching
 

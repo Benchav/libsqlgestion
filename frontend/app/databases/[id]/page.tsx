@@ -23,6 +23,8 @@ type DatabaseDetail = {
   publicConnectionUrl?: string;
   publicHttpsUrl?: string;
   publicLibsqlUrl?: string;
+  syncUrl?: string;
+  embeddedReplicaSupported?: boolean;
   internalConnectionUrl?: string;
   internalLibsqlUrl?: string;
   backendConnectionUrl?: string;
@@ -126,12 +128,12 @@ export default function DatabaseDetailPage() {
     }
   }
 
-  async function handleConvertToRuntime(event: React.FormEvent) {
+  async function handleConvertToPublic(event: React.FormEvent) {
     event.preventDefault();
     setConvertError('');
     setIsConverting(true);
     try {
-      const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/convert-to-runtime`, {
+      const result = await apiRequest<{ database: DatabaseDetail; token: string }>(`/databases/${id}/convert-to-public`, {
         method: 'POST',
         body: JSON.stringify({ subdomain: convertSubdomain.trim() || undefined }),
       });
@@ -254,12 +256,22 @@ export default function DatabaseDetailPage() {
 
   const publicUrl = database?.publicHttpsUrl || database?.publicConnectionUrl || '';
   const publicLibsqlUrl = database?.publicLibsqlUrl || '';
+  const syncUrl = database?.syncUrl || '';
   const internalUrl = database?.internalLibsqlUrl || database?.internalConnectionUrl || database?.url || '';
   const backendUrl = database?.backendReachableUrl || database?.backendConnectionUrl || internalUrl || database?.url || '';
   const serverUrl = publicLibsqlUrl || publicUrl || backendUrl;
   const runtimeLabel = getRuntimeLabel(database?.metadata);
   const envSnippet = serverUrl && revealedToken
     ? `# Preferred libSQL connection\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}${publicUrl ? `\n\n# HTTPS fallback\nDATABASE_HTTPS_URL=${publicUrl}` : ''}`
+    : '';
+  const localReplicaName = (database?.name || 'database')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'database';
+  const embeddedSnippet = database?.embeddedReplicaSupported && syncUrl
+    ? `# Embedded replica (ERP)\nTURSO_DATABASE_URL=file:/persistent/${localReplicaName}.db\nTURSO_SYNC_URL=${syncUrl}\nTURSO_AUTH_TOKEN=${revealedToken || '<JWT>'}\nTURSO_SYNC_INTERVAL=60`
     : '';
 
   if (!database && !error) {
@@ -517,6 +529,26 @@ export default function DatabaseDetailPage() {
                   </div>
                 )}
 
+                {syncUrl && (
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Sync URL (TURSO_SYNC_URL)</label>
+                    <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
+                      <code className="flex-1 break-all whitespace-normal">{syncUrl}</code>
+                      <button
+                        type="button"
+                        onClick={() => copyText(syncUrl, 'sync-url')}
+                        className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors"
+                      >
+                        {copiedKey === 'sync-url' ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedKey === 'sync-url' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      Use this URL with <code className="text-zinc-400">TURSO_DATABASE_URL=file:...</code> in the ERP.
+                    </p>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Internal URL</label>
                   <div className="flex items-center gap-3 border border-zinc-800 bg-[#050505] rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto custom-scrollbar">
@@ -644,6 +676,37 @@ export default function DatabaseDetailPage() {
                      Prefer the public libSQL URL only when the effective type is `LIBSQL`. If the runtime shows `local-file`, the base is still operating as a local SQLite database.
                   </p>
                 </div>
+
+                {database?.embeddedReplicaSupported && syncUrl && (
+                  <div>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">Embedded replica snippet (ERP)</label>
+                      <button
+                        type="button"
+                        onClick={() => copyText(embeddedSnippet, 'embedded-snippet')}
+                        disabled={!embeddedSnippet}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors disabled:opacity-40"
+                      >
+                        {copiedKey === 'embedded-snippet' ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedKey === 'embedded-snippet' ? 'Copied' : 'Copy snippet'}
+                      </button>
+                    </div>
+                    <pre className="bg-[#050505] border border-zinc-800 rounded-lg p-4 overflow-x-auto text-xs font-mono text-zinc-300 custom-scrollbar whitespace-pre-wrap">
+{embeddedSnippet}
+                    </pre>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      This keeps a local file in the ERP and syncs against this self-hosted libSQL primary. Reveal the token to fill in the JWT.
+                    </p>
+                  </div>
+                )}
+
+                {database?.runtimeProvider === 'local-file' && (
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
+                    This database is <strong>LOCAL-FILE</strong>. It only exposes the HTTP pipeline and does
+                    not implement libSQL replication, so it cannot be used as <code>TURSO_SYNC_URL</code>.
+                    Convert it to a libSQL namespace/runtime to use an embedded replica.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -798,7 +861,7 @@ await client.execute(\`
               </div>
             )}
 
-            <form onSubmit={handleConvertToRuntime} className="space-y-4">
+            <form onSubmit={handleConvertToPublic} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-zinc-300 mb-2">Subdomain</label>
                 <input
@@ -809,16 +872,18 @@ await client.execute(\`
                   className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none"
                 />
                 <p className="mt-2 text-xs text-zinc-500">
-                  The final URL is built from the backend's DATABASE_PUBLIC_DOMAIN. Use a fixed subdomain such as mydb-db.
+                  The final URL is built by the backend: a shared sqld namespace host under
+                  <code className="mx-1 text-zinc-400">DATABASE_PUBLIC_DOMAIN</code>, or a dedicated
+                  runtime host. The first DNS label must match the namespace for embedded replicas.
                 </p>
               </div>
 
               <div className="rounded-lg border border-zinc-800 bg-[#050505] p-3 text-xs text-zinc-400">
                 <p className="font-medium text-zinc-300">Before converting:</p>
                 <ul className="mt-2 list-disc space-y-1 pl-4">
-                  <li>Configure DATABASE_PUBLIC_DOMAIN and DNS/TLS for the host.</li>
+                  <li>Configure the public routing and TLS for the resulting URL.</li>
                   <li>The current local file is kept as a backup.</li>
-                  <li>Clients must switch to the new libsql:// URL and JWT.</li>
+                  <li>Clients must switch to the new sync URL and JWT.</li>
                 </ul>
               </div>
 
@@ -835,7 +900,7 @@ await client.execute(\`
                   disabled={isConverting}
                   className="rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-white disabled:opacity-50"
                 >
-                  {isConverting ? 'Creating libSQL runtime...' : 'Convert to libSQL'}
+                  {isConverting ? 'Creating public libSQL endpoint...' : 'Convert to libSQL'}
                 </button>
               </div>
             </form>

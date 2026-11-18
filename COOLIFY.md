@@ -74,6 +74,14 @@ SNAPSHOT_VERIFY_ON_RESTORE=true
 # true  = require sqld and fail the import when it is unavailable
 LIBSQL_NAMESPACE_IMPORTS=false
 LIBSQL_IMPORT_RUNTIME=false
+
+# Shared sqld namespace (host-based, required for embedded replicas)
+LIBSQL_CONVERSION_MODE=runtime
+# Compose-only: exact public host; first label must match the namespace
+LIBSQL_NAMESPACE_HOST=
+# Traefik TLS for dedicated runtimes or the exact shared-namespace router
+TRAEFIK_CERT_RESOLVER=
+TRAEFIK_ENTRYPOINT=websecure
 ```
 
 Notes:
@@ -95,6 +103,7 @@ Notes:
 - `LIBSQL_NAMESPACE_IMPORTS=false` keeps imports local by default. Use `auto` to try the namespace when `sqld` is reachable, or `true` to require it.
 - If you enable `LIBSQL_ADMIN_URL` or `LIBSQL_ENABLE_NAMESPACES=true`, the `sqld` container must exist, be reachable as `sqld` from the backend, and share the same `/var/lib/sqld` volume. Otherwise imports will fail or fall back to local storage depending on `LIBSQL_NAMESPACE_IMPORTS`.
 - If you use `sqld` namespaces, set **both** `DATABASE_PUBLIC_DOMAIN` and `SQLD_PUBLIC_DOMAIN` to a dedicated parent domain for databases (for example `db.example.com`) and keep that domain separate from the domains used by applications.
+- For an embedded replica against a shared namespace, the namespace URL must be host-based (`libsql://erp-db.data.example.com`). Set `LIBSQL_NAMESPACE_HOST` to that exact host and `TRAEFIK_CERT_RESOLVER` so the `sqld-namespace` router can issue its certificate. The `/dev/<namespace>/` path is only for HTTP pipeline clients.
 - For `LOCAL-FILE` databases, set `DATABASE_PUBLIC_BASE_URL` (or the panel's **Base URL** field) to the public HTTPS base URL of the backend so the generated URL is reachable by external clients.
 - The panel should remain the source of truth for URL, token, and runtime details; the repository should only ship placeholders.
 

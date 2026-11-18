@@ -342,6 +342,28 @@ export class LibsqlRuntimeService {
     const authPemPath = path.join(dbRootDir, 'auth.pem');
     await fs.promises.writeFile(authPemPath, authKeyPem, 'utf8');
 
+    const routerName = `traefik.http.routers.${paths.containerName}`;
+    const certResolver = process.env.TRAEFIK_CERT_RESOLVER?.trim();
+    const entrypoint = process.env.TRAEFIK_ENTRYPOINT?.trim();
+    const labels: Record<string, string> = {
+      'libsqlite.managed': 'true',
+      'libsqlite.container-name': paths.containerName,
+      'traefik.enable': 'true',
+      ...(networkName ? { 'traefik.docker.network': networkName } : {}),
+      [`${routerName}.rule`]: `Host(\`${paths.subdomain}.${this.getPublicDomain()}\`)`,
+      [`traefik.http.services.${paths.containerName}.loadbalancer.server.port`]: '8080',
+    };
+
+    // Opt-in TLS for dedicated runtimes. The shared sqld namespace uses its
+    // own router labels in docker-compose.yml.
+    if (certResolver) {
+      labels[`${routerName}.tls`] = 'true';
+      labels[`${routerName}.tls.certresolver`] = certResolver;
+      if (entrypoint) {
+        labels[`${routerName}.entrypoints`] = entrypoint;
+      }
+    }
+
     const createResponse = await this.requestJson('POST', `/containers/create?name=${encodeURIComponent(paths.containerName)}`, {
       Image: this.image,
       Env: [
@@ -372,13 +394,7 @@ export class LibsqlRuntimeService {
             },
           }
         : undefined,
-      Labels: {
-        'libsqlite.managed': 'true',
-        'libsqlite.container-name': paths.containerName,
-        'traefik.enable': 'true',
-        [`traefik.http.routers.${paths.containerName}.rule`]: `Host(\`${paths.subdomain}.${this.getPublicDomain()}\`)`,
-        [`traefik.http.services.${paths.containerName}.loadbalancer.server.port`]: '8080',
-      },
+      Labels: labels,
     });
 
     const containerId = createResponse.Id as string | undefined;

@@ -16,6 +16,7 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
   const runtimeProvider = getRuntimeProvider(database);
   const effectiveType = resolveEffectiveDatabaseType(database);
   const runtimeStatus = typeof database.status === 'string' ? database.status : 'inactive';
+  const embeddedReplicaSupported = runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace';
 
   return {
     ...database,
@@ -25,6 +26,10 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
     publicConnectionUrl: urls.publicHttpsUrl,
     publicHttpsUrl: urls.publicHttpsUrl,
     publicLibsqlUrl: urls.publicLibsqlUrl,
+    // `TURSO_SYNC_URL` for an embedded replica. Empty for LOCAL-FILE because
+    // that mode only implements the HTTP pipeline, not libSQL replication.
+    syncUrl: embeddedReplicaSupported ? (urls.syncUrl || urls.publicHttpsUrl || urls.publicLibsqlUrl || '') : '',
+    embeddedReplicaSupported,
     internalConnectionUrl: urls.internalUrl,
     internalLibsqlUrl: urls.internalUrl,
     backendConnectionUrl: urls.backendUrl,

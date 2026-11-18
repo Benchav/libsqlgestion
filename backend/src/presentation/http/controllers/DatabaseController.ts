@@ -265,6 +265,36 @@ export default async function databaseRoutes(app: FastifyInstance) {
     }
   });
 
+  // Preferred entry point for the panel. LIBSQL_CONVERSION_MODE decides
+  // between the shared sqld namespace (no Docker) and a dedicated runtime.
+  app.post('/databases/:id/convert-to-public', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    const body = parseAndValidate(convertToRuntimeSchema, request.body || {}, 'convert to public libSQL');
+    try {
+      const result = await databaseService.convertLocalDatabaseToPublic(id, body);
+      return reply.send({ database: presentDatabase(result.database), token: result.token });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to public libSQL' });
+    }
+  });
+
+  app.post('/databases/:id/convert-to-namespace', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    const body = parseAndValidate(convertToRuntimeSchema, request.body || {}, 'convert to namespace');
+    try {
+      const result = await databaseService.convertLocalDatabaseToNamespace(id, body);
+      return reply.send({ database: presentDatabase(result.database), token: result.token });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({ error: err?.message || 'failed to convert database to sqld namespace' });
+    }
+  });
+
   app.post('/databases/:id/backup', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;

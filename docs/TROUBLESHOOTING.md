@@ -45,6 +45,51 @@ https://libsql.example.com/api/v1/databases/<id>/
 
 The wildcard domain setting is only used by `sqld` namespaces, not by `LOCAL-FILE` databases.
 
+## Embedded replica fails with `Invalid header bit 123 expected 0 or 1`
+
+This error comes from the libSQL replication client, not from SQLite or the token.
+The first byte of the response is `{` (ASCII 123), because the sync request hit a
+JSON endpoint instead of a binary libSQL replication stream.
+
+The usual cause is using a `LOCAL-FILE` URL as `TURSO_SYNC_URL`:
+
+```env
+# Wrong: this is the HTTP pipeline shim, not a libSQL primary
+TURSO_SYNC_URL=https://panel.example.com/api/v1/databases/<id>/
+```
+
+Use a real primary instead:
+
+```env
+# Dedicated runtime
+TURSO_SYNC_URL=libsql://erp-db.example.com
+
+# Shared sqld namespace (first label must match the namespace)
+TURSO_SYNC_URL=libsql://erp-db.example.com
+```
+
+The `/dev/<namespace>/` path is only valid for HTTP pipeline clients. Embedded
+replica sync selects the namespace from the host header or `x-namespace`, not
+from the URL path.
+
+Validate before switching the ERP:
+
+```bash
+cd backend
+npm run test:external -- libsql://erp-db.example.com "<JWT>" --embedded
+```
+
+The host's first DNS label must equal the namespace. For example, namespace
+`erp-db` must be used as `libsql://erp-db.data.example.com`, never as
+`libsql://data.example.com/dev/erp-db/`. A mismatch usually surfaces as
+`NamespaceDoesntExist` during the replication handshake.
+
+If the namespace host shows `TRAEFIK DEFAULT CERT`, Traefik has not issued a
+certificate for that hostname. Set `LIBSQL_NAMESPACE_HOST` to the exact host and
+`TRAEFIK_CERT_RESOLVER` to the resolver used by your Traefik (usually
+`letsencrypt`), then redeploy the compose stack. For multiple namespaces, use a
+wildcard certificate or one exact router per host.
+
 ## Imports fail with `fetch failed: getaddrinfo EAI_AGAIN sqld`
 
 This means the backend tried to reach the `sqld` namespace service but Docker DNS could not resolve the hostname `sqld`.

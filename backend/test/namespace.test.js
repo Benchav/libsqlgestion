@@ -138,4 +138,5 @@ test.describe('LibsqlNamespaceService Multitenancy Tests', () => {
 
     assert.equal(url, 'http://sqld:8080/dev/legacy-namespace/');
   });
+
 });

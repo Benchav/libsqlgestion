@@ -165,6 +165,52 @@ test.describe('SQLite import when sqld is unavailable', () => {
     }
   });
 
+  test('convert-to-public fails cleanly when the namespace conversion is requested but sqld is down', async () => {
+    process.env.LIBSQL_NAMESPACE_IMPORTS = 'false';
+    const importRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/databases/import-sqlite',
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+      payload: {
+        projectId,
+        name: 'namespace-conversion-source',
+        sourcePath: sourceFilePath,
+      },
+    });
+    assert.equal(importRes.statusCode, 201, importRes.payload);
+    const imported = JSON.parse(importRes.payload);
+    assert.equal(imported.database.type, 'sqlite');
+
+    const previousMode = process.env.LIBSQL_CONVERSION_MODE;
+    process.env.LIBSQL_CONVERSION_MODE = 'namespace';
+    try {
+      const convertRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/databases/${imported.database.id}/convert-to-public`,
+        headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+        payload: { subdomain: 'namespace-conversion-target' },
+      });
+
+      assert.equal(convertRes.statusCode, 503, convertRes.payload);
+      const body = JSON.parse(convertRes.payload);
+      assert.match(body.error, /sqld no está disponible|sqld is not available/i);
+
+      const detailRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/databases/${imported.database.id}`,
+        headers: { cookie: cookieHeader },
+      });
+      assert.equal(detailRes.statusCode, 200, detailRes.payload);
+      const detail = JSON.parse(detailRes.payload).database;
+      assert.equal(detail.type, 'sqlite');
+      assert.equal(detail.runtimeProvider, 'local-file');
+    } finally {
+      if (previousMode === undefined) delete process.env.LIBSQL_CONVERSION_MODE;
+      else process.env.LIBSQL_CONVERSION_MODE = previousMode;
+      process.env.LIBSQL_NAMESPACE_IMPORTS = 'auto';
+    }
+  });
+
   test('convert-to-local repairs an existing sqld namespace record', async () => {
     const project = await AppDataSource.getRepository(Project).findOneByOrFail({ id: projectId });
     const subdomain = `legacy-namespace-${Date.now()}`;

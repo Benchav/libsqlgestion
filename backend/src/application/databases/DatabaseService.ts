@@ -13,7 +13,7 @@ import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorage
 import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { LibsqlNamespaceService } from '../../infrastructure/libsql/LibsqlNamespaceService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
-import { getRuntimeConnectionUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
+import { getRuntimeConnectionUrl, isRemoteDatabaseUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
 
 export class NamespaceUnavailableError extends Error {
   statusCode = 503;
@@ -457,6 +457,180 @@ export class DatabaseService {
       throw error;
     }
   }
+  /**
+   * Publica una base LOCAL-FILE en el sqld compartido usando un namespace.
+   *
+   * Es el equivalente a `convertLocalDatabaseToRuntime`, pero sin Docker:
+   * copia el archivo con VACUUM INTO al path del namespace, registra el
+   * namespace en el admin de sqld y entrega un JWT con scope `ns`.
+   *
+   * La base local original NO se borra. La ruta original queda en
+   * `previousLocalPath` para rollback/auditoría.
+   */
+  async convertLocalDatabaseToNamespace(id: string, input: { subdomain?: string } = {}) {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) {
+      const error: any = new Error('database not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!this.namespaceService.isEnabled()) {
+      const error: any = new Error(
+        'sqld namespaces are not configured. Set LIBSQL_ADMIN_URL or LIBSQL_ENABLE_NAMESPACES=true.',
+      );
+      error.statusCode = 503;
+      throw error;
+    }
+
+    if (!(await this.namespaceService.isAvailable())) {
+      throw new NamespaceUnavailableError(
+        'sqld is not available. Verify that the sqld container is running and reachable through LIBSQL_ADMIN_URL.',
+      );
+    }
+
+    if (resolveEffectiveDatabaseType(database) !== 'sqlite' || database.type === 'remote' || isRemoteDatabaseUrl(database.url)) {
+      const error: any = new Error('Only LOCAL-FILE SQLite databases can be converted to a sqld namespace');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const sourcePath = (database.url && fs.existsSync(database.url))
+      ? database.url
+      : this.storageService.managedDatabasePath(database.project.id, database.id, 'sqlite');
+
+    if (!fs.existsSync(sourcePath)) {
+      const error: any = new Error(`local SQLite file not found at ${sourcePath}`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const subdomain = input.subdomain
+      ? assertValidSubdomainLabel(input.subdomain)
+      : database.subdomain || ensureSubdomain(database.name, randomToken());
+
+    const existing = await this.databaseRepo.findOne({ where: { subdomain } });
+    if (existing && existing.id !== database.id) {
+      const error: any = new Error(`subdomain "${subdomain}" is already in use`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // Never overwrite an existing namespace file. If a previous attempt left
+    // an orphan, the operator must choose another subdomain or clean it up
+    // manually; silently replacing it could destroy data.
+    const namespacePath = this.storageService.namespaceDatabasePath(subdomain);
+    if (fs.existsSync(namespacePath)) {
+      const error: any = new Error(
+        `a sqld namespace file already exists for "${subdomain}" at ${namespacePath}. ` +
+        'Choose another subdomain or remove the orphan before converting.',
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // importToNamespace uses VACUUM INTO, so committed WAL contents are
+    // included even while the old local client is still open.
+    await this.storageService.importToNamespace(sourcePath, subdomain);
+
+    const namespace = await this.namespaceService.createNamespace(subdomain);
+    if (!namespace.ok) {
+      // The local source is untouched. The imported copy is intentionally left
+      // for inspection; deleting it here could race with an existing namespace.
+      console.error(
+        `[DatabaseService] Namespace "${subdomain}" was imported but could not be registered in sqld. ` +
+        `Source remains at ${sourcePath}; imported path: ${namespacePath}.`,
+        namespace.error,
+      );
+      throw new NamespaceUnavailableError(
+        `No se pudo crear el namespace "${subdomain}" en sqld: ${namespace.error || 'error desconocido'}`,
+      );
+    }
+
+    const token = this.namespaceService.generateToken(subdomain);
+    const urls = this.namespaceService.buildNamespaceUrls(subdomain);
+
+    try {
+      await this.verifyNamespaceConnection(subdomain, token);
+    } catch (error) {
+      console.error(
+        `[DatabaseService] Namespace "${subdomain}" was created but failed verification. ` +
+        `Source remains at ${sourcePath}; imported path: ${namespacePath}.`,
+        error,
+      );
+      throw error;
+    }
+
+    database.subdomain = subdomain;
+    database.type = 'libsql';
+    database.status = 'active';
+    database.url = urls.connectionUrl;
+    database.encryptedToken = encrypt(token);
+    database.metadata = {
+      ...mergeRuntimeMetadata(database.metadata, {
+        provider: 'sqld-namespace',
+        namespace: subdomain,
+        connectionUrl: urls.connectionUrl,
+        internalUrl: urls.internalUrl,
+        backendUrl: urls.backendUrl,
+        publicUrl: urls.publicUrl,
+        publicHost: urls.publicHost,
+      }),
+      convertedFromLocal: true,
+      convertedAt: new Date().toISOString(),
+      previousLocalPath: sourcePath,
+    };
+    await this.databaseRepo.save(database);
+    ConnectionPool.getInstance().evict(database.id);
+
+    await this.auditService.record({
+      action: 'database.convert_to_namespace',
+      resourceType: 'database',
+      resourceId: database.id,
+      metadata: {
+        projectId: database.project.id,
+        subdomain,
+        sourcePath,
+        namespacePath,
+        runtime: 'sqld-namespace',
+      },
+    });
+
+    return { database, token };
+  }
+
+  /**
+   * Publica una base LOCAL-FILE en el primario libSQL configurado.
+   *
+   * LIBSQL_CONVERSION_MODE=namespace usa sqld compartido; runtime usa un
+   * contenedor dedicado; auto prefiere namespace cuando está disponible.
+   * El valor por defecto es runtime para no cambiar instalaciones existentes.
+   */
+  async convertLocalDatabaseToPublic(id: string, input: { subdomain?: string } = {}) {
+    const mode = String(process.env.LIBSQL_CONVERSION_MODE || 'runtime').trim().toLowerCase();
+
+    if (mode === 'namespace' || mode === 'sqld' || mode === 'path') {
+      return this.convertLocalDatabaseToNamespace(id, input);
+    }
+
+    if (mode === 'auto') {
+      if (this.namespaceService.isEnabled() && await this.namespaceService.isAvailable()) {
+        return this.convertLocalDatabaseToNamespace(id, input);
+      }
+      return this.convertLocalDatabaseToRuntime(id, input);
+    }
+
+    if (mode === 'runtime' || mode === 'docker') {
+      return this.convertLocalDatabaseToRuntime(id, input);
+    }
+
+    const error: any = new Error(
+      `Invalid LIBSQL_CONVERSION_MODE "${mode}". Use namespace, runtime or auto.`,
+    );
+    error.statusCode = 500;
+    throw error;
+  }
+
   async reconcileLegacyDatabases() {
     const databases = await this.databaseRepo.find();
     let reconciled = 0;
@@ -657,7 +831,9 @@ export class DatabaseService {
 
     const project = sourceDatabase.project;
 
-    const sourcePath = sourceDatabase.url || this.storageService.managedDatabasePath(project.id, sourceDatabase.id, sourceDatabase.type);
+    // Namespace databases keep their SQLite file at the sqld data path, not
+    // at database.url (which is an HTTP endpoint).
+    const sourcePath = await this.getDatabaseFilePath(sourceId);
     if (!fs.existsSync(sourcePath)) {
       throw new Error('source database file not found on disk');
     }
@@ -721,6 +897,15 @@ export class DatabaseService {
   async getDatabaseFilePath(id: string): Promise<string> {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
+
+    const runtime = database.metadata?.runtime as { provider?: unknown } | undefined;
+    if (runtime?.provider === 'sqld-namespace' && database.subdomain) {
+      const namespacePath = this.storageService.namespaceDatabasePath(database.subdomain);
+      if (fs.existsSync(namespacePath)) {
+        return namespacePath;
+      }
+    }
+
     const managedPath = this.storageService.managedDatabasePath(database.project.id, database.id, database.type);
     return (database.url && fs.existsSync(database.url)) ? database.url : managedPath;
   }

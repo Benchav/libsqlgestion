@@ -16,6 +16,7 @@ type ConnectionUrls = {
   publicLibsqlUrl: string;
   internalUrl: string;
   backendUrl: string;
+  syncUrl?: string;
 };
 
 function slugify(value: string) {
@@ -83,6 +84,9 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
       publicLibsqlUrl: libsqlPublicUrl,
       internalUrl: runtimeUrls.internalUrl,
       backendUrl: runtimeUrls.backendUrl,
+      // Embedded replica sync: prefer the libsql:// host when available.
+      // LOCAL-FILE is handled separately below and never exposes this.
+      syncUrl: libsqlPublicUrl || publicUrl,
     };
   }
 
@@ -95,6 +99,9 @@ export function buildDatabaseConnectionUrls(database: ConnectionUrlDatabase): Co
       publicLibsqlUrl: '',
       internalUrl: localUrl,
       backendUrl: httpEndpoint,
+      // LOCAL-FILE only exposes the HTTP pipeline. It is not a libSQL primary
+      // and therefore cannot serve TURSO_SYNC_URL for an embedded replica.
+      syncUrl: '',
     };
   }
 
@@ -227,6 +234,8 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
     ? `${publicProtocol}://${database.subdomain}.${publicDomain.replace(/^\.+/, '')}`
     : null;
 
+  const runtimePublicUrl = typeof runtime.publicUrl === 'string' ? runtime.publicUrl.trim() : '';
+
   let effectivePublicUrl: string | null = null;
   if (template) {
     effectivePublicUrl = applyTemplate(template, database);
@@ -234,8 +243,8 @@ function getRuntimeUrls(database: ConnectionUrlDatabase) {
     effectivePublicUrl = domainUrl;
   } else if (baseUrl) {
     effectivePublicUrl = `${baseUrl.replace(/\/$/, '')}/${slugify(database.name)}`;
-  } else if (typeof runtime.publicUrl === 'string') {
-    effectivePublicUrl = runtime.publicUrl;
+  } else if (runtimePublicUrl) {
+    effectivePublicUrl = runtimePublicUrl;
   } else {
     effectivePublicUrl = backendUrl;
   }

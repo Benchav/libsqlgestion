@@ -163,12 +163,16 @@ export class LibsqlNamespaceService {
     const publicDomain = settings.domain || process.env.DATABASE_PUBLIC_DOMAIN?.trim() || 'localhost';
     const publicHost = settings.host || process.env.DATABASE_PUBLIC_HOST?.trim() || 'localhost';
 
-    const internalUrl = `${this.internalBaseUrl.replace(/\/$/, '')}/dev/${namespace}/`;
+    const encodedNamespace = encodeURIComponent(namespace);
+    const internalUrl = `${this.internalBaseUrl.replace(/\/$/, '')}/dev/${encodedNamespace}/`;
     const backendUrl = internalUrl;
 
+    // Embedded replicas select the namespace through the host (the first DNS
+    // label) or the x-namespace header. They do not use the /dev/<ns>/ path,
+    // so the public URL must be host-based when sync is required.
     const publicUrl = publicDomain && publicDomain !== 'localhost'
-      ? `${publicProtocol}://${namespace}.${publicDomain.replace(/^\.+/, '')}`
-      : `${publicProtocol}://${publicHost}:8080/dev/${namespace}`;
+      ? `${publicProtocol}://${encodedNamespace}.${publicDomain.replace(/^\.+/, '')}`
+      : `${publicProtocol}://${publicHost}:8080/dev/${encodedNamespace}/`;
 
     return {
       internalUrl,

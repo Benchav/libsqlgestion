@@ -109,6 +109,8 @@ TURSO_AUTH_TOKEN=<your-database-token>
 
 LibSQLite now also exposes a public HTTPS URL and a public `libsql://` URL separately in the panel. Prefer the `libsql://` URL for production clients that support it, and use the HTTPS URL as a fallback.
 
+For an **embedded replica** (`TURSO_DATABASE_URL=file:...` plus `TURSO_SYNC_URL`), use a real primary: a dedicated runtime or a shared `sqld` namespace host. A `LOCAL-FILE` database is remote-only and cannot serve `TURSO_SYNC_URL`. See [ERP_INTEGRATION.md](ERP_INTEGRATION.md).
+
 ### Optional production runtime flags
 You can further tune a production deployment with these optional environment variables:
 

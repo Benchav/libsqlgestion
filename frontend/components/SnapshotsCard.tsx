@@ -230,23 +230,31 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
   const oldestReadySnapshot = readySnapshots.length > 0
     ? readySnapshots[readySnapshots.length - 1]
     : null;
-  const hasHistoricalPresets = POINT_IN_TIME_PRESETS.some((preset) => {
-    if (preset.value === 'latest' || preset.value === 'custom' || !preset.ms) return false;
+  const availablePointInTimePresets = POINT_IN_TIME_PRESETS.filter((preset) => {
+    if (preset.value === 'latest' || preset.value === 'custom' || !preset.ms) return true;
     const target = Date.now() - preset.ms;
     return readySnapshots.some((snapshot) => new Date(snapshot.takenAt).getTime() <= target);
   });
+  const hasHistoricalPresets = availablePointInTimePresets.some(
+    (preset) => preset.value !== 'latest' && preset.value !== 'custom',
+  );
+  const effectivePointInTimePreset = availablePointInTimePresets.some(
+    (preset) => preset.value === pointInTimePreset,
+  )
+    ? pointInTimePreset
+    : 'latest';
 
   const pointInTimeTargetMs = (() => {
-    if (pointInTimePreset === 'latest') return Date.now();
-    if (pointInTimePreset === 'custom') {
+    if (effectivePointInTimePreset === 'latest') return Date.now();
+    if (effectivePointInTimePreset === 'custom') {
       const parsed = pointInTimeCustom ? new Date(pointInTimeCustom).getTime() : NaN;
       return Number.isFinite(parsed) ? parsed : null;
     }
-    const preset = POINT_IN_TIME_PRESETS.find((item) => item.value === pointInTimePreset);
+    const preset = POINT_IN_TIME_PRESETS.find((item) => item.value === effectivePointInTimePreset);
     return preset?.ms ? Date.now() - preset.ms : null;
   })();
 
-  const pointInTimeSnapshot = pointInTimePreset === 'latest'
+  const pointInTimeSnapshot = effectivePointInTimePreset === 'latest'
     ? readySnapshots[0] || null
     : pointInTimeTargetMs == null
       ? null
@@ -514,7 +522,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
 
       {restoreTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
-          <div className="w-full max-w-[520px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-[520px] overflow-y-auto rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl custom-scrollbar">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-xl font-semibold text-zinc-100">Restore snapshot</h2>
@@ -581,8 +589,8 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
 
       {pointInTimeOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]">
-          <div className="w-full max-w-[560px] rounded-xl border border-zinc-800/80 bg-[#0f0f0f] p-6 shadow-2xl">
-            <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-zinc-800/80 bg-[#0f0f0f] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-zinc-800/60 p-6 pb-4">
               <div>
                 <h2 className="text-xl font-semibold text-zinc-100">Create Database from Point-in-Time</h2>
                 <p className="mt-1 text-sm text-zinc-400">
@@ -599,7 +607,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="flex-1 space-y-4 overflow-y-auto p-6 custom-scrollbar">
               <div>
                 <label className="mb-2 block text-sm font-medium text-zinc-300">Database name</label>
                 <input
@@ -614,45 +622,30 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
               <div>
                 <label className="mb-2 block text-sm font-medium text-zinc-300">Restore from</label>
                 <select
-                  value={pointInTimePreset}
+                  value={effectivePointInTimePreset}
                   onChange={(event) => setPointInTimePreset(event.target.value as PointInTimePreset)}
                   disabled={restoreSnapshot.isPending}
                   className="w-full rounded-lg border border-zinc-800 bg-[#050505] px-3 py-2 text-sm text-zinc-100 focus:border-zinc-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {POINT_IN_TIME_PRESETS.map((preset) => {
-                    if (preset.value === 'latest') {
-                      return <option key={preset.value} value={preset.value}>{preset.label}</option>;
-                    }
-                    if (preset.value === 'custom') {
-                      return <option key={preset.value} value={preset.value}>{preset.label}</option>;
-                    }
-                    const target = Date.now() - (preset.ms || 0);
-                    const available = readySnapshots.some(
-                      (snapshot) => new Date(snapshot.takenAt).getTime() <= target,
-                    );
-                    return (
-                      <option key={preset.value} value={preset.value} disabled={!available}>
-                        {preset.label}{available ? '' : ' — no snapshot before this time'}
-                      </option>
-                    );
-                  })}
+                  {availablePointInTimePresets.map((preset) => (
+                    <option key={preset.value} value={preset.value}>{preset.label}</option>
+                  ))}
                 </select>
               </div>
 
               {readySnapshots.length > 0 && !hasHistoricalPresets && (
                 <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-xs text-blue-300">
-                  Only a recent snapshot exists. Historical points become available as the scheduler accumulates
+                  Only a recent snapshot exists. Historical options will appear as the scheduler accumulates
                   restore points.
+                  {oldestReadySnapshot && (
+                    <span className="mt-1 block text-blue-200/80">
+                      Earliest snapshot: {formatTimestamp(oldestReadySnapshot.takenAt)} ({formatAge(oldestReadySnapshot.takenAt)}).
+                    </span>
+                  )}
                 </div>
               )}
 
-              {oldestReadySnapshot && (
-                <p className="text-xs text-zinc-500">
-                  Earliest snapshot: {formatTimestamp(oldestReadySnapshot.takenAt)} ({formatAge(oldestReadySnapshot.takenAt)})
-                </p>
-              )}
-
-              {pointInTimePreset === 'custom' && (
+              {effectivePointInTimePreset === 'custom' && (
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-300">Custom date and time</label>
                   <input
@@ -673,7 +666,21 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                     <p><span className="text-zinc-500">Size:</span> {formatBytes(pointInTimeSnapshot.sizeBytes)}</p>
                   </>
                 ) : (
-                  <p className="text-amber-300">No snapshot is available at or before this point in time.</p>
+                  <div className="space-y-2">
+                    <p className="text-amber-300">No snapshot is available at or before this point in time.</p>
+                    {oldestReadySnapshot && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPointInTimePreset('custom');
+                          setPointInTimeCustom(toDateTimeLocal(new Date(oldestReadySnapshot.takenAt)));
+                        }}
+                        className="text-xs font-medium text-zinc-200 underline underline-offset-2 hover:text-white"
+                      >
+                        Use the earliest available snapshot
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -682,26 +689,26 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                   {pointInTimeError}
                 </div>
               )}
+            </div>
 
-              <div className="flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setPointInTimeOpen(false)}
-                  disabled={restoreSnapshot.isPending}
-                  className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePointInTimeRestore}
-                  disabled={restoreSnapshot.isPending || !pointInTimeSnapshot || !pointInTimeName.trim()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:cursor-wait disabled:opacity-50"
-                >
-                  <RefreshCw size={14} className={restoreSnapshot.isPending ? 'animate-spin' : ''} />
-                  {restoreSnapshot.isPending ? 'Restoring...' : 'Create Database'}
-                </button>
-              </div>
+            <div className="flex justify-end gap-3 border-t border-zinc-800/60 bg-[#0f0f0f] p-4">
+              <button
+                type="button"
+                onClick={() => setPointInTimeOpen(false)}
+                disabled={restoreSnapshot.isPending}
+                className="px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePointInTimeRestore}
+                disabled={restoreSnapshot.isPending || !pointInTimeSnapshot || !pointInTimeName.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:cursor-wait disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={restoreSnapshot.isPending ? 'animate-spin' : ''} />
+                {restoreSnapshot.isPending ? 'Restoring...' : 'Create Database'}
+              </button>
             </div>
           </div>
         </div>

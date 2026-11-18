@@ -1,12 +1,13 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AuthService } from '../../../application/auth/AuthService';
 import { AuditService } from '../../../application/audit/AuditService';
-import { getUserPermissions } from '../../../application/auth/authorization';
+import { getUserPermissions, getUserRoles } from '../../../application/auth/authorization';
 import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { UserRole } from '../../../domain/entities/UserRole';
 import { clearSessionCookie, clearCsrfCookie, csrfCookie, parseCookies, sessionCookie } from '../../../infrastructure/security/cookies';
 import { issueCsrfToken } from '../csrf';
-import { parseAndValidate, registerUserSchema, loginSchema } from '../../../types/validations';
+import { parseAndValidate, registerUserSchema, loginSchema, changeEmailSchema, changePasswordSchema } from '../../../types/validations';
+import { presentUser } from '../user-presenter';
 
 const ACCESS_TOKEN_MAX_AGE = 60 * 60 * 24 * 7;
 const REFRESH_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
@@ -102,10 +103,55 @@ export default async function authRoutes(app: FastifyInstance) {
 
     return reply.send({
       user: {
-        ...user,
-        roles,
+        ...presentUser(user, roles),
+        sub: user.sub,
         permissions: Array.from(permissions),
       },
     });
+  });
+
+  app.patch('/me/email', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
+    const body = parseAndValidate(changeEmailSchema, request.body, 'change email');
+
+    try {
+      const updated = await authService.changeEmail(user.sub, body.currentPassword, body.email);
+      await auditService.record({
+        action: 'account.email_change',
+        resourceType: 'user',
+        resourceId: user.sub,
+        actorId: user.sub,
+        ipAddress: request.ip,
+      });
+      reply.header('Cache-Control', 'no-store');
+      return reply.send({ user: presentUser(updated, await getUserRoles(user.sub)) });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to change email' });
+    }
+  });
+
+  app.patch('/me/password', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
+    const body = parseAndValidate(changePasswordSchema, request.body, 'change password');
+    const authorization = request.headers.authorization;
+    const cookies = parseCookies(request.headers.cookie);
+    const currentAccessToken = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : cookies['libsqlite.accessToken'];
+
+    try {
+      await authService.changePassword(user.sub, body.currentPassword, body.newPassword, currentAccessToken);
+      await auditService.record({
+        action: 'account.password_change',
+        resourceType: 'user',
+        resourceId: user.sub,
+        actorId: user.sub,
+        ipAddress: request.ip,
+      });
+      reply.header('Cache-Control', 'no-store');
+      return reply.send({ ok: true });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to change password' });
+    }
   });
 }

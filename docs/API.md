@@ -31,7 +31,43 @@ Revokes the refresh token session.
 
 ### `GET /me`
 
-Returns the authenticated user.
+Returns the authenticated user, roles and permissions. Password hashes and session tokens are never included.
+
+### `PATCH /me/email`
+
+Changes the current account email. Requires the current password.
+
+```json
+{ "email": "new@example.com", "currentPassword": "current-password" }
+```
+
+### `PATCH /me/password`
+
+Changes the current account password. Requires the current password and revokes all other sessions while keeping the current one.
+
+```json
+{ "currentPassword": "current-password", "newPassword": "new-password" }
+```
+
+## Users
+
+### `GET /users`
+
+Lists users and their roles. Requires `users.read`. Responses exclude `passwordHash` and session data.
+
+### `POST /users`
+
+Creates another account with its own email and password. Requires `users.write`.
+
+```json
+{ "email": "operator@example.com", "password": "password", "roleName": "operator" }
+```
+
+Admins can assign `operator` and `readonly`; only superadmins can assign `admin` or `superadmin`.
+
+### `PATCH /users/:id`
+
+Updates another user's email, active state, or password. Requires `users.write`. Resetting a password revokes that user's sessions. Only a superadmin can modify a superadmin account.
 
 ## Projects
 

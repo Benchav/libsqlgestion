@@ -7,6 +7,12 @@ import { hashPassword, verifyPassword } from '../../infrastructure/security/pass
 import { hashToken, randomToken } from '../../infrastructure/security/tokens';
 import { IsNull } from 'typeorm';
 
+function authError(statusCode: number, message: string) {
+  const error: any = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
 export class AuthService {
   private userRepo = AppDataSource.getRepository(User);
   private sessionRepo = AppDataSource.getRepository(Session);
@@ -62,6 +68,115 @@ export class AuthService {
     return (await verifyPassword(user.passwordHash, password)) ? user : null;
   }
 
+  async changeEmail(userId: string, currentPassword: string, email: string) {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) throw authError(404, 'user not found');
+    if (!(await verifyPassword(user.passwordHash, currentPassword))) {
+      throw authError(401, 'invalid current password');
+    }
+
+    const normalizedEmail = email.trim();
+    const existing = await this.userRepo.findOneBy({ email: normalizedEmail });
+    if (existing && existing.id !== user.id) {
+      throw authError(409, 'email already registered');
+    }
+
+    user.email = normalizedEmail;
+    return this.userRepo.save(user);
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    currentAccessToken?: string,
+  ) {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) throw authError(404, 'user not found');
+    if (!(await verifyPassword(user.passwordHash, currentPassword))) {
+      throw authError(401, 'invalid current password');
+    }
+
+    user.passwordHash = await hashPassword(newPassword);
+    await this.userRepo.save(user);
+    await this.revokeUserSessions(user.id, currentAccessToken);
+    return user;
+  }
+
+  async createUser(email: string, password: string, roleName = 'readonly') {
+    const normalizedEmail = email.trim();
+    const existing = await this.userRepo.findOneBy({ email: normalizedEmail });
+    if (existing) throw authError(409, 'email already registered');
+
+    const role = await this.roleRepo.findOneBy({ name: roleName });
+    if (!role) throw authError(422, `role not found: ${roleName}`);
+
+    const passwordHash = await hashPassword(password);
+    const user = await this.userRepo.save(this.userRepo.create({
+      email: normalizedEmail,
+      passwordHash,
+      active: true,
+    }));
+    await this.userRoleRepo.save(this.userRoleRepo.create({ user, role }));
+    return user;
+  }
+
+  async adminUpdateUser(
+    userId: string,
+    input: { email?: string; password?: string; active?: boolean },
+  ) {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) throw authError(404, 'user not found');
+
+    if (input.email) {
+      const normalizedEmail = input.email.trim();
+      const existing = await this.userRepo.findOneBy({ email: normalizedEmail });
+      if (existing && existing.id !== user.id) {
+        throw authError(409, 'email already registered');
+      }
+      user.email = normalizedEmail;
+    }
+
+    if (input.password) {
+      user.passwordHash = await hashPassword(input.password);
+    }
+
+    if (typeof input.active === 'boolean') {
+      user.active = input.active;
+    }
+
+    await this.userRepo.save(user);
+
+    if (input.password || input.active === false) {
+      await this.revokeUserSessions(user.id);
+    }
+
+    return user;
+  }
+
+  async getUserWithRoles(userId: string) {
+    return this.userRepo.findOne({
+      where: { id: userId },
+      relations: ['roles', 'roles.role'],
+    });
+  }
+
+  private async revokeUserSessions(userId: string, keepAccessToken?: string) {
+    const query = this.sessionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ revokedAt: new Date() })
+      .where('userId = :userId', { userId });
+
+    if (keepAccessToken) {
+      query.andWhere('accessTokenHash != :keepAccessTokenHash', {
+        keepAccessTokenHash: hashToken(keepAccessToken),
+      });
+    }
+
+    await query.execute();
+  }
+
   async issueSession(user: User) {
     const accessToken = randomToken();
     const refreshToken = randomToken();
@@ -100,7 +215,8 @@ export class AuthService {
   async validateAccessToken(accessToken: string) {
     const accessTokenHash = hashToken(accessToken);
     const session = await this.sessionRepo.findOne({ where: { accessTokenHash, revokedAt: IsNull() }, relations: ['user'] });
-    if (!session || (session.expiresAt && session.expiresAt.getTime() < Date.now())) return null;
+    if (!session || !session.user?.active) return null;
+    if (session.expiresAt && session.expiresAt.getTime() < Date.now()) return null;
     return session.user;
   }
 }

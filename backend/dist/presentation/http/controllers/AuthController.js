@@ -9,6 +9,7 @@ const UserRole_1 = require("../../../domain/entities/UserRole");
 const cookies_1 = require("../../../infrastructure/security/cookies");
 const csrf_1 = require("../csrf");
 const validations_1 = require("../../../types/validations");
+const user_presenter_1 = require("../user-presenter");
 const ACCESS_TOKEN_MAX_AGE = 60 * 60 * 24 * 7;
 const REFRESH_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
 const CSRF_TOKEN_MAX_AGE = 60 * 60 * 24 * 30;
@@ -100,10 +101,53 @@ async function authRoutes(app) {
         const roles = userRoles.map((ur) => ur.role.name);
         return reply.send({
             user: {
-                ...user,
-                roles,
+                ...(0, user_presenter_1.presentUser)(user, roles),
+                sub: user.sub,
                 permissions: Array.from(permissions),
             },
         });
+    });
+    app.patch('/me/email', { preHandler: [app.authenticate] }, async (request, reply) => {
+        const user = request.user;
+        const body = (0, validations_1.parseAndValidate)(validations_1.changeEmailSchema, request.body, 'change email');
+        try {
+            const updated = await authService.changeEmail(user.sub, body.currentPassword, body.email);
+            await auditService.record({
+                action: 'account.email_change',
+                resourceType: 'user',
+                resourceId: user.sub,
+                actorId: user.sub,
+                ipAddress: request.ip,
+            });
+            reply.header('Cache-Control', 'no-store');
+            return reply.send({ user: (0, user_presenter_1.presentUser)(updated, await (0, authorization_1.getUserRoles)(user.sub)) });
+        }
+        catch (error) {
+            return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to change email' });
+        }
+    });
+    app.patch('/me/password', { preHandler: [app.authenticate] }, async (request, reply) => {
+        const user = request.user;
+        const body = (0, validations_1.parseAndValidate)(validations_1.changePasswordSchema, request.body, 'change password');
+        const authorization = request.headers.authorization;
+        const cookies = (0, cookies_1.parseCookies)(request.headers.cookie);
+        const currentAccessToken = authorization?.startsWith('Bearer ')
+            ? authorization.slice('Bearer '.length).trim()
+            : cookies['libsqlite.accessToken'];
+        try {
+            await authService.changePassword(user.sub, body.currentPassword, body.newPassword, currentAccessToken);
+            await auditService.record({
+                action: 'account.password_change',
+                resourceType: 'user',
+                resourceId: user.sub,
+                actorId: user.sub,
+                ipAddress: request.ip,
+            });
+            reply.header('Cache-Control', 'no-store');
+            return reply.send({ ok: true });
+        }
+        catch (error) {
+            return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to change password' });
+        }
     });
 }

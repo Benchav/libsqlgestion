@@ -18,7 +18,7 @@ const CORE_PERMISSIONS = [
 ];
 const ROLE_MATRIX = [
     { name: 'superadmin', permissions: CORE_PERMISSIONS.map((permission) => permission.code) },
-    { name: 'admin', permissions: ['projects.read', 'projects.write', 'databases.read', 'databases.write', 'settings.read', 'settings.write', 'audit.read'] },
+    { name: 'admin', permissions: ['users.read', 'users.write', 'projects.read', 'projects.write', 'databases.read', 'databases.write', 'settings.read', 'settings.write', 'audit.read'] },
     { name: 'operator', permissions: ['projects.read', 'databases.read', 'databases.write'] },
     { name: 'readonly', permissions: ['projects.read', 'databases.read', 'audit.read'] },
 ];

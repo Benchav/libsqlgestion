@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ValidationError = exports.publicDatabaseSettingsSchema = exports.pageQuerySchema = exports.adoptDatabaseSchema = exports.scanDirectorySchema = exports.auditListQuerySchema = exports.assignRoleSchema = exports.loginSchema = exports.registerUserSchema = exports.changeColumnTypeSchema = exports.renameColumnSchema = exports.addColumnSchema = exports.renameTableSchema = exports.snapshotPolicySchema = exports.snapshotListQuerySchema = exports.restoreSnapshotSchema = exports.backupDatabaseSchema = exports.createProjectSchema = exports.executeQuerySchema = exports.convertToRuntimeSchema = exports.updateDatabaseSchema = exports.importSqliteSchema = exports.createDatabaseSchema = void 0;
+exports.ValidationError = exports.publicDatabaseSettingsSchema = exports.pageQuerySchema = exports.adoptDatabaseSchema = exports.scanDirectorySchema = exports.auditListQuerySchema = exports.assignRoleSchema = exports.updateUserSchema = exports.createUserSchema = exports.changePasswordSchema = exports.changeEmailSchema = exports.loginSchema = exports.registerUserSchema = exports.changeColumnTypeSchema = exports.renameColumnSchema = exports.addColumnSchema = exports.renameTableSchema = exports.snapshotPolicySchema = exports.snapshotListQuerySchema = exports.restoreSnapshotSchema = exports.backupDatabaseSchema = exports.createProjectSchema = exports.executeQuerySchema = exports.convertToRuntimeSchema = exports.updateDatabaseSchema = exports.importSqliteSchema = exports.createDatabaseSchema = void 0;
 exports.parseAndValidate = parseAndValidate;
 const zod_1 = require("zod");
 const identifier = zod_1.z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -86,6 +86,24 @@ exports.registerUserSchema = zod_1.z.object({
 exports.loginSchema = zod_1.z.object({
     email: zod_1.z.string().email().max(254),
     password: zod_1.z.string().min(1).max(128),
+});
+exports.changeEmailSchema = zod_1.z.object({
+    email: zod_1.z.string().email().max(254),
+    currentPassword: zod_1.z.string().min(1).max(128),
+});
+exports.changePasswordSchema = zod_1.z.object({
+    currentPassword: zod_1.z.string().min(1).max(128),
+    newPassword: zod_1.z.string().min(8).max(128),
+});
+exports.createUserSchema = zod_1.z.object({
+    email: zod_1.z.string().email().max(254),
+    password: zod_1.z.string().min(8).max(128),
+    roleName: zod_1.z.string().trim().min(1).max(128).optional(),
+});
+exports.updateUserSchema = zod_1.z.object({
+    email: zod_1.z.string().email().max(254).optional(),
+    password: zod_1.z.string().min(8).max(128).optional(),
+    active: zod_1.z.boolean().optional(),
 });
 exports.assignRoleSchema = zod_1.z.object({
     roleName: zod_1.z.string().min(1).max(128),

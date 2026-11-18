@@ -101,6 +101,28 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
+export const changeEmailSchema = z.object({
+  email: z.string().email().max(254),
+  currentPassword: z.string().min(1).max(128),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(8).max(128),
+});
+
+export const createUserSchema = z.object({
+  email: z.string().email().max(254),
+  password: z.string().min(8).max(128),
+  roleName: z.string().trim().min(1).max(128).optional(),
+});
+
+export const updateUserSchema = z.object({
+  email: z.string().email().max(254).optional(),
+  password: z.string().min(8).max(128).optional(),
+  active: z.boolean().optional(),
+});
+
 export const assignRoleSchema = z.object({
   roleName: z.string().min(1).max(128),
 });

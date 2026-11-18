@@ -19,6 +19,14 @@ Database tokens are encrypted with `MASTER_KEY` using AES-256-GCM.
 - CORS restriction through configuration
 - audit logging for sensitive operations
 
+## Account management
+
+- Changing an email or password requires the current password.
+- Changing a password revokes all other sessions and keeps the current one.
+- Admin password resets revoke all sessions for the affected user.
+- User API responses never include password hashes or session tokens.
+- Admins can create users with `operator` or `readonly` roles. Only superadmins can assign `admin` or `superadmin`.
+
 ## Operational rules
 
 - never commit secrets to the repository

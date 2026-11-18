@@ -3,7 +3,7 @@
   <br />
   <img src="./docs/assets/logo.png" alt="LibSQLite Logo" width="120" height="120" />
 
-  # LibSQLite V1
+  # LibSQLite V1.4
 
   **The self-hosted, Turso-like control plane for SQLite & libSQL.**
 
@@ -38,6 +38,7 @@ Instead of paying for managed cloud services or struggling with monolithic setup
 - **Dynamic Docker Orchestration**: Automatically provisions isolated `libsql-server` containers for every database you create or import.
 - **Zero-Config Edge Routing**: Native integration with **Traefik** and **Cloudflare Tunnels**. Expose databases instantly to the public internet securely (e.g., `https://my-db.yourdomain.com`).
 - **Unified Management Panel**: Govern multiple SQLite databases from an intuitive, unified dark-mode dashboard.
+- **Account Management**: Change your email/password, create additional users, reset passwords, and manage roles from Settings.
 - **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface (synchronizes perfectly with your active `libsql-server` instances).
 - **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
 - **Snapshots & Restore Points**: Scheduled, consistent SQLite snapshots with point-in-time selection, selectable daily/weekly/monthly backups, tiered retention, and one-click restore into a new database.

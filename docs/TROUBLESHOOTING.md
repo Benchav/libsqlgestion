@@ -91,6 +91,42 @@ builds used `https://host.docker.internal:<port>` for the Backend check; current
 builds use `http://`. If you still see the HTTPS host-port URL, redeploy the
 updated backend and rotate the runtime token.
 
+## Runtime health shows `Internal: Fail` or `Public: Fail`
+
+`Backend: OK` means the runtime is alive and the published host port works.
+`Internal: Fail` means the backend cannot resolve
+`http://libsqlite-<id>:8080`, and `Public: Fail` means Traefik cannot reach the
+container. Both usually mean the runtime was created on the default `bridge`
+network instead of the shared backend/Traefik network.
+
+Check:
+
+```bash
+docker inspect <runtime-container> --format '{{json .NetworkSettings.Networks}}'
+docker inspect <backend-container> --format '{{json .NetworkSettings.Networks}}'
+```
+
+The runtime must list the same network as the backend and Traefik.
+
+Fix:
+
+1. Set `LIBSQL_RUNTIME_NETWORK` to that network (usually `coolify`). Leave it
+   empty only if automatic detection works; the backend prefers `coolify` and
+   refuses to create runtimes on `bridge`.
+2. Redeploy the backend so the new code and variable are active.
+3. Rotate the runtime with **Create new token**. Existing containers keep their
+   old network and labels until they are recreated.
+4. Re-check `https://<subdomain>.<wildcard-domain>` and rerun the embedded
+   replica test.
+
+If you do not want to rotate yet, you can attach the existing container
+manually, but Traefik labels still point at the old network until it is
+recreated:
+
+```bash
+docker network connect coolify <runtime-container>
+```
+
 ## New create/import is blocked: no libSQL primary available
 
 The libSQL-first policy refuses to create a new `LOCAL-FILE` database when:

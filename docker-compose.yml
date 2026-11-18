@@ -112,6 +112,11 @@ services:
       # Leave empty if you use the shared sqld namespace router below.
       TRAEFIK_CERT_RESOLVER: ${TRAEFIK_CERT_RESOLVER:-}
       TRAEFIK_ENTRYPOINT: ${TRAEFIK_ENTRYPOINT:-}
+      # Docker network shared by the backend, Traefik and runtime containers.
+      # Empty = detect from the backend container (prefers "coolify"). The
+      # runtime never falls back to the default bridge network.
+      LIBSQL_RUNTIME_NETWORK: ${LIBSQL_RUNTIME_NETWORK:-}
+      LIBSQL_BACKEND_CONTAINER_ID: ${LIBSQL_BACKEND_CONTAINER_ID:-}
       DB_CONNECTION_POOL_MAX_SIZE: ${DB_CONNECTION_POOL_MAX_SIZE:-256}
       DB_CONNECTION_POOL_IDLE_TTL_MS: ${DB_CONNECTION_POOL_IDLE_TTL_MS:-1800000}
       SQLITE_PERFORMANCE_PROFILE: ${SQLITE_PERFORMANCE_PROFILE:-performance}

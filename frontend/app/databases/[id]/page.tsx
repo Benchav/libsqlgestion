@@ -259,6 +259,8 @@ export default function DatabaseDetailPage() {
   const syncUrl = database?.syncUrl || '';
   const internalUrl = database?.internalLibsqlUrl || database?.internalConnectionUrl || database?.url || '';
   const backendUrl = database?.backendReachableUrl || database?.backendConnectionUrl || internalUrl || database?.url || '';
+  const runtimeInternalFailed = database?.runtimeHealth?.internalOk === false;
+  const runtimePublicFailed = Boolean(database?.runtimeHealth?.publicChecked && database.runtimeHealth.publicOk === false);
   const serverUrl = publicLibsqlUrl || publicUrl || backendUrl;
   const runtimeLabel = getRuntimeLabel(database?.metadata);
   const envSnippet = serverUrl && revealedToken
@@ -610,6 +612,29 @@ export default function DatabaseDetailPage() {
                     </div>
                     {database.runtimeHealth.checkedAt && (
                       <p className="mt-2 text-xs text-zinc-500">Checked {new Date(database.runtimeHealth.checkedAt).toLocaleString()}</p>
+                    )}
+                    {(runtimeInternalFailed || runtimePublicFailed) && (
+                      <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200 space-y-1">
+                        {runtimeInternalFailed && (
+                          <p>
+                            <strong>Internal: Fail</strong> — the runtime is not reachable by container name.
+                            Set <code className="text-amber-100">LIBSQL_RUNTIME_NETWORK</code> (usually{' '}
+                            <code className="text-amber-100">coolify</code>) so it shares the backend network,
+                            redeploy, then use <strong>Create new token</strong> to recreate the runtime.
+                          </p>
+                        )}
+                        {runtimePublicFailed && (
+                          <p>
+                            <strong>Public: Fail</strong> — check the wildcard domain, DNS and{' '}
+                            <code className="text-amber-100">TRAEFIK_CERT_RESOLVER</code>, then use{' '}
+                            <strong>Create new token</strong> so the container gets updated Traefik labels.
+                          </p>
+                        )}
+                        <p className="text-amber-300/80">
+                          This health snapshot is from provisioning. Attaching the network manually does not
+                          update the stored route health.
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}

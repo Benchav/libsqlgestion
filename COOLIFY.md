@@ -82,6 +82,9 @@ LIBSQL_NAMESPACE_HOST=
 # Traefik TLS for dedicated runtimes or the exact shared-namespace router
 TRAEFIK_CERT_RESOLVER=
 TRAEFIK_ENTRYPOINT=websecure
+# Docker network shared by backend, Traefik and runtime containers
+LIBSQL_RUNTIME_NETWORK=coolify
+LIBSQL_BACKEND_CONTAINER_ID=
 # DNS-01 resolver for the optional wildcard namespace override
 TRAEFIK_WILDCARD_CERT_RESOLVER=
 
@@ -106,6 +109,8 @@ Notes:
 - `SQL_QUERY_TIMEOUT_MS` cancels long read queries; `QUERY_HARD_MAX_ROWS` caps API/Studio result sets.
 - `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
+- `LIBSQL_RUNTIME_NETWORK=coolify` puts dynamically created libSQL runtimes on the same Docker network as the backend and Traefik. Leave it empty to detect the network from the backend container; detection prefers `coolify`. The runtime is never silently created on the default `bridge` network because internal DNS and Traefik routing fail there.
+- `LIBSQL_BACKEND_CONTAINER_ID` is only needed when `HOSTNAME`/`os.hostname()` cannot identify the backend container. A dedicated runtime is recreated through **Create new token**, so existing runtimes created on `bridge` must be rotated to pick up the correct network.
 - `LIBSQL_REQUIRE_PRIMARY=true` blocks new `LOCAL-FILE` databases when no libSQL primary is available. It does not affect existing legacy databases.
 - `LIBSQL_ALLOW_LOCAL_FILE=true` is the hidden escape hatch for legacy local files; keep it false for Turso-like behavior.
 - `LIBSQL_PRIMARY_MODE=auto` prefers the shared namespace when `LIBSQL_NAMESPACE_PUBLIC_ENABLED=true` and `sqld` is reachable; otherwise it uses a dedicated runtime.

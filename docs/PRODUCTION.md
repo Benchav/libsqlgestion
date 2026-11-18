@@ -59,6 +59,9 @@ LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
 LIBSQL_RUNTIME_MEMORY_BYTES=0
 LIBSQL_RUNTIME_CPU_NANO=0
 LIBSQL_RUNTIME_PIDS_LIMIT=0
+# Shared Docker network for backend, Traefik and runtime containers
+LIBSQL_RUNTIME_NETWORK=coolify
+LIBSQL_BACKEND_CONTAINER_ID=
 ```
 
 Notes:
@@ -71,6 +74,7 @@ Notes:
 - `SQLITE_PERFORMANCE_PROFILE=performance` prioritizes throughput and lower latency for ERP-style workloads.
 - `DB_CONNECTION_POOL_MAX_SIZE` and `DB_CONNECTION_POOL_IDLE_TTL_MS` tune backend client reuse.
 - `LIBSQL_RUNTIME_*` resource variables let you constrain managed runtime containers when needed.
+- `LIBSQL_RUNTIME_NETWORK` must name the Docker network shared by the backend and Traefik (usually `coolify`). If it is empty, the backend detects the network from its own container and never falls back to the default `bridge` network. A runtime created on `bridge` cannot be reached by container name or Traefik, which shows as `Internal: Fail` and `Public: Fail`.
 
 ### Backend volumes
 

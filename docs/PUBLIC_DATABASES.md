@@ -51,6 +51,11 @@ PORT=3000
 # Docker Socket (Mandatory for spawning libSQL containers)
 DOCKER_SOCKET_PATH=/var/run/docker.sock
 
+# Shared Docker network for backend, Traefik and runtime containers
+# (leave empty to detect it; the runtime never silently uses "bridge")
+LIBSQL_RUNTIME_NETWORK=coolify
+LIBSQL_BACKEND_CONTAINER_ID=
+
 # Routing settings
 DATABASE_PUBLIC_PROTOCOL=https
 DATABASE_PUBLIC_DOMAIN=yourdomain.com
@@ -84,6 +89,24 @@ Once deployed, open your LibSQLite Panel to tell the backend how to build your p
 
 Now, whenever you create or import a database, the panel will dynamically inject Traefik labels into the container using this domain and generate a public `URL` like `https://[database-name].yourdomain.com`.
 
+### Runtime networking
+
+A dedicated `libsql-server` container must share a user-defined Docker network
+with the backend and Traefik. On that network, the backend reaches it by
+container name (`http://libsqlite-<id>:8080`) and Traefik reads its router
+labels. The default `bridge` network has neither container-name DNS nor Traefik
+discovery, which produces `Internal: Fail` and `Public: Fail`.
+
+- Set `LIBSQL_RUNTIME_NETWORK` to the shared network (usually `coolify`).
+- If unset, the backend inspects its own container and prefers the network named
+  `coolify`, then the first non-`bridge` network.
+- If no network can be determined, provisioning fails with an explicit error.
+  The runtime is never silently created on `bridge`.
+- `LIBSQL_BACKEND_CONTAINER_ID` overrides `HOSTNAME`/`os.hostname()` when the
+  backend container cannot be identified.
+- Existing runtimes created on `bridge` must be recreated with
+  **Create new token** so they pick up the correct network and labels.
+
 ### Runtime health expectation
 Managed public databases are considered healthy only when LibSQLite can verify all of the following:
 
@@ -92,7 +115,10 @@ Managed public databases are considered healthy only when LibSQLite can verify a
 3. the backend-reachable URL responds
 4. the public subdomain responds when a real public domain is configured
 
-If any of these checks fail during provisioning, the database stays in an error state instead of silently degrading to a local-only runtime.
+Provisioning fails if neither the internal nor the backend URL responds. A
+public-route failure is stored in `routeHealth.publicOk` with a warning because
+DNS/TLS may still be propagating; the database remains usable through its
+internal/backend URL.
 
 ## 5. Using the Database in your ERP / API
 

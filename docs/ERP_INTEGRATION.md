@@ -49,6 +49,8 @@ LIBSQL_REQUIRE_PRIMARY=true
 LIBSQL_ALLOW_LOCAL_FILE=false
 LIBSQL_PRIMARY_MODE=runtime
 LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=31536000
+# Docker network shared with the backend and Traefik
+LIBSQL_RUNTIME_NETWORK=coolify
 SQLD_PUBLIC_DOMAIN=
 
 # TLS labels applied to dynamically created dedicated runtimes.
@@ -60,6 +62,7 @@ TRAEFIK_ENTRYPOINT=websecure
 - `DATABASE_PUBLIC_DOMAIN` is the parent used for the runtime URL (`erp-db.example.com`).
 - Keep `SQLD_PUBLIC_DOMAIN` empty when using per-database runtimes so the namespace wildcard does not capture other app subdomains.
 - `LIBSQL_PRIMARY_MODE=runtime` makes new databases and imports provision a dedicated `libsql-server`.
+- `LIBSQL_RUNTIME_NETWORK` must be the network shared by the backend and Traefik (usually `coolify`). Without it, the runtime cannot be reached by container name or routed publicly; the backend now fails provisioning instead of creating it on the default `bridge` network.
 - `LIBSQL_PROVISION_ASYNC=false` makes the import wait for the container and return the real runtime JWT. If you keep it `true`, use **Rotate Token** after the database becomes active.
 
 Import the ERP database with a fixed subdomain, for example:

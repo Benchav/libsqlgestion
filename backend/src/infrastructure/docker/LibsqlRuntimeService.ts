@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
+import os from 'os';
 import path from 'path';
 import { Database } from '../../domain/entities/Database';
 import { getPublicDatabaseSettings } from '../../application/settings/PlatformSettingsService';
@@ -13,6 +14,7 @@ type RuntimeMetadata = {
   image: string;
   containerId: string;
   containerName: string;
+  network: string;
   databasePath: string;
   authKeyPem: string;
   internalUrl: string;
@@ -44,7 +46,10 @@ type RuntimePaths = {
 export class LibsqlRuntimeService {
   private readonly socketPath = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
   private readonly image = process.env.LIBSQL_SERVER_IMAGE || 'ghcr.io/tursodatabase/libsql-server:latest';
-  private readonly backendContainerId = process.env.HOSTNAME?.trim() || '';
+  private readonly backendContainerId = process.env.LIBSQL_BACKEND_CONTAINER_ID?.trim()
+    || process.env.HOSTNAME?.trim()
+    || os.hostname();
+  private readonly runtimeNetwork = process.env.LIBSQL_RUNTIME_NETWORK?.trim() || '';
   private imagePulled = false;
   private imagePullPromise: Promise<void> | null = null;
 
@@ -80,6 +85,7 @@ export class LibsqlRuntimeService {
           image: this.image,
           containerId: createdContainerId,
           containerName: paths.containerName,
+          network: networkName,
           databasePath,
           authKeyPem: authBundle.publicKeyPem,
           internalUrl,
@@ -105,11 +111,13 @@ export class LibsqlRuntimeService {
     const runtime = this.readRuntimeMetadata(database);
     if (!runtime) return null;
 
+    // Resolve the network before removing the current runtime. If Docker
+    // inspection fails, the existing primary must stay online.
+    const networkName = await this.resolveBackendNetworkName();
     const authBundle = this.generateAuthBundle();
     await this.removeContainer(runtime.containerId);
 
     const paths = this.resolvePaths(database, runtime.databasePath);
-    const networkName = await this.resolveBackendNetworkName();
     let createdContainerId: string | undefined;
 
     try {
@@ -130,6 +138,7 @@ export class LibsqlRuntimeService {
           image: this.image,
           containerId: createdContainerId,
           containerName: paths.containerName,
+          network: networkName,
           databasePath: runtime.databasePath,
           authKeyPem: authBundle.publicKeyPem,
           publicPort,
@@ -337,7 +346,7 @@ export class LibsqlRuntimeService {
     return path.dirname(databasePath);
   }
 
-  private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName?: string) {
+  private async createAndStartContainer(paths: RuntimePaths, databasePath: string, authKeyPem: string, networkName: string) {
     const dbRootDir = this.resolveDatabaseRootDir(databasePath);
     const hostDirName = await this.resolveHostPath(dbRootDir);
 
@@ -351,7 +360,7 @@ export class LibsqlRuntimeService {
       'libsqlite.managed': 'true',
       'libsqlite.container-name': paths.containerName,
       'traefik.enable': 'true',
-      ...(networkName ? { 'traefik.docker.network': networkName } : {}),
+      'traefik.docker.network': networkName,
       [`${routerName}.rule`]: `Host(\`${paths.subdomain}.${this.getPublicDomain()}\`)`,
       // A dedicated runtime must win over the shared sqld HostRegexp router
       // when both are present.
@@ -398,13 +407,11 @@ export class LibsqlRuntimeService {
           `${hostDirName}:/var/lib/sqld:rw`,
         ],
       },
-      NetworkingConfig: networkName
-        ? {
-            EndpointsConfig: {
-              [networkName]: {},
-            },
-          }
-        : undefined,
+      NetworkingConfig: {
+        EndpointsConfig: {
+          [networkName]: {},
+        },
+      },
       Labels: labels,
     });
 
@@ -414,7 +421,22 @@ export class LibsqlRuntimeService {
     }
 
     await this.requestVoid('POST', `/containers/${containerId}/start`);
+    await this.assertContainerOnNetwork(containerId, networkName);
     return containerId;
+  }
+
+  private async assertContainerOnNetwork(containerId: string, networkName: string) {
+    const inspect = await this.requestJson('GET', `/containers/${containerId}/json`);
+    const networks = inspect?.NetworkSettings?.Networks;
+    const attached = networks && typeof networks === 'object' ? Object.keys(networks) : [];
+
+    if (!attached.includes(networkName)) {
+      throw new Error(
+        `libSQL runtime ${containerId} was created but is not attached to Docker network ` +
+        `"${networkName}" (attached: ${attached.length ? attached.join(', ') : 'none'}). ` +
+        'Internal container-name DNS and Traefik routing will not work.',
+      );
+    }
   }
 
   private async restartContainer(containerId: string) {
@@ -559,24 +581,113 @@ export class LibsqlRuntimeService {
     return 'Unknown libSQL runtime error';
   }
 
-  private async resolveBackendNetworkName() {
+  private async resolveBackendNetworkName(): Promise<string> {
+    if (this.runtimeNetwork) {
+      const network = await this.getNetworkByName(this.runtimeNetwork);
+      if (!network) {
+        throw new Error(
+          `LIBSQL_RUNTIME_NETWORK="${this.runtimeNetwork}" does not exist in Docker. ` +
+          'Create that network or unset LIBSQL_RUNTIME_NETWORK so it can be detected ' +
+          'from the backend container.',
+        );
+      }
+
+      const backendNetworks = await this.getBackendNetworkNames();
+      if (backendNetworks === null) {
+        console.warn(
+          `[LibsqlRuntimeService] could not inspect backend container ` +
+          `"${this.backendContainerId || '(unknown)'}"; assuming it shares Docker network ` +
+          `"${network.Name}" because LIBSQL_RUNTIME_NETWORK is set explicitly.`,
+        );
+      } else if (!backendNetworks.includes(network.Name)) {
+        await this.connectBackendToNetwork(network.Name);
+      }
+
+      console.log(
+        `[LibsqlRuntimeService] using Docker network "${network.Name}" ` +
+        '(from LIBSQL_RUNTIME_NETWORK) for libSQL runtimes',
+      );
+      return network.Name;
+    }
+
+    const networkNames = await this.getBackendNetworkNames();
+    if (networkNames === null || networkNames.length === 0) {
+      throw new Error(
+        `Cannot determine a Docker network for the libSQL runtime: backend container ` +
+        `"${this.backendContainerId || '(unknown)'}" could not be inspected or has no ` +
+        'networks. Set LIBSQL_RUNTIME_NETWORK to the network shared with Traefik and the ' +
+        'backend (for example "coolify"), or set LIBSQL_BACKEND_CONTAINER_ID to the ' +
+        'backend container id.',
+      );
+    }
+
+    const selected = networkNames.includes('coolify')
+      ? 'coolify'
+      : networkNames.find((name) => name !== 'bridge') || networkNames[0];
+
+    if (selected === 'bridge') {
+      throw new Error(
+        'Refusing to create the libSQL runtime on the default "bridge" network: ' +
+        'container-name DNS and Traefik routing do not work there, which causes ' +
+        '"Internal: Fail" and "Public: Fail". Set LIBSQL_RUNTIME_NETWORK to the shared ' +
+        'Docker network (for example "coolify"), or set it to "bridge" explicitly if ' +
+        'that is really what you want.',
+      );
+    }
+
+    console.log(
+      `[LibsqlRuntimeService] using Docker network "${selected}" detected from ` +
+      `backend container "${this.backendContainerId}" for libSQL runtimes`,
+    );
+    return selected;
+  }
+
+  private async getBackendNetworkNames(): Promise<string[] | null> {
     if (!this.backendContainerId) {
-      return undefined;
+      return null;
     }
 
     try {
-      const inspect = await this.requestJson('GET', `/containers/${this.backendContainerId}/json`);
+      const inspect = await this.requestJson(
+        'GET',
+        `/containers/${encodeURIComponent(this.backendContainerId)}/json`,
+      );
       const networks = inspect?.NetworkSettings?.Networks;
-      const networkNames = networks ? Object.keys(networks) : [];
-      
-      if (networkNames.includes('coolify')) {
-        return 'coolify';
-      }
-      
-      return networkNames[0];
+      return networks && typeof networks === 'object' ? Object.keys(networks) : [];
     } catch {
-      return undefined;
+      return null;
     }
+  }
+
+  private async getNetworkByName(name: string): Promise<{ Name: string } | null> {
+    try {
+      const network = await this.requestJson('GET', `/networks/${encodeURIComponent(name)}`);
+      return typeof network?.Name === 'string' ? { Name: network.Name } : null;
+    } catch (error: any) {
+      if (String(error?.message || '').includes('(404)')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async connectBackendToNetwork(networkName: string) {
+    if (!this.backendContainerId) {
+      throw new Error(
+        `Cannot attach the backend container to Docker network "${networkName}" because ` +
+        'LIBSQL_BACKEND_CONTAINER_ID, HOSTNAME and os.hostname() are all empty.',
+      );
+    }
+
+    await this.requestJson(
+      'POST',
+      `/networks/${encodeURIComponent(networkName)}/connect`,
+      { Container: this.backendContainerId },
+    );
+    console.log(
+      `[LibsqlRuntimeService] connected backend container "${this.backendContainerId}" ` +
+      `to Docker network "${networkName}"`,
+    );
   }
 
   private async resolveHostPath(containerPath: string) {

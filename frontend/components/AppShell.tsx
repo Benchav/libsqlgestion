@@ -8,7 +8,7 @@ import { apiRequest } from '../lib/api';
 import { 
   Database, Activity, FileText, CreditCard, Settings, HelpCircle, 
   ChevronDown, ChevronRight, Search, Plus, RefreshCw, LayoutList, 
-  Filter, ArrowUpDown, Columns, MoreHorizontal, Copy, Moon, UserRound,
+  Filter, ArrowUpDown, Columns, MoreHorizontal, Copy, Moon, UserRound, BarChart3,
   Sidebar as SidebarIcon, Terminal, Table2, Clock, History, Check, X
 } from 'lucide-react';
 
@@ -29,6 +29,7 @@ function TopBar({ isSidebarOpen, setIsSidebarOpen }: { isSidebarOpen: boolean, s
     if (pathname === '/dashboard') return <span className="text-zinc-100 font-medium">Dashboard</span>;
     if (pathname?.startsWith('/projects')) return <span className="text-zinc-100 font-medium">Projects</span>;
     if (pathname?.startsWith('/audit')) return <span className="text-zinc-100 font-medium">Audit Logs</span>;
+    if (pathname?.startsWith('/analytics')) return <span className="text-zinc-100 font-medium">Analytics</span>;
     if (pathname?.startsWith('/settings')) return <span className="text-zinc-100 font-medium">Settings</span>;
     if (pathname?.includes('/studio')) {
       return (
@@ -72,6 +73,9 @@ function Sidebar({ onOpenCreateDb }: { onOpenCreateDb: () => void }) {
 
   const navItems = [
     { id: 'projects', href: '/projects', icon: Activity, label: 'Projects' },
+    ...(user?.permissions?.includes('analytics.read')
+      ? [{ id: 'analytics', href: '/analytics', icon: BarChart3, label: 'Analytics' }]
+      : []),
     { id: 'audit', href: '/audit', icon: History, label: 'Audit Logs' },
   ];
 

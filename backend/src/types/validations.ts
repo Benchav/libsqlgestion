@@ -39,6 +39,7 @@ export const executeQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   countTotal: z.boolean().optional(),
+  source: z.enum(['studio', 'api']).optional(),
 });
 
 export const createProjectSchema = z.object({
@@ -134,6 +135,12 @@ export const auditListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   search: optionalString,
+});
+
+export const analyticsQuerySchema = z.object({
+  range: z.enum(['today', '7d', '30d', 'month']).optional(),
+  from: optionalString,
+  to: optionalString,
 });
 
 export const scanDirectorySchema = z.object({

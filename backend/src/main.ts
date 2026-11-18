@@ -10,6 +10,8 @@ import { bootstrapPlatformSettings } from './application/settings/PlatformSettin
 import { ConnectionPool } from './infrastructure/db/ConnectionPool';
 import { LibsqlNamespaceService } from './infrastructure/libsql/LibsqlNamespaceService';
 import { SnapshotScheduler } from './application/snapshots/SnapshotScheduler';
+import { analyticsCollector } from './application/analytics/AnalyticsCollector';
+import { StorageSampler } from './application/analytics/StorageSampler';
 
 const start = async () => {
   await AppDataSource.initialize();
@@ -56,10 +58,16 @@ const start = async () => {
     console.warn('[main] Could not start snapshot scheduler:', error?.message || error);
   }
 
+  analyticsCollector.start();
+  const storageSampler = new StorageSampler();
+  storageSampler.start();
+
   // Graceful shutdown: close all pooled database connections before exiting
   const shutdown = async (signal: string) => {
     console.log(`\n${signal} received — shutting down gracefully...`);
     try {
+      storageSampler.stop();
+      await analyticsCollector.stop();
       await snapshotScheduler.stop();
       const pool = ConnectionPool.getInstance();
       console.log(`Closing ${pool.size} pooled database connection(s)...`);

@@ -110,6 +110,26 @@ Operational advice:
 - `LIBSQL_NAMESPACE_IMPORTS=false` (the Compose default) stores imports as local `.db` files
 - set `LIBSQL_NAMESPACE_IMPORTS=auto` to use the `sqld` namespace when it is reachable, or `true` to require it
 
+## Usage analytics
+
+When `ANALYTICS_ENABLED=true`, LibSQLite records query and traffic metrics from
+the data plane:
+
+- query duration,
+- rows read and written,
+- source (Studio, ERP pipeline, API, migration),
+- normalized SQL fingerprints,
+- inbound/outbound traffic,
+- hourly storage samples.
+
+The `/analytics` page shows summary cards, latency, rows, traffic and storage
+charts, plus top databases and top queries. Metrics begin at the first start of
+this version; there is no historical backfill.
+
+SQL previews redact string and numeric literals. Raw metrics are retained for
+`ANALYTICS_RAW_RETENTION_DAYS` (default 14), and storage samples for
+`ANALYTICS_STORAGE_RETENTION_DAYS` (default 90).
+
 ## Snapshots and restore points
 
 `LOCAL-FILE` databases get scheduled snapshots when `SNAPSHOTS_ENABLED=true`.

@@ -472,6 +472,7 @@ export default function StudioPage() {
           limit: SQL_PREVIEW_LIMIT,
           offset,
           countTotal: offset === 0,
+          source: 'studio',
         }),
       });
 

@@ -8,6 +8,7 @@ import { parseCookies } from './infrastructure/security/cookies';
 import { requireCsrf } from './presentation/http/csrf';
 import { ValidationError } from './types/validations';
 import { getUserRoles } from './application/auth/authorization';
+import { analyticsCollector } from './application/analytics/AnalyticsCollector';
 
 export function buildServer() {
   const app = fastify({ logger: true, trustProxy: true, ignoreTrailingSlash: true });
@@ -20,6 +21,48 @@ export function buildServer() {
     },
   });
   app.register(securityPlugin);
+
+  app.addHook('onRequest', async (request) => {
+    if (request.url.startsWith('/api/v1/databases/')) {
+      (request as any).__analyticsStartedAt = Date.now();
+    }
+  });
+
+  app.addHook('onSend', async (request, reply, payload) => {
+    if ((request as any).__analyticsStartedAt) {
+      const headerLength = Number(reply.getHeader('content-length'));
+      const payloadLength = typeof payload === 'string'
+        ? Buffer.byteLength(payload)
+        : Buffer.isBuffer(payload)
+          ? payload.length
+          : Number.isFinite(headerLength)
+            ? headerLength
+            : 0;
+      (request as any).__analyticsResponseBytes = payloadLength;
+    }
+    return payload;
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const startedAt = (request as any).__analyticsStartedAt;
+    if (!startedAt) return;
+
+    const match = request.url.match(/\/api\/v1\/databases\/([^/?]+)/);
+    const candidate = match?.[1];
+    const databaseId = candidate && !['v2', 'v1', 'pipeline'].includes(candidate) ? candidate : undefined;
+    const requestLength = Number(request.headers['content-length'] || 0);
+
+    analyticsCollector.recordTraffic({
+      databaseId,
+      method: request.method,
+      path: request.url.split('?')[0],
+      requestBytes: Number.isFinite(requestLength) ? requestLength : 0,
+      responseBytes: (request as any).__analyticsResponseBytes || 0,
+      statusCode: reply.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
+
   app.addHook('preHandler', async (request, reply) => {
     if (!requireCsrf(request, reply)) {
       return reply;

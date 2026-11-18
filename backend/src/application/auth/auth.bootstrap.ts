@@ -13,11 +13,12 @@ const CORE_PERMISSIONS = [
   { code: 'settings.read', description: 'View platform settings' },
   { code: 'settings.write', description: 'Manage platform settings' },
   { code: 'audit.read', description: 'Read audit log' },
+  { code: 'analytics.read', description: 'Read usage analytics' },
 ];
 
 const ROLE_MATRIX = [
   { name: 'superadmin', permissions: CORE_PERMISSIONS.map((permission) => permission.code) },
-  { name: 'admin', permissions: ['users.read', 'users.write', 'projects.read', 'projects.write', 'databases.read', 'databases.write', 'settings.read', 'settings.write', 'audit.read'] },
+  { name: 'admin', permissions: ['users.read', 'users.write', 'projects.read', 'projects.write', 'databases.read', 'databases.write', 'settings.read', 'settings.write', 'audit.read', 'analytics.read'] },
   { name: 'operator', permissions: ['projects.read', 'databases.read', 'databases.write'] },
   { name: 'readonly', permissions: ['projects.read', 'databases.read', 'audit.read'] },
 ];

@@ -15,6 +15,7 @@ import { ConnectionPool } from '../../../infrastructure/db/ConnectionPool';
 import { SqliteClient } from '../../../infrastructure/sqlite/SqliteClient';
 import { LibsqlNamespaceService } from '../../../infrastructure/libsql/LibsqlNamespaceService';
 import { presentDatabase } from '../database-presenter';
+import { analyticsCollector } from '../../../application/analytics/AnalyticsCollector';
 
 function formatHranaValue(val: any) {
   if (val === null || val === undefined) return { type: 'null' };
@@ -578,8 +579,22 @@ export default async function databaseRoutes(app: FastifyInstance) {
         }
         results.push({ type: 'ok', response: { type: 'close_sql' } });
       } else if (reqItem.type === 'execute') {
+        const startedAt = Date.now();
+        const sql = reqItem.stmt?.sql
+          || (reqItem.stmt?.sql_id != null ? activeSqlMap.get(reqItem.stmt.sql_id) : '')
+          || 'unknown';
         try {
           const stmtResult = await executeHranaStmt(client, reqItem.stmt, activeSqlMap);
+          analyticsCollector.recordQuery({
+            databaseId: database.id,
+            projectId: database.project?.id,
+            source: 'pipeline',
+            sql,
+            durationMs: Date.now() - startedAt,
+            rowsRead: stmtResult.rows?.length || 0,
+            rowsWritten: stmtResult.affected_row_count || 0,
+            success: true,
+          });
           results.push({
             type: 'ok',
             response: {
@@ -588,6 +603,15 @@ export default async function databaseRoutes(app: FastifyInstance) {
             },
           });
         } catch (err: any) {
+          analyticsCollector.recordQuery({
+            databaseId: database.id,
+            projectId: database.project?.id,
+            source: 'pipeline',
+            sql,
+            durationMs: Date.now() - startedAt,
+            success: false,
+            errorCode: err?.code || 'SQLITE_ERROR',
+          });
           results.push({
             type: 'error',
             error: {
@@ -609,11 +633,34 @@ export default async function databaseRoutes(app: FastifyInstance) {
             continue;
           }
 
+          const startedAt = Date.now();
+          const sql = step.stmt?.sql
+            || (step.stmt?.sql_id != null ? activeSqlMap.get(step.stmt.sql_id) : '')
+            || 'unknown';
           try {
             const stmtResult = await executeHranaStmt(client, step.stmt, activeSqlMap);
+            analyticsCollector.recordQuery({
+              databaseId: database.id,
+              projectId: database.project?.id,
+              source: 'pipeline',
+              sql,
+              durationMs: Date.now() - startedAt,
+              rowsRead: stmtResult.rows?.length || 0,
+              rowsWritten: stmtResult.affected_row_count || 0,
+              success: true,
+            });
             stepResults.push(stmtResult);
             stepErrors.push(null);
           } catch (err: any) {
+            analyticsCollector.recordQuery({
+              databaseId: database.id,
+              projectId: database.project?.id,
+              source: 'pipeline',
+              sql,
+              durationMs: Date.now() - startedAt,
+              success: false,
+              errorCode: err?.code || 'SQLITE_ERROR',
+            });
             stepResults.push(null);
             stepErrors.push({
               message: err?.message || 'batch step error',
@@ -633,6 +680,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
         });
       } else if (reqItem.type === 'sequence') {
         const sequenceSql = reqItem.sql || (reqItem.sql_id != null ? activeSqlMap.get(reqItem.sql_id) : undefined);
+        const startedAt = Date.now();
         try {
           if (sequenceSql) {
             if (client instanceof SqliteClient) {
@@ -641,8 +689,29 @@ export default async function databaseRoutes(app: FastifyInstance) {
               await (client as any).execute(sequenceSql);
             }
           }
+          if (sequenceSql) {
+            analyticsCollector.recordQuery({
+              databaseId: database.id,
+              projectId: database.project?.id,
+              source: 'pipeline',
+              sql: sequenceSql,
+              durationMs: Date.now() - startedAt,
+              success: true,
+            });
+          }
           results.push({ type: 'ok', response: { type: 'sequence' } });
         } catch (err: any) {
+          if (sequenceSql) {
+            analyticsCollector.recordQuery({
+              databaseId: database.id,
+              projectId: database.project?.id,
+              source: 'pipeline',
+              sql: sequenceSql,
+              durationMs: Date.now() - startedAt,
+              success: false,
+              errorCode: err?.code || 'SQLITE_ERROR',
+            });
+          }
           results.push({
             type: 'error',
             error: {

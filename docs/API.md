@@ -300,6 +300,27 @@ Scans a mounted directory for `.db` files and registers them.
 
 Scans and adopts mounted `.db` files into the managed storage tree.
 
+## Analytics
+
+### `GET /analytics`
+
+Returns usage analytics for the selected period. Requires `analytics.read`.
+
+Query parameters:
+
+```text
+range=today|7d|30d|month
+from=<ISO timestamp>
+to=<ISO timestamp>
+```
+
+The response includes summary totals, a timeseries for latency, rows,
+traffic and storage, the top databases, and the top normalized queries. SQL
+literals are redacted and never stored in analytics previews.
+
+Metrics are collected from the moment the analytics-enabled backend starts.
+The raw metrics retention is controlled by `ANALYTICS_RAW_RETENTION_DAYS`.
+
 ## Audit and health
 
 ### `GET /audit`

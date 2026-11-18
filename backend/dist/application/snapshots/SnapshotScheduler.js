@@ -14,10 +14,16 @@ class SnapshotScheduler {
         this.running = null;
         this.failures = new Map();
     }
-    start() {
+    async start() {
         if (!(0, snapshot_config_1.getSnapshotConfig)().enabled || this.timer)
             return;
         this.stopped = false;
+        try {
+            await this.service.recoverInterruptedSnapshots();
+        }
+        catch (error) {
+            console.warn('[snapshots] could not recover interrupted snapshots:', error?.message || error);
+        }
         this.schedule((0, snapshot_config_1.getSnapshotConfig)().initialDelayMs);
         console.log(`[snapshots] scheduler enabled (every ${(0, snapshot_config_1.getSnapshotConfig)().intervalMinutes} min)`);
     }

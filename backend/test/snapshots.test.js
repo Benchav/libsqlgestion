@@ -274,6 +274,34 @@ test.describe('Snapshots and restore points', () => {
     assert.deepEqual(files, [path.join(root, 'raw.db')]);
   });
 
+  test('startup recovery marks interrupted pending snapshots as failed', async () => {
+    const snapshotRepo = AppDataSource.getRepository(DatabaseSnapshot);
+    const directory = path.join(snapshotRoot, sourceProject.id, sourceDatabase.id);
+    fs.mkdirSync(directory, { recursive: true });
+
+    const row = await snapshotRepo.save(snapshotRepo.create({
+      databaseId: sourceDatabase.id,
+      projectId: sourceProject.id,
+      status: 'pending',
+      reason: 'scheduled',
+      filePath: path.join(directory, 'interrupted.db'),
+      fileName: 'interrupted.db',
+      sizeBytes: 0,
+      takenAt: new Date(),
+    }));
+    const tempPath = path.join(directory, `.tmp-${row.id}.db`);
+    fs.writeFileSync(tempPath, 'temp');
+    fs.writeFileSync(row.filePath, 'partial');
+
+    await snapshotService.recoverInterruptedSnapshots();
+
+    const updated = await snapshotRepo.findOneBy({ id: row.id });
+    assert.equal(updated.status, 'failed');
+    assert.match(updated.errorMessage, /restart/);
+    assert.equal(fs.existsSync(tempPath), false);
+    assert.equal(fs.existsSync(row.filePath), false);
+  });
+
   test('scheduler creates an initial snapshot for a database without one', async () => {
     const scheduler = new SnapshotScheduler(snapshotService);
     const result = await scheduler.runOnce(new Date());

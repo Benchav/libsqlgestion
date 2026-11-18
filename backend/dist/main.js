@@ -52,7 +52,7 @@ const start = async () => {
     }
     const snapshotScheduler = new SnapshotScheduler_1.SnapshotScheduler();
     try {
-        snapshotScheduler.start();
+        await snapshotScheduler.start();
     }
     catch (error) {
         console.warn('[main] Could not start snapshot scheduler:', error?.message || error);

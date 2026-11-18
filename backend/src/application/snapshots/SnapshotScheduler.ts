@@ -17,9 +17,14 @@ export class SnapshotScheduler {
 
   constructor(private readonly service = new SnapshotService()) {}
 
-  start() {
+  async start() {
     if (!getSnapshotConfig().enabled || this.timer) return;
     this.stopped = false;
+    try {
+      await this.service.recoverInterruptedSnapshots();
+    } catch (error: any) {
+      console.warn('[snapshots] could not recover interrupted snapshots:', error?.message || error);
+    }
     this.schedule(getSnapshotConfig().initialDelayMs);
     console.log(`[snapshots] scheduler enabled (every ${getSnapshotConfig().intervalMinutes} min)`);
   }

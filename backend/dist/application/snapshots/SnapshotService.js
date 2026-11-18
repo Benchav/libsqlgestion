@@ -454,6 +454,24 @@ class SnapshotService {
         }
         return { deleted };
     }
+    async recoverInterruptedSnapshots() {
+        const pending = await this.snapshotRepo.find({ where: { status: 'pending' } });
+        for (const snapshot of pending) {
+            if (snapshotRuntimeState.activeSnapshotIds.has(snapshot.id))
+                continue;
+            const tempPath = path_1.default.join(path_1.default.dirname(snapshot.filePath), `.tmp-${snapshot.id}.db`);
+            await fs_1.default.promises.rm(tempPath, { force: true }).catch(() => undefined);
+            await fs_1.default.promises.rm(`${tempPath}-wal`, { force: true }).catch(() => undefined);
+            await fs_1.default.promises.rm(`${tempPath}-shm`, { force: true }).catch(() => undefined);
+            await fs_1.default.promises.rm(snapshot.filePath, { force: true }).catch(() => undefined);
+            await fs_1.default.promises.rm(`${snapshot.filePath}-wal`, { force: true }).catch(() => undefined);
+            await fs_1.default.promises.rm(`${snapshot.filePath}-shm`, { force: true }).catch(() => undefined);
+            await this.snapshotRepo.update(snapshot.id, {
+                status: 'failed',
+                errorMessage: 'snapshot was interrupted by a backend restart',
+            });
+        }
+    }
     async cleanupOrphans() {
         await this.markStalePending();
         const root = this.storageService.snapshotRootDirectory();

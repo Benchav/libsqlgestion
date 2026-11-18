@@ -214,10 +214,33 @@ Request body:
 
 ```json
 {
-  "sql": "SELECT * FROM users LIMIT 10",
-  "params": []
+  "sql": "SELECT * FROM users ORDER BY id",
+  "params": [],
+  "limit": 200,
+  "offset": 0,
+  "countTotal": true
 }
 ```
+
+`limit`, `offset` and `countTotal` are optional and designed for the Studio.
+Read queries are always capped by `QUERY_HARD_MAX_ROWS` (default 1000) to
+protect the API and browser. The response includes pagination metadata:
+
+```json
+{
+  "ok": true,
+  "rows": [],
+  "rowsReturned": 200,
+  "limit": 200,
+  "offset": 0,
+  "hasMore": true,
+  "totalRows": 41426,
+  "truncated": true,
+  "durationMs": 42
+}
+```
+
+`countTotal` runs an additional `COUNT(*)`; leave it false for polling clients.
 
 **Responses:**
 - `200 OK`: Successful query execution.
@@ -225,6 +248,7 @@ Request body:
 - `404 Not Found`: Database not found.
 - `422 Unprocessable Entity`: SQL syntax error, constraint violation, or non-existent table/column.
 - `503 Service Unavailable`: Database is currently locked (SQLITE_BUSY).
+- `504 Gateway Timeout`: Query exceeded `SQL_QUERY_TIMEOUT_MS`.
 - `500 Internal Server Error`: Generic execution failure or corrupted database (SQLITE_CORRUPT).
 
 ## Migrations

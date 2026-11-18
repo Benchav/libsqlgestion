@@ -5,7 +5,9 @@ import { Play, CheckCircle2, AlertCircle, Database } from 'lucide-react';
 
 type Props = {
   onExecute: (sql: string) => void;
+  onLoadMore?: () => void;
   loading: boolean;
+  loadingMore?: boolean;
   result: {
     ok: boolean;
     rows?: unknown[];
@@ -13,10 +15,17 @@ type Props = {
     changes?: number;
     statementsExecuted?: number;
     statementResults?: Array<{ index: number; sql: string; kind: 'read' | 'write'; rows?: unknown[]; rowsAffected?: number; lastInsertRowid?: unknown }>;
+    rowsReturned?: number;
+    limit?: number;
+    offset?: number;
+    hasMore?: boolean;
+    totalRows?: number;
+    truncated?: boolean;
+    durationMs?: number;
   } | null;
 };
 
-export function SqlRunner({ onExecute, loading, result }: Props) {
+export function SqlRunner({ onExecute, onLoadMore, loading, loadingMore = false, result }: Props) {
   const [sql, setSql] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -98,35 +107,65 @@ export function SqlRunner({ onExecute, loading, result }: Props) {
           result.ok ? (
             <>
               {result.rows && result.rows.length > 0 ? (
-                <div className="border border-zinc-800/80 rounded-lg overflow-hidden bg-[#09090b]">
-                  <div className="px-3 py-2 border-b border-zinc-800/80 flex items-center gap-2 bg-[#09090b]">
-                    <CheckCircle2 size={14} className="text-emerald-500" />
-                    <span className="text-xs font-medium text-emerald-400">{result.rows.length} row{result.rows.length !== 1 ? 's' : ''} returned</span>
-                  </div>
-                  <div className="overflow-x-auto custom-scrollbar">
-                    <table className="w-full text-left border-collapse whitespace-nowrap table-fixed">
-                      <thead className="bg-[#09090b]">
-                        <tr>
-                          {Object.keys(result.rows[0] as object).map((key) => (
-                            <th key={key} className="border-b border-r border-zinc-800 py-1.5 px-3 text-zinc-200 font-semibold text-xs min-w-[120px] bg-[#09090b]">
-                              {key}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="font-mono text-xs">
-                        {result.rows.map((row: any, i) => (
-                          <tr key={i} className="hover:bg-zinc-800/40 border-b border-zinc-800/40">
-                            {Object.values(row).map((val: any, j) => (
-                              <td key={j} className={`border-r border-zinc-800/40 px-3 py-1.5 ${val === null ? 'bg-zinc-900/20 text-zinc-600' : 'text-zinc-300'} truncate`}>
-                                {val === null ? 'NULL' : String(val)}
-                              </td>
+                <div className="space-y-2">
+                  <div className="border border-zinc-800/80 rounded-lg overflow-hidden bg-[#09090b]">
+                    <div className="px-3 py-2 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 bg-[#09090b]">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 size={14} className="text-emerald-500" />
+                        <span className="text-xs font-medium text-emerald-400">
+                          Showing {result.rows.length}
+                          {result.totalRows !== undefined ? ` of ${result.totalRows.toLocaleString()}` : ''} row{result.rows.length !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                        {typeof result.durationMs === 'number' && <span>{result.durationMs} ms</span>}
+                        {result.truncated && <span className="text-amber-400">Preview limited</span>}
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-left border-collapse whitespace-nowrap table-fixed">
+                        <thead className="bg-[#09090b]">
+                          <tr>
+                            {Object.keys(result.rows[0] as object).map((key) => (
+                              <th key={key} className="border-b border-r border-zinc-800 py-1.5 px-3 text-zinc-200 font-semibold text-xs min-w-[120px] bg-[#09090b]">
+                                {key}
+                              </th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="font-mono text-xs">
+                          {result.rows.map((row: any, i) => (
+                            <tr key={i} className="hover:bg-zinc-800/40 border-b border-zinc-800/40">
+                              {Object.keys(result.rows![0] as object).map((key) => {
+                                const val = row?.[key];
+                                return (
+                                  <td key={key} className={`border-r border-zinc-800/40 px-3 py-1.5 ${val === null ? 'bg-zinc-900/20 text-zinc-600' : 'text-zinc-300'} truncate`}>
+                                    {val === null ? 'NULL' : String(val)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
+
+                  {result.hasMore && onLoadMore && (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800/80 bg-[#09090b] px-3 py-2">
+                      <span className="text-xs text-zinc-500">
+                        More rows are available. Showing a safe preview of {result.rows.length} rows.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={onLoadMore}
+                        disabled={loadingMore}
+                        className="inline-flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-wait disabled:opacity-50"
+                      >
+                        {loadingMore ? 'Loading...' : `Load next ${result.limit || 200}`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">

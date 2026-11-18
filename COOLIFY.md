@@ -47,6 +47,8 @@ ALLOW_PUBLIC_REGISTRATION=false
 SQLITE_PERFORMANCE_PROFILE=performance
 DB_CONNECTION_POOL_MAX_SIZE=256
 DB_CONNECTION_POOL_IDLE_TTL_MS=1800000
+SQL_QUERY_TIMEOUT_MS=15000
+QUERY_HARD_MAX_ROWS=1000
 LIBSQL_RUNTIME_TOKEN_TTL_SECONDS=2592000
 LIBSQL_RUNTIME_MEMORY_BYTES=0
 LIBSQL_RUNTIME_CPU_NANO=0
@@ -85,6 +87,7 @@ Notes:
 - `ALLOW_PUBLIC_REGISTRATION=false` is recommended after the first admin is created.
 - `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
+- `SQL_QUERY_TIMEOUT_MS` cancels long read queries; `QUERY_HARD_MAX_ROWS` caps API/Studio result sets.
 - `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - `LIBSQL_NAMESPACE_IMPORTS=false` keeps imports local by default. Use `auto` to try the namespace when `sqld` is reachable, or `true` to require it.

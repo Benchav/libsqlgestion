@@ -34,6 +34,9 @@ exports.convertToRuntimeSchema = zod_1.z.object({
 exports.executeQuerySchema = zod_1.z.object({
     sql: zod_1.z.string().min(1).max(65536),
     params: zod_1.z.array(zod_1.z.unknown()).default([]),
+    limit: zod_1.z.coerce.number().int().min(1).max(1000).optional(),
+    offset: zod_1.z.coerce.number().int().min(0).optional(),
+    countTotal: zod_1.z.boolean().optional(),
 });
 exports.createProjectSchema = zod_1.z.object({
     name: nonEmptyString,

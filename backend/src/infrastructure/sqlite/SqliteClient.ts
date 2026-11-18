@@ -235,6 +235,14 @@ export class SqliteClient {
     }
   }
 
+  interrupt(): void {
+    try {
+      (this.db as any).interrupt();
+    } catch {
+      // Best-effort cancellation.
+    }
+  }
+
   close(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       this.db.close((error) => {

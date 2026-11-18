@@ -16,16 +16,22 @@ async function queryRoutes(app) {
         if (!access)
             return;
         try {
-            const result = await queryService.execute(id, body.sql, body.params);
+            const result = await queryService.execute(id, body.sql, body.params, {
+                limit: body.limit,
+                offset: body.offset,
+                countTotal: body.countTotal,
+            });
             return reply.send(result);
         }
         catch (error) {
             if (error instanceof SqliteClient_1.DatabaseError) {
                 const statusCode = error.code === 'SQLITE_SYNTAX' || error.code === 'SQLITE_CONSTRAINT' || error.code === 'SQLITE_NO_TABLE' || error.code === 'SQLITE_NO_COLUMN'
                     ? 422
-                    : error.code === 'SQLITE_BUSY'
-                        ? 503
-                        : 500;
+                    : error.code === 'SQLITE_TIMEOUT'
+                        ? 504
+                        : error.code === 'SQLITE_BUSY'
+                            ? 503
+                            : 500;
                 return reply.status(statusCode).send({
                     ok: false,
                     error: error.message,

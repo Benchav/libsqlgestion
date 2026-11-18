@@ -36,6 +36,9 @@ export const convertToRuntimeSchema = z.object({
 export const executeQuerySchema = z.object({
   sql: z.string().min(1).max(65536),
   params: z.array(z.unknown()).default([]),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  countTotal: z.boolean().optional(),
 });
 
 export const createProjectSchema = z.object({

@@ -267,6 +267,80 @@ test.describe('Import → Schema → Query End-to-End Integration', () => {
       assert.ok(Array.isArray(body.rows));
       assert.equal(body.rows.length, 0);
     });
+
+    test('paginates read queries with limit, offset and totalRows', async () => {
+      const first = await app.inject({
+        method: 'POST',
+        url: `/api/v1/databases/${apiDbId}/query`,
+        headers: queryHeaders(),
+        payload: {
+          sql: 'SELECT * FROM clientes ORDER BY id',
+          limit: 2,
+          offset: 0,
+          countTotal: true,
+        },
+      });
+      assert.equal(first.statusCode, 200);
+      const firstBody = JSON.parse(first.payload);
+      assert.equal(firstBody.rows.length, 2);
+      assert.equal(firstBody.hasMore, true);
+      assert.equal(firstBody.truncated, true);
+      assert.equal(firstBody.totalRows, 3);
+      assert.equal(typeof firstBody.durationMs, 'number');
+
+      const second = await app.inject({
+        method: 'POST',
+        url: `/api/v1/databases/${apiDbId}/query`,
+        headers: queryHeaders(),
+        payload: {
+          sql: 'SELECT * FROM clientes ORDER BY id',
+          limit: 2,
+          offset: 2,
+          countTotal: false,
+        },
+      });
+      assert.equal(second.statusCode, 200);
+      const secondBody = JSON.parse(second.payload);
+      assert.equal(secondBody.rows.length, 1);
+      assert.equal(secondBody.hasMore, false);
+      assert.equal(secondBody.rows[0].nombre, 'Gamma SA');
+    });
+
+    test('supports CTE previews and applies the hard row cap without a limit', async () => {
+      const cte = await app.inject({
+        method: 'POST',
+        url: `/api/v1/databases/${apiDbId}/query`,
+        headers: queryHeaders(),
+        payload: {
+          sql: 'WITH selected AS (SELECT * FROM clientes) SELECT * FROM selected ORDER BY id',
+          limit: 2,
+          countTotal: true,
+        },
+      });
+      assert.equal(cte.statusCode, 200);
+      const cteBody = JSON.parse(cte.payload);
+      assert.equal(cteBody.rows.length, 2);
+      assert.equal(cteBody.totalRows, 3);
+
+      const previousMax = process.env.QUERY_HARD_MAX_ROWS;
+      process.env.QUERY_HARD_MAX_ROWS = '2';
+      try {
+        const capped = await app.inject({
+          method: 'POST',
+          url: `/api/v1/databases/${apiDbId}/query`,
+          headers: queryHeaders(),
+          payload: { sql: 'SELECT * FROM clientes ORDER BY id' },
+        });
+        assert.equal(capped.statusCode, 200);
+        const cappedBody = JSON.parse(capped.payload);
+        assert.equal(cappedBody.rows.length, 2);
+        assert.equal(cappedBody.hasMore, true);
+        assert.equal(cappedBody.truncated, true);
+      } finally {
+        if (previousMax === undefined) delete process.env.QUERY_HARD_MAX_ROWS;
+        else process.env.QUERY_HARD_MAX_ROWS = previousMax;
+      }
+    });
   });
 
   // ──────────────────────────────────────────────────────────

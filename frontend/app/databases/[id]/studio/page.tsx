@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { apiRequest } from '../../../../lib/api';
 import { AppShell } from '../../../../components/AppShell';
@@ -42,6 +42,24 @@ function isTruthyValue(value: string) {
 }
 
 const PAGE_SIZE = 50;
+const SQL_PREVIEW_LIMIT = 200;
+const SQL_PREVIEW_MAX_ROWS = 2000;
+
+type SqlResult = {
+  ok: boolean;
+  rows?: unknown[];
+  error?: string;
+  changes?: number;
+  statementsExecuted?: number;
+  statementResults?: Array<{ index: number; sql: string; kind: 'read' | 'write'; rows?: unknown[]; rowsAffected?: number; lastInsertRowid?: unknown }>;
+  rowsReturned?: number;
+  limit?: number;
+  offset?: number;
+  hasMore?: boolean;
+  totalRows?: number;
+  truncated?: boolean;
+  durationMs?: number;
+};
 
 export default function StudioPage() {
   const params = useParams();
@@ -61,6 +79,7 @@ export default function StudioPage() {
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('ASC');
   const [gridLoading, setGridLoading] = useState(false);
+  const rowCountCache = useRef<Map<string, number>>(new Map());
 
   // Manual insert state
   const [isInsertOpen, setIsInsertOpen] = useState(false);
@@ -75,8 +94,10 @@ export default function StudioPage() {
   const [editError, setEditError] = useState('');
 
   // SQL runner state
-  const [sqlResult, setSqlResult] = useState<{ ok: boolean; rows?: unknown[]; error?: string; changes?: number; statementsExecuted?: number; statementResults?: Array<{ index: number; sql: string; kind: 'read' | 'write'; rows?: unknown[]; rowsAffected?: number; lastInsertRowid?: unknown }> } | null>(null);
+  const [sqlResult, setSqlResult] = useState<SqlResult | null>(null);
   const [sqlLoading, setSqlLoading] = useState(false);
+  const [sqlLoadingMore, setSqlLoadingMore] = useState(false);
+  const [sqlLastQuery, setSqlLastQuery] = useState('');
 
   const [error, setError] = useState('');
   const [schemaLoading, setSchemaLoading] = useState(false);
@@ -133,33 +154,47 @@ export default function StudioPage() {
     if (dbId) loadSchema();
   }, [dbId]);
 
-  // Load table data
-  const loadTableData = useCallback(async () => {
+  // Load table data. The count is cached per table and only refreshed after writes.
+  const loadTableData = useCallback(async (options: { refreshCount?: boolean } = {}) => {
     if (!activeTable || !dbId) return;
     setGridLoading(true);
     try {
-      const countResult = await apiRequest<{ ok: boolean; rows: Array<{ cnt: number }> }>(`/databases/${dbId}/query`, {
-        method: 'POST',
-        body: JSON.stringify({ sql: `SELECT COUNT(*) as cnt FROM "${activeTable}"` }),
-      });
-      const count = countResult.rows?.[0]?.cnt ?? 0;
+      let count = rowCountCache.current.get(activeTable);
+      if (count === undefined || options.refreshCount) {
+        const countResult = await apiRequest<{ ok: boolean; rows: Array<{ cnt: number }> }>(`/databases/${dbId}/query`, {
+          method: 'POST',
+          body: JSON.stringify({ sql: `SELECT COUNT(*) AS cnt FROM "${activeTable}"` }),
+        });
+        count = Number(countResult.rows?.[0]?.cnt ?? 0);
+        rowCountCache.current.set(activeTable, count);
+      }
       setTotalRows(count);
 
-      const orderClause = sortColumn ? ` ORDER BY "${sortColumn}" ${sortDir}` : '';
+      const tableSchema = tables.find((schema) => schema.table === activeTable);
+      const primaryKey = tableSchema?.columns.find((column) => column.pk === 1)?.name;
+      const orderExpression = sortColumn
+        ? `"${sortColumn}"`
+        : primaryKey
+          ? `"${primaryKey}"`
+          : tableSchema?.kind === 'table'
+            ? 'rowid'
+            : null;
+      const orderClause = orderExpression ? ` ORDER BY ${orderExpression} ${sortColumn ? sortDir : 'ASC'}` : '';
+
       const dataResult = await apiRequest<{ ok: boolean; rows: Record<string, unknown>[] }>(`/databases/${dbId}/query`, {
         method: 'POST',
         body: JSON.stringify({
-          sql: `SELECT * FROM "${activeTable}"${orderClause} LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`,
+          sql: `SELECT * FROM "${activeTable}"${orderClause} LIMIT ${PAGE_SIZE + 1} OFFSET ${page * PAGE_SIZE}`,
         }),
       });
-      setRows(dataResult.rows || []);
+      setRows((dataResult.rows || []).slice(0, PAGE_SIZE));
     } catch (err: any) {
       setError(err.message);
       setRows([]);
     } finally {
       setGridLoading(false);
     }
-  }, [dbId, activeTable, page, sortColumn, sortDir]);
+  }, [dbId, activeTable, page, sortColumn, sortDir, tables]);
 
   useEffect(() => {
     loadTableData();
@@ -217,7 +252,7 @@ export default function StudioPage() {
           sql: `UPDATE "${activeTable}" SET "${column}" = ${sqlValue} WHERE "${pkCol.name}" = ${pkSqlValue}`,
         }),
       });
-      await loadTableData();
+      await loadTableData({ refreshCount: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -246,7 +281,7 @@ export default function StudioPage() {
           sql: `DELETE FROM "${activeTable}" WHERE "${pkCol.name}" = ${pkSqlValue}`,
         }),
       });
-      await loadTableData();
+      await loadTableData({ refreshCount: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -264,7 +299,7 @@ export default function StudioPage() {
           method: 'POST',
           body: JSON.stringify({ sql: `INSERT INTO "${activeTable}" DEFAULT VALUES` }),
         });
-        await loadTableData();
+        await loadTableData({ refreshCount: true });
       } catch (err: any) {
         setError(err.message);
       }
@@ -283,7 +318,7 @@ export default function StudioPage() {
       const newCount = totalRows + 1;
       const lastPage = Math.max(0, Math.ceil(newCount / PAGE_SIZE) - 1);
       setPage(lastPage);
-      await loadTableData();
+      await loadTableData({ refreshCount: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -346,7 +381,7 @@ export default function StudioPage() {
         }),
       });
       setIsInsertOpen(false);
-      await loadTableData();
+      await loadTableData({ refreshCount: true });
       loadSchema();
     } catch (err: any) {
       setInsertError(err.message);
@@ -399,7 +434,7 @@ export default function StudioPage() {
       });
       setIsEditOpen(false);
       setEditRowIndex(null);
-      await loadTableData();
+      await loadTableData({ refreshCount: true });
       loadSchema();
     } catch (err: any) {
       setEditError(err.message);
@@ -408,28 +443,95 @@ export default function StudioPage() {
     }
   }
 
-  async function handleSqlExecute(sql: string) {
-    setSqlLoading(true);
-    setSqlResult(null);
+  async function runSqlQuery(sql: string, offset = 0, append = false) {
+    if (append) setSqlLoadingMore(true);
+    else {
+      setSqlLoading(true);
+      setSqlResult(null);
+    }
+
     try {
-      const result = await apiRequest<{ ok: boolean; rows?: unknown[]; result?: { changes: number }; statementsExecuted?: number; statementResults?: Array<{ index: number; sql: string; kind: 'read' | 'write'; rows?: unknown[]; rowsAffected?: number; lastInsertRowid?: unknown }> }>(`/databases/${dbId}/query`, {
+      const result = await apiRequest<{
+        ok: boolean;
+        rows?: unknown[];
+        error?: string;
+        rowsReturned?: number;
+        limit?: number;
+        offset?: number;
+        hasMore?: boolean;
+        totalRows?: number;
+        truncated?: boolean;
+        durationMs?: number;
+        result?: { changes: number };
+        statementsExecuted?: number;
+        statementResults?: Array<{ index: number; sql: string; kind: 'read' | 'write'; rows?: unknown[]; rowsAffected?: number; lastInsertRowid?: unknown }>;
+      }>(`/databases/${dbId}/query`, {
         method: 'POST',
-        body: JSON.stringify({ sql }),
+        body: JSON.stringify({
+          sql,
+          limit: SQL_PREVIEW_LIMIT,
+          offset,
+          countTotal: offset === 0,
+        }),
       });
-      setSqlResult({
+
+      const nextResult: SqlResult = {
         ok: result.ok !== false,
         rows: result.rows,
+        error: result.error,
         changes: result.result?.changes,
         statementsExecuted: result.statementsExecuted,
         statementResults: result.statementResults,
-      });
-      loadSchema();
-      if (activeTable) loadTableData();
+        rowsReturned: result.rowsReturned,
+        limit: result.limit,
+        offset: result.offset,
+        hasMore: result.hasMore,
+        totalRows: append ? sqlResult?.totalRows ?? result.totalRows : result.totalRows,
+        truncated: result.truncated,
+        durationMs: result.durationMs,
+      };
+
+      if (append && sqlResult?.rows) {
+        const combinedRows = [...sqlResult.rows, ...(result.rows || [])];
+        const totalRows = sqlResult.totalRows ?? result.totalRows;
+        setSqlResult({
+          ...nextResult,
+          rows: combinedRows,
+          rowsReturned: combinedRows.length,
+          totalRows,
+          hasMore: Boolean(result.hasMore) && combinedRows.length < SQL_PREVIEW_MAX_ROWS,
+          truncated: totalRows !== undefined
+            ? totalRows > combinedRows.length
+            : Boolean(nextResult.truncated),
+        });
+      } else {
+        setSqlResult(nextResult);
+      }
+
+      // Only schema/data-changing queries require a refresh.
+      const isWrite = result.rows === undefined;
+      if (isWrite) {
+        rowCountCache.current.clear();
+        loadSchema();
+        if (activeTable) loadTableData({ refreshCount: true });
+      }
     } catch (err: any) {
       setSqlResult({ ok: false, error: err.message });
     } finally {
       setSqlLoading(false);
+      setSqlLoadingMore(false);
     }
+  }
+
+  async function handleSqlExecute(sql: string) {
+    setSqlLastQuery(sql);
+    await runSqlQuery(sql, 0, false);
+  }
+
+  async function handleLoadMoreSql() {
+    if (!sqlLastQuery || !sqlResult?.rows || !sqlResult.hasMore) return;
+    if (sqlResult.rows.length >= SQL_PREVIEW_MAX_ROWS) return;
+    await runSqlQuery(sqlLastQuery, sqlResult.rows.length, true);
   }
 
   async function handleDeleteTable(tableName: string) {
@@ -763,7 +865,9 @@ export default function StudioPage() {
             ) : activeTab === 'sql' ? (
               <SqlRunner
                 onExecute={handleSqlExecute}
+                onLoadMore={handleLoadMoreSql}
                 loading={sqlLoading}
+                loadingMore={sqlLoadingMore}
                 result={sqlResult}
               />
             ) : null}

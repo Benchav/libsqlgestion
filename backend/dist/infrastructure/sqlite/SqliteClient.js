@@ -205,6 +205,14 @@ class SqliteClient {
             return { ok: false, details: DatabaseError.from(error).message };
         }
     }
+    interrupt() {
+        try {
+            this.db.interrupt();
+        }
+        catch {
+            // Best-effort cancellation.
+        }
+    }
     close() {
         return new Promise((resolve, reject) => {
             this.db.close((error) => {

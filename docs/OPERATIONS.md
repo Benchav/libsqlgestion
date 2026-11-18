@@ -117,6 +117,8 @@ Operational advice:
 - keep the original file untouched if you still need it as a fallback
 - prefer **Server path** for large databases; browser uploads are limited by
   `MAX_UPLOAD_SIZE_BYTES` (default 500 MB) and your connection speed
+- the panel gzip-compresses the file in the browser before uploading when
+  supported; the backend enforces the limit on the decompressed size
 - uploaded files are staged under `IMPORT_STAGING_DIR` (default `<data>/tmp`)
   and copied directly; live server paths use `VACUUM INTO`
 - the import waits only for the primary to accept connections; public route

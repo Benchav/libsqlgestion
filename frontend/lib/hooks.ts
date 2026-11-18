@@ -78,6 +78,7 @@ export type StorageCapabilities = {
   publicProtocol: string;
   runtimeTlsConfigured: boolean;
   maxUploadBytes: number;
+  supportsUploadCompression?: boolean;
 };
 
 export type DatabaseSnapshot = {

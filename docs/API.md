@@ -129,6 +129,10 @@ optional `subdomain`, `storageMode`, and `file`.
 - Uploads are staged under `IMPORT_STAGING_DIR` (default: `<data>/tmp`).
 - Uploaded files are already a closed snapshot, so they use a direct copy
   instead of `VACUUM INTO`, which roughly halves import I/O.
+- The panel compresses the file in the browser with gzip when
+  `CompressionStream` is available and sends `x-upload-compression: gzip`.
+  The backend decompresses it in-stream and enforces `MAX_UPLOAD_SIZE_BYTES`
+  against the **decompressed** size.
 - The maximum size is `MAX_UPLOAD_SIZE_BYTES` (default 500 MB). Larger files
   should use the server-path endpoint.
 - The response is returned after the primary accepts connections. Public route
@@ -138,8 +142,9 @@ optional `subdomain`, `storageMode`, and `file`.
 ### `GET /databases/storage-capabilities`
 
 Returns the available primary modes, public domain/protocol, whether the
-legacy local-file escape hatch is enabled, and `maxUploadBytes`. The panel uses
-it to build the create/import selectors and to explain why a mode is disabled.
+legacy local-file escape hatch is enabled, `maxUploadBytes`, and
+`supportsUploadCompression`. The panel uses it to build the create/import
+selectors, enable browser gzip compression, and explain why a mode is disabled.
 
 ### `GET /databases/:id`
 

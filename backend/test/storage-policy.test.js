@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 // Isolated libSQL-first policy environment. Must be set before loading modules.
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-storage-policy-'));
@@ -40,6 +41,21 @@ const { bootstrapPlatformSettings } = require('../dist/application/settings/Plat
 const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
 const { DatabaseService } = require('../dist/application/databases/DatabaseService');
 const { buildServer } = require('../dist/server');
+
+function buildMultipartPayload(boundary, fields, file) {
+  const parts = [];
+  for (const [name, value] of Object.entries(fields)) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+    ));
+  }
+  parts.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+  ));
+  parts.push(file.content);
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  return Buffer.concat(parts);
+}
 
 test.describe('libSQL-first storage policy', () => {
   let app;
@@ -116,6 +132,7 @@ test.describe('libSQL-first storage policy', () => {
     assert.equal(body.requirePrimary, true);
     assert.equal(body.defaultMode, null);
     assert.equal(body.maxUploadBytes, 1048576);
+    assert.equal(body.supportsUploadCompression, true);
   });
 
   test('refuses to create a libSQL database when no primary is available', async () => {
@@ -262,6 +279,125 @@ test.describe('libSQL-first storage policy', () => {
       const stagingRoot = path.join(tempDir, 'tmp');
       const leftovers = fs.existsSync(stagingRoot) ? fs.readdirSync(stagingRoot) : [];
       assert.deepEqual(leftovers, []);
+    } finally {
+      process.env.LIBSQL_ALLOW_LOCAL_FILE = 'false';
+      process.env.LIBSQL_REQUIRE_PRIMARY = 'true';
+    }
+  });
+
+  test('accepts gzip-compressed uploads and validates the decompressed database', async () => {
+    process.env.LIBSQL_ALLOW_LOCAL_FILE = 'true';
+    process.env.LIBSQL_REQUIRE_PRIMARY = 'false';
+
+    try {
+      const boundary = '----libsqlite-gzip-boundary';
+      const compressed = zlib.gzipSync(fs.readFileSync(sourceFilePath));
+      const payload = buildMultipartPayload(boundary, {
+        projectId,
+        name: 'uploaded-gzip',
+        storageMode: 'local',
+      }, {
+        filename: 'compressed.db',
+        content: compressed,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/databases/import-upload',
+        headers: {
+          cookie: cookieHeader,
+          'x-csrf-token-v2': csrfToken,
+          'x-upload-compression': 'gzip',
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+          'content-length': String(payload.length),
+        },
+        payload,
+      });
+
+      assert.equal(res.statusCode, 201, res.payload);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.database.name, 'uploaded-gzip');
+
+      const client = new SqliteClient(body.database.url);
+      try {
+        const rows = await client.all('SELECT COUNT(*) AS count FROM items');
+        assert.equal(Number(rows[0].count), 2);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      process.env.LIBSQL_ALLOW_LOCAL_FILE = 'false';
+      process.env.LIBSQL_REQUIRE_PRIMARY = 'true';
+    }
+  });
+
+  test('rejects invalid gzip uploads with a clear error', async () => {
+    process.env.LIBSQL_ALLOW_LOCAL_FILE = 'true';
+    process.env.LIBSQL_REQUIRE_PRIMARY = 'false';
+
+    try {
+      const boundary = '----libsqlite-bad-gzip-boundary';
+      const payload = buildMultipartPayload(boundary, {
+        projectId,
+        name: 'bad-gzip',
+        storageMode: 'local',
+      }, {
+        filename: 'bad.db',
+        content: Buffer.from('this is not gzip data'),
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/databases/import-upload',
+        headers: {
+          cookie: cookieHeader,
+          'x-csrf-token-v2': csrfToken,
+          'x-upload-compression': 'gzip',
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+          'content-length': String(payload.length),
+        },
+        payload,
+      });
+
+      assert.equal(res.statusCode, 400, res.payload);
+      assert.match(JSON.parse(res.payload).error, /Invalid gzip-compressed upload/i);
+    } finally {
+      process.env.LIBSQL_ALLOW_LOCAL_FILE = 'false';
+      process.env.LIBSQL_REQUIRE_PRIMARY = 'true';
+    }
+  });
+
+  test('rejects gzip uploads that expand past the decompressed limit', async () => {
+    process.env.LIBSQL_ALLOW_LOCAL_FILE = 'true';
+    process.env.LIBSQL_REQUIRE_PRIMARY = 'false';
+
+    try {
+      const boundary = '----libsqlite-gzip-limit-boundary';
+      const compressed = zlib.gzipSync(Buffer.alloc(2 * 1024 * 1024, 0x41));
+      const payload = buildMultipartPayload(boundary, {
+        projectId,
+        name: 'too-large-gzip',
+        storageMode: 'local',
+      }, {
+        filename: 'too-large.db',
+        content: compressed,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/databases/import-upload',
+        headers: {
+          cookie: cookieHeader,
+          'x-csrf-token-v2': csrfToken,
+          'x-upload-compression': 'gzip',
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+          'content-length': String(payload.length),
+        },
+        payload,
+      });
+
+      assert.equal(res.statusCode, 413, res.payload);
+      assert.match(JSON.parse(res.payload).error, /Decompressed file exceeds/i);
     } finally {
       process.env.LIBSQL_ALLOW_LOCAL_FILE = 'false';
       process.env.LIBSQL_REQUIRE_PRIMARY = 'true';

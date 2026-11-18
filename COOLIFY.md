@@ -111,7 +111,7 @@ Notes:
 - `SQL_QUERY_TIMEOUT_MS` cancels long read queries; `QUERY_HARD_MAX_ROWS` caps API/Studio result sets.
 - `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
-- `MAX_UPLOAD_SIZE_BYTES` caps browser imports. Larger databases should be placed on the server and imported through **Server path**.
+- `MAX_UPLOAD_SIZE_BYTES` caps browser imports. The panel gzip-compresses in the browser when supported; the limit applies to the decompressed database. Larger databases should be placed on the server and imported through **Server path**.
 - `IMPORT_STAGING_DIR` must stay on the `/app/data` volume so uploads are not copied across filesystems. It defaults to `<data>/tmp`.
 - `LIBSQL_RUNTIME_NETWORK=coolify` puts dynamically created libSQL runtimes on the same Docker network as the backend and Traefik. Leave it empty to detect the network from the backend container; detection prefers `coolify`. The runtime is never silently created on the default `bridge` network because internal DNS and Traefik routing fail there.
 - `LIBSQL_BACKEND_CONTAINER_ID` is only needed when `HOSTNAME`/`os.hostname()` cannot identify the backend container. A dedicated runtime is recreated through **Create new token**, so existing runtimes created on `bridge` must be rotated to pick up the correct network.

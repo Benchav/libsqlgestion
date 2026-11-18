@@ -151,6 +151,7 @@ type UploadOptions = {
   onUploadComplete?: () => void;
   timeoutMs?: number;
   signal?: AbortSignal;
+  headers?: HeadersInit;
 };
 
 /**
@@ -168,7 +169,7 @@ export async function apiUpload<T>(
     xhr.withCredentials = true;
     xhr.timeout = options.timeoutMs ?? 15 * 60 * 1000;
 
-    const headers = buildHeaders(undefined, formData, 'POST');
+    const headers = buildHeaders(options.headers, formData, 'POST');
     headers.forEach((value, key) => xhr.setRequestHeader(key, value));
 
     xhr.upload.onprogress = (event) => {

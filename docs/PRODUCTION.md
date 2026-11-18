@@ -76,7 +76,7 @@ Notes:
 - `SQLITE_PERFORMANCE_PROFILE=performance` prioritizes throughput and lower latency for ERP-style workloads.
 - `DB_CONNECTION_POOL_MAX_SIZE` and `DB_CONNECTION_POOL_IDLE_TTL_MS` tune backend client reuse.
 - `LIBSQL_RUNTIME_*` resource variables let you constrain managed runtime containers when needed.
-- `MAX_UPLOAD_SIZE_BYTES` caps browser imports; use **Server path** for larger databases.
+- `MAX_UPLOAD_SIZE_BYTES` caps browser imports; use **Server path** for larger databases. The panel gzip-compresses in the browser when supported; the limit applies to the decompressed database.
 - `IMPORT_STAGING_DIR` must be on the `/app/data` volume (default `/app/data/tmp`) to avoid cross-filesystem copies.
 - `LIBSQL_RUNTIME_NETWORK` must name the Docker network shared by the backend and Traefik (usually `coolify`). If it is empty, the backend detects the network from its own container and never falls back to the default `bridge` network. A runtime created on `bridge` cannot be reached by container name or Traefik, which shows as `Internal: Fail` and `Public: Fail`.
 

@@ -14,6 +14,7 @@ import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeS
 import { LibsqlNamespaceService } from '../../infrastructure/libsql/LibsqlNamespaceService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
+import { getMaxUploadBytes } from '../../config/uploads';
 import { getRuntimeConnectionUrl, isRemoteDatabaseUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
 
 type PrimaryMode = 'namespace' | 'runtime';
@@ -1219,10 +1220,7 @@ export class DatabaseService {
     const localAllowed = this.isLocalFileAllowed();
     const requirePrimary = this.isPrimaryRequired();
     const preferredMode = this.getRequestedPrimaryMode();
-    const configuredMaxUploadBytes = Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000);
-    const maxUploadBytes = Number.isFinite(configuredMaxUploadBytes) && configuredMaxUploadBytes > 0
-      ? configuredMaxUploadBytes
-      : 524288000;
+    const maxUploadBytes = getMaxUploadBytes();
 
     let defaultMode: StorageMode | null = null;
     if (preferredMode === 'namespace') {
@@ -1266,6 +1264,7 @@ export class DatabaseService {
       publicProtocol: settings.protocol || 'https',
       runtimeTlsConfigured: Boolean(process.env.TRAEFIK_CERT_RESOLVER?.trim()),
       maxUploadBytes,
+      supportsUploadCompression: true,
     };
   }
 

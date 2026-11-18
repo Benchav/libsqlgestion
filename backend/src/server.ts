@@ -9,13 +9,7 @@ import { requireCsrf } from './presentation/http/csrf';
 import { ValidationError } from './types/validations';
 import { getUserRoles } from './application/auth/authorization';
 import { analyticsCollector } from './application/analytics/AnalyticsCollector';
-
-const DEFAULT_MAX_UPLOAD_BYTES = 524288000;
-
-function getMaxUploadBytes() {
-  const configured = Number(process.env.MAX_UPLOAD_SIZE_BYTES || DEFAULT_MAX_UPLOAD_BYTES);
-  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_UPLOAD_BYTES;
-}
+import { getMaxUploadBytes } from './config/uploads';
 
 export function buildServer() {
   const app = fastify({ logger: true, trustProxy: true, ignoreTrailingSlash: true });

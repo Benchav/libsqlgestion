@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 export function sanitizeUploadFileName(fileName?: string | null) {
@@ -23,4 +24,29 @@ export function resolveImportStagingRoot() {
     : path.join(process.cwd(), 'data');
 
   return path.join(baseDirectory, 'tmp');
+}
+
+export async function cleanupStaleUploadDirs(
+  stagingRoot: string,
+  maxAgeMs = 24 * 60 * 60 * 1000,
+) {
+  try {
+    const entries = await fs.promises.readdir(stagingRoot, { withFileTypes: true });
+    const cutoff = Date.now() - Math.max(0, maxAgeMs);
+    await Promise.all(entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith('upload-'))
+      .map(async (entry) => {
+        const directory = path.join(stagingRoot, entry.name);
+        try {
+          const stat = await fs.promises.stat(directory);
+          if (stat.mtimeMs < cutoff) {
+            await fs.promises.rm(directory, { recursive: true, force: true });
+          }
+        } catch {
+          // Best effort: another request may have removed it concurrently.
+        }
+      }));
+  } catch {
+    // Best effort: staging may not exist yet.
+  }
 }

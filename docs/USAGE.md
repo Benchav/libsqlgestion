@@ -183,8 +183,11 @@ What happens:
 
 For large databases, prefer the **Server path** mode. Uploading depends on your
 connection speed and is limited by `MAX_UPLOAD_SIZE_BYTES` (default 500 MB).
-Uploads are staged under `IMPORT_STAGING_DIR` (default `<data>/tmp`) so they do
-not cross filesystems.
+The panel compresses the file in the browser before uploading when the browser
+supports `CompressionStream`; SQLite files usually shrink significantly. The
+backend enforces the limit against the decompressed size and rejects invalid
+gzip streams. Uploads are staged under `IMPORT_STAGING_DIR` (default
+`<data>/tmp`) so they do not cross filesystems.
 
 ## 8. Discover existing `.db` files from a mounted folder
 

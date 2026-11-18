@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '../../components/AppShell';
 import { TokenReveal } from '../../components/TokenReveal';
@@ -23,6 +23,28 @@ function formatFileSize(bytes: number) {
     unit += 1;
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+const CLIENT_COMPRESSION_MIN_BYTES = 1024 * 1024;
+const CLIENT_COMPRESSION_MAX_BYTES = 300 * 1024 * 1024;
+
+async function gzipForUpload(file: File): Promise<Blob> {
+  const CompressionStreamCtor = (globalThis as any).CompressionStream;
+  if (!CompressionStreamCtor) {
+    throw new Error('CompressionStream is not supported by this browser.');
+  }
+
+  const compressed = file.stream().pipeThrough(new CompressionStreamCtor('gzip'));
+  return new Response(compressed).blob();
 }
 
 export default function DatabasesPage() {
@@ -260,9 +282,12 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const { data: capabilities, isLoading: capabilitiesLoading, error: capabilitiesError } = useStorageCapabilities();
   const [storageMode, setStorageMode] = useState<'namespace' | 'runtime' | 'local'>('runtime');
   const [storageModeTouched, setStorageModeTouched] = useState(false);
-  const [stage, setStage] = useState<'idle' | 'uploading' | 'processing'>('idle');
+  const [stage, setStage] = useState<'idle' | 'compressing' | 'uploading' | 'processing'>('idle');
   const [uploadProgress, setUploadProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [compressionInfo, setCompressionInfo] = useState<{ originalBytes: number; compressedBytes: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+  const uploadStartedAtRef = useRef(0);
 
   useEffect(() => {
     if (!projectId && projects[0]?.id) {
@@ -293,6 +318,10 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
     return () => window.clearInterval(interval);
   }, [importing]);
 
+  useEffect(() => () => {
+    uploadAbortRef.current?.abort();
+  }, []);
+
   const publicDomain = capabilities?.publicDomain || '';
   const publicHost = subdomain.trim() && publicDomain
     ? `${subdomain.trim()}.${publicDomain}`
@@ -303,9 +332,21 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const publicDomainMissing = !publicDomain || /localhost|127\.0\.0\.1/.test(publicDomain);
   const maxUploadBytes = capabilities?.maxUploadBytes || 0;
   const fileTooLarge = Boolean(file && maxUploadBytes > 0 && file.size > maxUploadBytes);
+  const compressionSkippedForSize = Boolean(
+    capabilities?.supportsUploadCompression && file && file.size > CLIENT_COMPRESSION_MAX_BYTES,
+  );
   const uploadPercent = uploadProgress && uploadProgress.total > 0
     ? Math.min(100, Math.round((uploadProgress.loaded / uploadProgress.total) * 100))
     : null;
+  const uploadRemainingSeconds = (() => {
+    if (stage !== 'uploading' || !uploadProgress || uploadProgress.loaded <= 0 || uploadStartedAtRef.current <= 0) {
+      return null;
+    }
+    const uploadSeconds = Math.max(1, (Date.now() - uploadStartedAtRef.current) / 1000);
+    const bytesPerSecond = uploadProgress.loaded / uploadSeconds;
+    if (bytesPerSecond <= 0) return null;
+    return Math.max(0, (uploadProgress.total - uploadProgress.loaded) / bytesPerSecond);
+  })();
 
   function deriveNameFromFile(fileName: string) {
     return fileName.replace(/\.[^.]+$/, '').trim();
@@ -323,8 +364,12 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
 
     setError('');
     setImporting(true);
-    setStage(mode === 'file' ? 'uploading' : 'processing');
-    setUploadProgress(mode === 'file' && file ? { loaded: 0, total: file.size } : null);
+    setCompressionInfo(null);
+    setUploadProgress(null);
+    uploadStartedAtRef.current = 0;
+    setStage(mode === 'path' ? 'processing' : 'compressing');
+    const abortController = new AbortController();
+    uploadAbortRef.current = abortController;
 
     try {
       if (mode === 'path') {
@@ -340,12 +385,49 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
         });
         onSuccess(result.token, result.database.name, result.database.id);
       } else {
+        const selectedFile = file;
+        if (!selectedFile) {
+          throw new Error('Choose a .db file to upload.');
+        }
+
+        let uploadBlob: Blob = selectedFile;
+        let uploadCompressed = false;
+
+        if (
+          capabilities?.supportsUploadCompression
+          && selectedFile.size >= CLIENT_COMPRESSION_MIN_BYTES
+          && selectedFile.size <= CLIENT_COMPRESSION_MAX_BYTES
+          && typeof (globalThis as any).CompressionStream !== 'undefined'
+        ) {
+          try {
+            const candidate = await gzipForUpload(selectedFile);
+            if (candidate.size > 0 && candidate.size < selectedFile.size * 0.95) {
+              uploadBlob = candidate;
+              uploadCompressed = true;
+              setCompressionInfo({
+                originalBytes: selectedFile.size,
+                compressedBytes: candidate.size,
+              });
+            }
+          } catch (compressionError) {
+            console.warn('[import] client compression skipped:', compressionError);
+          }
+        }
+
+        if (abortController.signal.aborted) {
+          throw new Error('Upload cancelled.');
+        }
+
+        setStage('uploading');
+        uploadStartedAtRef.current = Date.now();
+        setUploadProgress({ loaded: 0, total: uploadBlob.size });
+
         const formData = new FormData();
         formData.append('projectId', projectId);
         if (name.trim()) formData.append('name', name.trim());
         if (subdomain.trim()) formData.append('subdomain', subdomain.trim());
         formData.append('storageMode', storageMode);
-        if (file) formData.append('file', file);
+        formData.append('file', uploadBlob, selectedFile.name);
 
         const result = await apiUpload<{ database: { id: string; name: string }; token: string }>(
           '/databases/import-upload',
@@ -359,6 +441,8 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
             },
             onUploadComplete: () => setStage('processing'),
             timeoutMs: 30 * 60 * 1000,
+            signal: abortController.signal,
+            headers: uploadCompressed ? { 'x-upload-compression': 'gzip' } : undefined,
           },
         );
         onSuccess(result.token, result.database.name, result.database.id);
@@ -366,10 +450,19 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
     } catch (err: any) {
       setError(err.message);
     } finally {
+      if (uploadAbortRef.current === abortController) {
+        uploadAbortRef.current = null;
+      }
       setImporting(false);
       setStage('idle');
       setUploadProgress(null);
     }
+  }
+
+  function handleCancelUpload() {
+    if (stage !== 'uploading') return;
+    uploadAbortRef.current?.abort();
+    setError('Upload cancelled. You can retry, use Server path, or choose a smaller file.');
   }
 
   function getImportBlockReason(): string | null {
@@ -539,6 +632,7 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               {mode === 'file' && maxUploadBytes > 0 && (
                 <p className="text-zinc-500">
                   Maximum upload size: {formatFileSize(maxUploadBytes)}. Use Server path for larger databases.
+                  If the panel is behind Cloudflare, its 100 MB request limit may also apply.
                 </p>
               )}
             </div>
@@ -564,6 +658,8 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                   onChange={(e) => {
                     const selectedFile = e.target.files?.[0] || null;
                     setFile(selectedFile);
+                    setCompressionInfo(null);
+                    setUploadProgress(null);
                     if (selectedFile && !name.trim()) {
                       setName(deriveNameFromFile(selectedFile.name));
                     }
@@ -580,6 +676,12 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               {fileTooLarge && (
                 <p className="ml-24 text-xs text-amber-400">
                   This file is larger than the upload limit. Use Server path instead.
+                </p>
+              )}
+              {!fileTooLarge && compressionSkippedForSize && (
+                <p className="ml-24 text-xs text-amber-400">
+                  Files over {formatFileSize(CLIENT_COMPRESSION_MAX_BYTES)} are uploaded without browser compression.
+                  Use Server path for the fastest import.
                 </p>
               )}
             </div>
@@ -603,12 +705,21 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                 <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-200" />
                 <div className="min-w-0 flex-1 space-y-1">
                   <p>
-                    {stage === 'uploading' && file
-                      ? `Uploading ${file.name} (${formatFileSize(file.size)})...`
-                      : storageMode === 'namespace'
-                        ? `Copying ${mode === 'file' ? file?.name || 'database' : sourcePath} into the shared namespace...`
-                        : `Creating the libSQL primary${mode === 'file' && file ? ` for ${file.name}` : ''}...`}
+                    {stage === 'compressing' && file
+                      ? `Compressing ${file.name} (${formatFileSize(file.size)}) before upload...`
+                      : stage === 'uploading' && file
+                        ? `Uploading ${file.name} (${formatFileSize(uploadProgress?.total || file.size)})...`
+                        : storageMode === 'namespace'
+                          ? `Copying ${mode === 'file' ? file?.name || 'database' : sourcePath} into the shared namespace...`
+                          : `Creating the libSQL primary${mode === 'file' && file ? ` for ${file.name}` : ''}...`}
                   </p>
+                  {compressionInfo && (
+                    <p className="text-emerald-400">
+                      Compressed {formatFileSize(compressionInfo.originalBytes)} →{' '}
+                      {formatFileSize(compressionInfo.compressedBytes)} (
+                      {Math.round((1 - compressionInfo.compressedBytes / compressionInfo.originalBytes) * 100)}% smaller)
+                    </p>
+                  )}
                   {stage === 'uploading' && uploadPercent !== null && uploadProgress && (
                     <div>
                       <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
@@ -623,18 +734,30 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
                     </div>
                   )}
                   <p className="text-zinc-500">
-                    {stage === 'uploading'
-                      ? 'Keep this window open while the file uploads.'
-                      : 'Usually a few seconds. Public route health is checked in the background.'}
+                    {stage === 'compressing'
+                      ? 'Compression runs in your browser. The upload starts automatically when it finishes.'
+                      : stage === 'uploading'
+                        ? 'Keep this window open while the file uploads.'
+                        : 'Usually a few seconds. Public route health is checked in the background.'}
                   </p>
-                  <p className="text-zinc-600">Elapsed: {elapsedSeconds}s</p>
+                  <p className="text-zinc-600">
+                    Elapsed: {elapsedSeconds}s
+                    {uploadRemainingSeconds !== null ? ` · ~${formatDuration(uploadRemainingSeconds)} left` : ''}
+                  </p>
                 </div>
               </div>
             </div>
           )}
 
           <div className="mt-8 flex justify-end gap-3 border-t border-zinc-800/60 pt-4">
-            <button type="button" onClick={onClose} disabled={importing} className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40">Cancel</button>
+            <button
+              type="button"
+              onClick={importing ? handleCancelUpload : onClose}
+              disabled={importing && stage !== 'uploading'}
+              className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {importing && stage === 'uploading' ? 'Cancel upload' : 'Cancel'}
+            </button>
             <button
               type="submit"
               disabled={importing || Boolean(submitBlockReason)}

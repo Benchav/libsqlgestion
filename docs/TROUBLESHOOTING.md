@@ -179,8 +179,15 @@ DNS/TLS health is now checked in the background. If an import is still slow:
 
 1. Prefer **Server path** when the `.db` is already on the server. Uploading a
    large file depends on the client's connection.
-2. Check `MAX_UPLOAD_SIZE_BYTES` (default 500 MB). A reverse proxy or Cloudflare
-   may impose a lower limit.
+2. The panel gzip-compresses the file in the browser before uploading when
+   `CompressionStream` is supported. A 100 MB SQLite file often uploads as
+   20–40 MB. The **Compressed** line shows the actual reduction.
+3. Use **Cancel upload** while the progress bar is moving if you need to stop
+   and retry through **Server path**.
+4. Check `MAX_UPLOAD_SIZE_BYTES` (default 500 MB). A reverse proxy or Cloudflare
+   may impose a lower limit; Cloudflare's default request-body limit is 100 MB.
+   Browser compression usually brings a 100–150 MB SQLite file below that limit.
+   For larger files, use **Server path**.
 3. Look at the backend log lines:
    ```text
    [DatabaseService] imported <id> (...) as runtime in ...ms (copy ..., primary ...)

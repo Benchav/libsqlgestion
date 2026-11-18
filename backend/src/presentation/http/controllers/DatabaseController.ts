@@ -2,7 +2,9 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
+import { createGunzip } from 'zlib';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
 import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema, convertToRuntimeSchema, storageModeSchema } from '../../../types/validations';
@@ -15,7 +17,11 @@ import { SqliteClient } from '../../../infrastructure/sqlite/SqliteClient';
 import { LibsqlNamespaceService } from '../../../infrastructure/libsql/LibsqlNamespaceService';
 import { presentDatabase } from '../database-presenter';
 import { analyticsCollector } from '../../../application/analytics/AnalyticsCollector';
-import { resolveImportStagingRoot, sanitizeUploadFileName } from '../upload-utils';
+import { resolveImportStagingRoot, sanitizeUploadFileName, cleanupStaleUploadDirs } from '../upload-utils';
+import { getMaxUploadBytes } from '../../../config/uploads';
+
+let lastStagingCleanupAt = 0;
+const STAGING_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 function formatHranaValue(val: any) {
   if (val === null || val === undefined) return { type: 'null' };
@@ -99,6 +105,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     let uploadedPath = '';
     let uploadedFileName = '';
     let uploadedTempDir = '';
+    const isGzipUpload = String(request.headers['x-upload-compression'] || '').toLowerCase() === 'gzip';
 
     const cleanupUpload = async () => {
       if (!uploadedTempDir) return;
@@ -118,10 +125,34 @@ export default async function databaseRoutes(app: FastifyInstance) {
 
           const stagingRoot = resolveImportStagingRoot();
           await fs.promises.mkdir(stagingRoot, { recursive: true });
+          if (Date.now() - lastStagingCleanupAt > STAGING_CLEANUP_INTERVAL_MS) {
+            lastStagingCleanupAt = Date.now();
+            await cleanupStaleUploadDirs(stagingRoot);
+          }
           uploadedTempDir = await fs.promises.mkdtemp(path.join(stagingRoot, 'upload-'));
           uploadedFileName = sanitizeUploadFileName(part.filename);
           uploadedPath = path.join(uploadedTempDir, uploadedFileName);
-          await pipeline(part.file, fs.createWriteStream(uploadedPath));
+          if (isGzipUpload) {
+            const maxBytes = getMaxUploadBytes();
+            let decompressedBytes = 0;
+            const sizeGuard = new Transform({
+              transform(chunk, _encoding, callback) {
+                decompressedBytes += chunk.length;
+                if (decompressedBytes > maxBytes) {
+                  const error: any = new Error(
+                    `Decompressed file exceeds the maximum upload size (${Math.round(maxBytes / (1024 * 1024))} MB).`,
+                  );
+                  error.statusCode = 413;
+                  callback(error);
+                  return;
+                }
+                callback(null, chunk);
+              },
+            });
+            await pipeline(part.file, createGunzip(), sizeGuard, fs.createWriteStream(uploadedPath));
+          } else {
+            await pipeline(part.file, fs.createWriteStream(uploadedPath));
+          }
           continue;
         }
 
@@ -154,10 +185,18 @@ export default async function databaseRoutes(app: FastifyInstance) {
       return reply.status(201).send({ ...result, database: presentDatabase(result.database) });
     } catch (err: any) {
       await cleanupUpload();
+      const gzipFailure = isGzipUpload && (
+        ['Z_DATA_ERROR', 'Z_BUF_ERROR', 'Z_NEED_DICT'].includes(String(err?.code || ''))
+        || /incorrect header check|unexpected end of file|invalid (block type|distance|literal)/i.test(String(err?.message || ''))
+      );
+      if (gzipFailure) {
+        return reply.status(400).send({
+          error: 'Invalid gzip-compressed upload. Disable client compression and try again.',
+        });
+      }
+
       if (err?.code === 'FST_REQ_FILE_TOO_LARGE') {
-        const configured = Number(process.env.MAX_UPLOAD_SIZE_BYTES || 524288000);
-        const maxBytes = Number.isFinite(configured) && configured > 0 ? configured : 524288000;
-        const maxMb = Math.round(maxBytes / (1024 * 1024));
+        const maxMb = Math.round(getMaxUploadBytes() / (1024 * 1024));
         return reply.status(413).send({
           error: `File exceeds the maximum upload size (${maxMb} MB). Use Server path for larger databases or raise MAX_UPLOAD_SIZE_BYTES.`,
         });

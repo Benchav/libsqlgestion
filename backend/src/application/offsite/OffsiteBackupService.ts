@@ -31,6 +31,7 @@ import {
 import {
   offsiteArtifactKey,
   offsiteContentType,
+  offsiteDatabasePrefix,
   offsiteHumanArtifactKey,
   offsiteHumanManifestKey,
   offsiteHumanPrefix,
@@ -51,7 +52,7 @@ export type OffsiteArtifactRecord = {
 export type OffsiteSnapshotState = {
   status: OffsiteStatus;
   provider: 's3';
-  layoutVersion?: 1 | 2;
+  layoutVersion?: 1 | 2 | 3;
   projectName?: string;
   databaseName?: string;
   projectSlug?: string;
@@ -74,7 +75,7 @@ export type OffsiteSnapshotState = {
 
 type OffsiteManifest = {
   schemaVersion: 1;
-  layoutVersion?: 1 | 2;
+  layoutVersion?: 1 | 2 | 3;
   snapshotId: string;
   databaseId: string;
   projectId: string;
@@ -219,26 +220,15 @@ export class OffsiteBackupService {
     }
 
     const projectId = project?.id || snapshot.projectId;
-    let projectSlug = offsiteSlug(project?.name, `project-${projectId.slice(0, 8)}`);
-    try {
-      const projects = await this.projectRepo.find();
-      if (projects.some((candidate) => (
-        candidate.id !== projectId
-        && offsiteSlug(candidate.name, '') === projectSlug
-      ))) {
-        projectSlug = `${projectSlug}-${projectId.slice(0, 8)}`;
-      }
-    } catch {
-      // Collision handling is best-effort.
-    }
+    const projectSlug = offsiteSlug(project?.name, `project-${projectId.slice(0, 8)}`);
 
     const databaseId = database?.id || snapshot.databaseId;
     let databaseSlug = offsiteSlug(database?.name, `database-${databaseId.slice(0, 8)}`);
     try {
-      const siblings = await this.databaseRepo.find({
-        where: { project: { id: projectId } },
-      });
-      if (siblings.some((candidate) => (
+      // Project folders are no longer part of the path, so duplicate database
+      // names must be detected across the whole workspace, not only per project.
+      const allDatabases = await this.databaseRepo.find();
+      if (allDatabases.some((candidate) => (
         candidate.id !== databaseId
         && offsiteSlug(candidate.name, '') === databaseSlug
       ))) {
@@ -253,9 +243,8 @@ export class OffsiteBackupService {
       databaseName: database?.name,
       projectSlug,
       databaseSlug,
-      prefix: offsiteHumanPrefix({
+      prefix: offsiteDatabasePrefix({
         prefix: settings.prefix,
-        projectSlug,
         databaseSlug,
       }),
       stem: offsiteSnapshotStem(databaseSlug, snapshot.takenAt, snapshot.id),
@@ -333,7 +322,7 @@ export class OffsiteBackupService {
     const state: OffsiteSnapshotState = {
       status: 'pending',
       provider: 's3',
-      layoutVersion: 2,
+      layoutVersion: 3,
       projectName: layout.projectName,
       databaseName: layout.databaseName,
       projectSlug: layout.projectSlug,
@@ -527,10 +516,14 @@ export class OffsiteBackupService {
       });
 
       const store = this.storeFactory(settings);
-      const humanLayout = current.layoutVersion === 2
+      const humanLayoutV3 = current.layoutVersion === 3
+        && current.databaseSlug
+        && current.artifactStem;
+      const humanLayoutV2 = current.layoutVersion === 2
         && current.projectSlug
         && current.databaseSlug
         && current.artifactStem;
+      const humanLayout = humanLayoutV3 || humanLayoutV2;
       const legacyLayout = !humanLayout && Boolean(current.manifestKey);
       const legacyPrefix = legacyLayout && current.manifestKey.endsWith('/manifest.json')
         ? current.manifestKey.slice(0, -'/manifest.json'.length)
@@ -538,9 +531,17 @@ export class OffsiteBackupService {
       let snapshotPrefix: string;
       let artifactStem: string | undefined;
       let manifestKey: string;
-      let layoutVersion: 1 | 2;
+      let layoutVersion: 1 | 2 | 3;
 
-      if (humanLayout) {
+      if (humanLayoutV3) {
+        snapshotPrefix = offsiteDatabasePrefix({
+          prefix: settings.prefix,
+          databaseSlug: current.databaseSlug as string,
+        });
+        artifactStem = current.artifactStem;
+        manifestKey = offsiteHumanManifestKey(snapshotPrefix, artifactStem as string);
+        layoutVersion = 3;
+      } else if (humanLayoutV2) {
         snapshotPrefix = offsiteHumanPrefix({
           prefix: settings.prefix,
           projectSlug: current.projectSlug as string,
@@ -558,7 +559,7 @@ export class OffsiteBackupService {
         snapshotPrefix = layout.prefix;
         artifactStem = layout.stem;
         manifestKey = offsiteHumanManifestKey(snapshotPrefix, artifactStem);
-        layoutVersion = 2;
+        layoutVersion = 3;
       }
 
       const artifacts = selectedArtifacts(snapshot, settings.artifacts);
@@ -574,7 +575,7 @@ export class OffsiteBackupService {
         if (artifact.checksumSha256 && artifact.checksumSha256 !== checksum) {
           throw new Error(`snapshot artifact checksum mismatch: ${artifact.fileName}`);
         }
-        const objectKey = layoutVersion === 2 && artifactStem
+        const objectKey = layoutVersion >= 2 && artifactStem
           ? offsiteHumanArtifactKey(snapshotPrefix, artifactStem, artifact.kind)
           : current.artifacts?.find((candidate) => candidate.kind === artifact.kind)?.objectKey
             || offsiteArtifactKey(snapshotPrefix, artifact.fileName);

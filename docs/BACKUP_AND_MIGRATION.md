@@ -68,28 +68,31 @@ a persistent bucket failure can make the local snapshot set grow beyond its
 retention policy. The default is `false`, where failed uploads are visible but do
 not block local retention.
 
-New remote objects use a human-readable layout:
+New remote objects use a human-readable layout with the database name directly
+under the prefix:
 
 ```text
-<prefix>/<project-slug>/<database-slug>/<database-slug>_<YYYY-MM-DD_HH-mm-ss>_<shortSnapshotId>.db
-<prefix>/<project-slug>/<database-slug>/<database-slug>_<YYYY-MM-DD_HH-mm-ss>_<shortSnapshotId>.manifest.json
+<prefix>/<database-slug>/<database-slug>_<YYYY-MM-DD_HH-mm-ss>_<shortSnapshotId>.db
+<prefix>/<database-slug>/<database-slug>_<YYYY-MM-DD_HH-mm-ss>_<shortSnapshotId>.manifest.json
 ```
 
 Example:
 
 ```text
-libsqlite/sistema-alicia/insumosv1/insumosv1_2026-11-19_14-48-55_a1673e12.db
-libsqlite/sistema-alicia/insumosv1/insumosv1_2026-11-19_14-48-55_a1673e12.manifest.json
+libsqlite/insumosv1/insumosv1_2026-11-19_14-48-55_a1673e12.db
+libsqlite/insumosv1/insumosv1_2026-11-19_14-48-55_a1673e12.manifest.json
 ```
 
-Project and database names are slugified (lowercase, no accents, spaces replaced
-with hyphens). If two databases in the same project share a name, the short
-database ID is appended to avoid collisions. Renaming a project/database only
-affects future uploads; old objects remain under the previous folder and are
-still readable through their manifest/object metadata.
+Database names are slugified (lowercase, no accents, spaces replaced with
+hyphens). If two databases in the workspace share a name, the short database ID
+is appended to avoid collisions. Renaming a database only affects future
+uploads; old objects remain under the previous folder and are still readable
+through their manifest/object metadata. The manifest still records the project
+and database IDs/names, so removing the project folder does not lose context.
 
-Snapshots uploaded before this layout change keep their legacy UUID-based keys.
-Both layouts are supported by remote retention and restore.
+Snapshots uploaded before this layout change keep their previous keys
+(`<project>/<database>/...` or the original UUID layout). All layouts are
+supported by remote retention and restore.
 
 The manifest is uploaded last and records checksums, sizes, format, pinned
 state and artifact list. Downloads and restores must verify that checksum before

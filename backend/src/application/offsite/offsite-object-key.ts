@@ -50,6 +50,17 @@ export function offsiteHumanPrefix(input: {
   return parts.join('/');
 }
 
+export function offsiteDatabasePrefix(input: {
+  prefix: string;
+  databaseSlug: string;
+}) {
+  const parts = [
+    input.prefix.trim().replace(/^\/+|\/+$/g, ''),
+    safeSegment(input.databaseSlug, 'databaseSlug'),
+  ].filter(Boolean);
+  return parts.join('/');
+}
+
 export function offsiteHumanArtifactKey(snapshotPrefix: string, stem: string, extension: 'db' | 'sql') {
   return `${snapshotPrefix}/${safeSegment(stem, 'artifact stem')}.${extension}`;
 }

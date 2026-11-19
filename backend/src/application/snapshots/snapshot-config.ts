@@ -22,6 +22,22 @@ export type SnapshotPolicy = {
   maxConcurrent: number;
 };
 
+export type LibsqlArtifactMode = 'dump' | 'both' | 'sqlite';
+export type LibsqlArtifactSetting = 'auto' | LibsqlArtifactMode;
+
+function resolveLibsqlArtifactSetting(value: string | undefined): LibsqlArtifactSetting {
+  const normalized = String(value ?? 'auto').trim().toLowerCase();
+  if (normalized === 'auto' || normalized === 'dump' || normalized === 'both' || normalized === 'sqlite') {
+    return normalized;
+  }
+  if (normalized) {
+    console.warn(
+      `[snapshots] unknown SNAPSHOT_LIBSQL_ARTIFACT="${value}", falling back to auto`,
+    );
+  }
+  return 'auto';
+}
+
 export function getSnapshotPolicy(): SnapshotPolicy {
   return {
     intervalMinutes: positiveInt(process.env.SNAPSHOT_INTERVAL_MINUTES, 60),
@@ -35,6 +51,14 @@ export function getSnapshotPolicy(): SnapshotPolicy {
 export function getSnapshotConfig() {
   const storageRoot = process.env.SQLITE_STORAGE_ROOT || path.join(process.cwd(), 'data', 'sqlite');
   const snapshotRoot = process.env.SNAPSHOT_STORAGE_ROOT || path.join(storageRoot, 'snapshots');
+  const verifyReplay = booleanValue(process.env.SNAPSHOT_LIBSQL_VERIFY_REPLAY, true);
+  const libsqlArtifactSetting = resolveLibsqlArtifactSetting(process.env.SNAPSHOT_LIBSQL_ARTIFACT);
+  // `auto` keeps the historical behaviour for installations that disabled the
+  // replay verification: they continue to store the raw .sql dump. Everything
+  // else materializes a standalone, verified SQLite file.
+  const libsqlArtifactMode: LibsqlArtifactMode = libsqlArtifactSetting === 'auto'
+    ? (verifyReplay ? 'sqlite' : 'dump')
+    : libsqlArtifactSetting;
   return {
     enabled: booleanValue(process.env.SNAPSHOTS_ENABLED, true),
     // libSQL logical dumps can be large; keep them enabled by default because
@@ -50,6 +74,9 @@ export function getSnapshotConfig() {
     minFreeBytes: positiveInt(process.env.SNAPSHOT_MIN_FREE_BYTES, 1024 * 1024 * 1024),
     staleMinutes: positiveInt(process.env.SNAPSHOT_STALE_MINUTES, 30),
     verifyOnRestore: booleanValue(process.env.SNAPSHOT_VERIFY_ON_RESTORE, true),
+    verifyReplay,
+    libsqlArtifactSetting,
+    libsqlArtifactMode,
     initialDelayMs: positiveInt(process.env.SNAPSHOT_INITIAL_DELAY_SECONDS, 120) * 1000,
     tickMinutes: positiveInt(process.env.SNAPSHOT_SCHEDULER_TICK_MINUTES, 5),
     defaultTimezone: process.env.SNAPSHOT_TIMEZONE || 'UTC',

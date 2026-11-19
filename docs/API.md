@@ -189,10 +189,18 @@ Use this when an import was registered as a namespace database but `sqld` is no 
 
 ## Snapshots and restore points
 
-Snapshots are available for `LOCAL-FILE` databases. Each snapshot is a full,
-consistent SQLite copy created with `VACUUM INTO`. They provide restore points at
-the configured interval (RPO equal to the snapshot interval); they are not
-continuous WAL point-in-time recovery.
+Snapshots are available for local SQLite databases and managed libSQL primaries.
+Local SQLite snapshots are full copies created with `VACUUM INTO`. libSQL
+snapshots use the engine's `/dump` endpoint and, by default, keep the verified
+SQLite export (`.db`) that was materialized from the dump. They provide restore
+points at the configured interval (RPO equal to the snapshot interval); they are
+not continuous WAL point-in-time recovery.
+
+Snapshot records expose `format` (`sqlite`, `libsql-sql-dump` or
+`libsql-sqlite-export`), `verified`, `downloadFormats`, `sizeBytes` (primary
+artifact), `totalSizeBytes` (all retained artifacts) and an optional `warning`
+when the SQLite export could not be materialized and the validated SQL dump was
+kept instead.
 
 ### `GET /databases/:id/snapshots`
 
@@ -233,11 +241,14 @@ configured IANA timezone.
 ### `POST /databases/:id/snapshots`
 
 Creates a manual snapshot and marks it as pinned so automatic retention does not
-remove it. Returns `201` with the snapshot record.
+remove it. libSQL snapshots return `202` with a pending record and finish in the
+background; poll the list until `status` is `ready`. Returns `201` for local
+SQLite.
 
 ### `DELETE /databases/:id/snapshots/:snapshotId`
 
-Deletes a snapshot and its file.
+Deletes every artifact that belongs to the snapshot (`.db`, retained `.sql` and
+sidecars). Returns `409` while a restore or download is using the snapshot.
 
 ### `POST /databases/:id/snapshots/:snapshotId/restore`
 
@@ -246,15 +257,27 @@ Creates a **new database** from a snapshot. The source database is not modified.
 Request body:
 
 ```json
-{ "name": "insumosv1-restore-20261117" }
+{
+  "name": "insumosv1-restore-20261117",
+  "artifactFormat": "db"
+}
 ```
+
+`artifactFormat` is optional (`db` or `sql`). By default the verified `.db` is
+preferred; a snapshot that stores only `.sql` replays it. Use `"sql"` as an
+escape hatch when the SQLite export is suspected to be corrupt. A missing or
+unretained artifact returns `409`, as does a checksum mismatch.
 
 Returns `201` with the new database and its token. Clients must switch to the new
 URL and token after verifying the data.
 
 ### `GET /databases/:id/snapshots/:snapshotId/download`
 
-Downloads the snapshot file for offsite storage or manual recovery.
+Downloads the preferred snapshot artifact for offsite storage or manual
+recovery: `.db` when available, otherwise `.sql`. Use `?format=db` or
+`?format=sql` to select explicitly. The response includes `Content-Length` and
+the correct SQLite or SQL media type. Invalid/absent combinations return `409`
+or `404`.
 
 ## Schema and query
 

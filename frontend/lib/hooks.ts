@@ -90,9 +90,12 @@ export type DatabaseSnapshot = {
   status: 'pending' | 'ready' | 'failed' | 'deleted';
   reason: 'scheduled' | 'manual' | 'pre_restore';
   fileName: string;
-  format?: 'sqlite' | 'libsql-sql-dump';
+  format?: 'sqlite' | 'libsql-sql-dump' | 'libsql-sqlite-export';
   verified?: boolean;
   sizeBytes: number;
+  totalSizeBytes?: number;
+  downloadFormats?: Array<'db' | 'sql'>;
+  warning?: string;
   checksumSha256?: string;
   milestones?: Partial<Record<'daily' | 'weekly' | 'monthly', string>>;
   takenAt: string;
@@ -339,12 +342,16 @@ export function useDeleteSnapshot(databaseId: string) {
 export function useRestoreSnapshot(databaseId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ snapshotId, name }: { snapshotId: string; name?: string }) => {
+    mutationFn: async ({
+      snapshotId,
+      name,
+      artifactFormat,
+    }: { snapshotId: string; name?: string; artifactFormat?: 'db' | 'sql' }) => {
       return apiRequest<{ database: DatabaseDetail; token: string }>(
         `/databases/${databaseId}/snapshots/${snapshotId}/restore`,
         {
           method: 'POST',
-          body: JSON.stringify({ name: name || undefined }),
+          body: JSON.stringify({ name: name || undefined, artifactFormat }),
         },
       );
     },

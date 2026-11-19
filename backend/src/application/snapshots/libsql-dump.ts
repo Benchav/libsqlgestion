@@ -447,19 +447,49 @@ export async function* streamSqlStatements(filePath: string): AsyncGenerator<str
  * Rebuilds a SQLite database from a sqld dump. The importer then provisions a
  * fresh libSQL primary from the reconstructed file, so restores never write
  * into a live runtime.
+ *
+ * The optional pragmas make the materialized file a closer copy of the source
+ * database. A logical dump cannot carry file-level settings, so we capture the
+ * relevant values from the live primary and reapply them while the target is
+ * still empty.
  */
 export async function replaySqlDumpToSqlite(
   dumpPath: string,
   targetPath: string,
-  options: { chunkBytes?: number } = {},
+  options: {
+    chunkBytes?: number;
+    pageSize?: number;
+    encoding?: string;
+    autoVacuum?: number;
+    userVersion?: number;
+    applicationId?: number;
+  } = {},
 ): Promise<void> {
   const chunkBytes = positiveInt(String(options.chunkBytes || 2 * 1024 * 1024), 2 * 1024 * 1024);
+  const pageSize = normalizePageSize(options.pageSize);
+  const encoding = normalizeEncoding(options.encoding);
+  const autoVacuum = normalizeAutoVacuum(options.autoVacuum);
+  const userVersion = normalizeInt32(options.userVersion);
+  const applicationId = normalizeInt32(options.applicationId);
   await removeDatabaseFiles(targetPath);
 
   const client = new SqliteClient(targetPath);
   let inTransaction = false;
   try {
     await client.exec('PRAGMA foreign_keys = OFF;');
+    if (pageSize !== undefined) {
+      await client.exec(`PRAGMA page_size = ${pageSize};`);
+    }
+    if (encoding !== undefined) {
+      await client.exec(`PRAGMA encoding = '${encoding}';`);
+    }
+    if (autoVacuum !== undefined) {
+      await client.exec(`PRAGMA auto_vacuum = ${autoVacuum};`);
+      // SqliteClient enables WAL on open, which initializes the header with
+      // auto_vacuum=0 before this pragma runs. SQLite only applies the change
+      // after a VACUUM on a non-empty (already initialized) database.
+      await client.exec('VACUUM;');
+    }
     await client.exec('BEGIN IMMEDIATE;');
     inTransaction = true;
 
@@ -485,6 +515,12 @@ export async function replaySqlDumpToSqlite(
     await flush();
     await client.exec('COMMIT;');
     inTransaction = false;
+    if (userVersion !== undefined) {
+      await client.exec(`PRAGMA user_version = ${userVersion};`);
+    }
+    if (applicationId !== undefined) {
+      await client.exec(`PRAGMA application_id = ${applicationId};`);
+    }
     // Make the restored database self-contained in the main file before the
     // importer moves it; WAL sidecars are not part of the import operation.
     await client.exec('PRAGMA wal_checkpoint(TRUNCATE);');
@@ -515,6 +551,35 @@ export async function replaySqlDumpToSqlite(
   } finally {
     await verifier.close().catch(() => undefined);
   }
+}
+
+function normalizePageSize(value: number | undefined) {
+  if (!Number.isFinite(value)) return undefined;
+  const parsed = Math.floor(Number(value));
+  if (parsed < 512 || parsed > 65536 || (parsed & (parsed - 1)) !== 0) return undefined;
+  return parsed;
+}
+
+function normalizeEncoding(value: string | undefined) {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === 'UTF-8' || normalized === 'UTF-16LE' || normalized === 'UTF-16BE') {
+    return normalized;
+  }
+  return undefined;
+}
+
+function normalizeAutoVacuum(value: number | undefined) {
+  if (!Number.isFinite(value)) return undefined;
+  const parsed = Math.floor(Number(value));
+  return parsed === 0 || parsed === 1 || parsed === 2 ? parsed : undefined;
+}
+
+function normalizeInt32(value: number | undefined) {
+  if (!Number.isFinite(value)) return undefined;
+  const parsed = Math.floor(Number(value));
+  if (parsed < 0 || parsed > 0x7fffffff) return undefined;
+  return parsed;
 }
 
 async function removeDatabaseFiles(filePath: string) {

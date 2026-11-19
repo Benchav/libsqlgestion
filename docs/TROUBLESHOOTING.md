@@ -41,21 +41,27 @@ Check, in order:
    token**).
 2. The runtime is healthy on **Internal** and **Backend**.
 3. The backend can reach the runtime's internal URL.
-4. There is free space for the dump **and** the replay verification file.
-5. The backend log contains the HTTP status returned by `/dump`.
+4. There is free space for the dump **and** the materialized `.db` (roughly
+   twice the dump size plus `SNAPSHOT_MIN_FREE_BYTES`).
+5. The backend log contains the HTTP status returned by `/dump` and any
+   `[snapshots] SQLite export failed` fallback message.
 
 Useful settings:
 
 ```env
 SNAPSHOT_LIBSQL_ENABLED=true
 SNAPSHOT_LIBSQL_VERIFY_REPLAY=true
+SNAPSHOT_LIBSQL_ARTIFACT=auto
 SNAPSHOT_LIBSQL_MAX_BYTES=10737418240
 SNAPSHOT_LIBSQL_DUMP_TIMEOUT_MS=900000
 ```
 
-`SNAPSHOT_LIBSQL_VERIFY_REPLAY=false` skips the replay check. Only use it when
-replay time is the blocker; the snapshot is still structurally validated, but it
-is no longer proven restorable at creation time.
+`SNAPSHOT_LIBSQL_VERIFY_REPLAY=false` makes `auto` keep the legacy `.sql` mode.
+With `SNAPSHOT_LIBSQL_ARTIFACT=sqlite` or `both`, the replay is mandatory because
+it produces the `.db`; if it fails, the validated `.sql` is kept and the snapshot
+shows an amber warning. Only use replay-disabled mode when replay time is the
+blocker; the snapshot is structurally validated but not proven restorable at
+creation time.
 
 ## Token rotation failed
 
@@ -418,14 +424,11 @@ The endpoint copies the namespace file into managed local storage, updates the r
 Check:
 
 - `SNAPSHOTS_ENABLED=true` in the backend environment
-- the database is `LOCAL-FILE`; remote and `sqld` runtime databases are skipped in this version
+- `SNAPSHOT_LIBSQL_ENABLED=true` for managed libSQL primaries
+- remote Turso Cloud databases are not managed here and are skipped
 - the backend has free disk space above `SNAPSHOT_MIN_FREE_BYTES`
-- the backend logs contain `[snapshots]` messages
+- the backend logs contain `[snapshots]` messages and the artifact mode line
 - `/app/data/sqlite/snapshots` is inside the persistent volume
-
-After migrating to libSQL primaries, the local-file snapshot scheduler no longer
-applies to those databases. Back up the runtime volume and the `sqld` data volume
-instead. The old LOCAL-FILE snapshots remain valid as pre-migration backups.
 
 The scheduler wakes every `SNAPSHOT_SCHEDULER_TICK_MINUTES` (default 5) and uses
 each database's backup policy. The default restore-point interval is
@@ -438,11 +441,15 @@ restore-point interval.
 Check:
 
 - the snapshot status is `ready`
-- the snapshot file exists under `SQLITE_STORAGE_ROOT/snapshots`
+- the selected artifact exists under `SQLITE_STORAGE_ROOT/snapshots`
 - `SNAPSHOT_VERIFY_ON_RESTORE=true` did not detect a checksum mismatch
 - the backend can write to `SQLITE_STORAGE_ROOT/projects`
+- for a legacy `.sql` snapshot, replay time and temporary disk space are enough
+- for a `.db` snapshot, its integrity check passes on the private copy
 
-Restoring always creates a new database. The original database is not modified.
+If a `.db` restore fails but the raw `.sql` is retained (`SNAPSHOT_LIBSQL_ARTIFACT=both`),
+retry with `"artifactFormat": "sql"`. If neither exists, the snapshot cannot be
+restored. Restoring always creates a new database; the original is not modified.
 
 ## libsql connection fails
 

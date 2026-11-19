@@ -331,6 +331,38 @@ test('replays a libSQL dump into a verified SQLite database', async () => {
   }
 });
 
+test('reapplies source pragmas to the materialized database', async () => {
+  const target = path.join(tempDir, 'pragmas.db');
+  await replaySqlDumpToSqlite(dumpPath, target, {
+    userVersion: 7,
+    applicationId: 123456,
+    pageSize: 4096,
+    encoding: 'UTF-8',
+    autoVacuum: 1,
+  });
+
+  const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
+  const client = new SqliteClient(target);
+  try {
+    const userVersion = await client.get('PRAGMA user_version');
+    const applicationId = await client.get('PRAGMA application_id');
+    const pageSize = await client.get('PRAGMA page_size');
+    const encoding = await client.get('PRAGMA encoding');
+    const autoVacuum = await client.get('PRAGMA auto_vacuum');
+
+    assert.equal(Number(userVersion.user_version), 7);
+    assert.equal(Number(applicationId.application_id), 123456);
+    assert.equal(Number(pageSize.page_size), 4096);
+    assert.equal(encoding.encoding, 'UTF-8');
+    assert.equal(Number(autoVacuum.auto_vacuum), 1);
+
+    const rows = await client.all('SELECT id, name FROM users ORDER BY id');
+    assert.deepEqual(rows, [{ id: 1, name: 'Ana' }, { id: 2, name: 'Luis' }]);
+  } finally {
+    await client.close();
+  }
+});
+
 test('round-trips a real FTS5 database and supports MATCH after reopen', async () => {
   const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
   const sourcePath = path.join(tempDir, 'fts-source.db');

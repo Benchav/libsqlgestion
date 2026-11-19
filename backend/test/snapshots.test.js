@@ -36,6 +36,119 @@ const { DatabaseSnapshot } = require('../dist/domain/entities/DatabaseSnapshot')
 const { User } = require('../dist/domain/entities/User');
 const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
 const { buildServer } = require('../dist/server');
+const {
+  getSnapshotArtifacts,
+  getSnapshotFormat,
+} = require('../dist/application/snapshots/SnapshotService');
+const libsqlDumpModule = require('../dist/application/snapshots/libsql-dump');
+const libsqlClientModule = require('../dist/infrastructure/libsql/LibsqlClient');
+const { encrypt } = require('../dist/infrastructure/crypto');
+
+const LIBSQL_TEST_DUMP = `BEGIN TRANSACTION;
+CREATE TABLE libsql_items (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+INSERT INTO libsql_items (id, name) VALUES (1, 'alpha');
+INSERT INTO libsql_items (id, name) VALUES (2, 'beta');
+COMMIT;
+`;
+
+function installLibsqlStubs() {
+  const originalFetch = libsqlDumpModule.fetchLibsqlDump;
+  const originalReplay = libsqlDumpModule.replaySqlDumpToSqlite;
+  const originalCreateClient = libsqlClientModule.createLibsqlClient;
+
+  libsqlDumpModule.fetchLibsqlDump = async (_database, _token, destinationPath) => {
+    fs.writeFileSync(destinationPath, LIBSQL_TEST_DUMP);
+    return { bytes: Buffer.byteLength(LIBSQL_TEST_DUMP), url: 'stub://dump' };
+  };
+  libsqlClientModule.createLibsqlClient = () => ({
+    batch: async () => [
+      { rows: [{ user_version: 11 }] },
+      { rows: [{ application_id: 4242 }] },
+      { rows: [{ page_size: 4096 }] },
+      { rows: [{ encoding: 'UTF-8' }] },
+      { rows: [{ auto_vacuum: 1 }] },
+    ],
+    execute: async () => ({ rows: [] }),
+    close() {},
+  });
+
+  return {
+    failReplay() {
+      libsqlDumpModule.replaySqlDumpToSqlite = async () => {
+        throw new Error('simulated replay failure');
+      };
+    },
+    restore() {
+      libsqlDumpModule.fetchLibsqlDump = originalFetch;
+      libsqlDumpModule.replaySqlDumpToSqlite = originalReplay;
+      libsqlClientModule.createLibsqlClient = originalCreateClient;
+    },
+  };
+}
+
+test.describe('Snapshot artifact metadata', () => {
+  test('keeps legacy .sql snapshots compatible', () => {
+    const snapshot = {
+      filePath: path.join(tempDir, 'legacy.sql'),
+      fileName: 'legacy.sql',
+      sizeBytes: 128,
+      checksumSha256: 'a'.repeat(64),
+      metadata: { format: 'libsql-sql-dump', verified: true },
+    };
+
+    const artifacts = getSnapshotArtifacts(snapshot);
+    assert.equal(getSnapshotFormat(snapshot), 'libsql-sql-dump');
+    assert.equal(artifacts.primary.kind, 'sql');
+    assert.equal(artifacts.preferred.kind, 'sql');
+    assert.deepEqual(artifacts.downloadFormats, ['sql']);
+    assert.equal(artifacts.totalBytes, 128);
+  });
+
+  test('describes a transitional both-mode snapshot with two artifacts', () => {
+    const snapshot = {
+      filePath: path.join(tempDir, 'both.sql'),
+      fileName: 'both.sql',
+      sizeBytes: 128,
+      checksumSha256: 'b'.repeat(64),
+      metadata: {
+        format: 'libsql-sqlite-export',
+        verified: true,
+        sqliteFileName: 'both.db',
+        sqliteSizeBytes: 256,
+        sqliteChecksumSha256: 'c'.repeat(64),
+        dumpFileName: 'both.sql',
+        dumpSizeBytes: 128,
+        totalBytes: 384,
+      },
+    };
+
+    const artifacts = getSnapshotArtifacts(snapshot);
+    assert.equal(getSnapshotFormat(snapshot), 'libsql-sqlite-export');
+    assert.equal(artifacts.preferred.kind, 'db');
+    assert.equal(artifacts.db.sizeBytes, 256);
+    assert.deepEqual(artifacts.downloadFormats, ['db', 'sql']);
+    assert.equal(artifacts.totalBytes, 384);
+  });
+
+  test('exposes the fallback warning instead of hiding a materialization failure', () => {
+    const snapshot = {
+      filePath: path.join(tempDir, 'fallback.sql'),
+      fileName: 'fallback.sql',
+      sizeBytes: 64,
+      checksumSha256: 'd'.repeat(64),
+      metadata: {
+        format: 'libsql-sql-dump',
+        verified: false,
+        warning: 'SQLite export could not be materialized',
+      },
+    };
+
+    const artifacts = getSnapshotArtifacts(snapshot);
+    assert.equal(artifacts.preferred.kind, 'sql');
+    assert.match(artifacts.warning, /could not be materialized/);
+    assert.equal(getSnapshotFormat(snapshot), 'libsql-sql-dump');
+  });
+});
 
 test.describe('Snapshots and restore points', () => {
   let snapshotService;
@@ -46,6 +159,29 @@ test.describe('Snapshots and restore points', () => {
   let cookieHeader;
   let csrfToken;
   let apiDatabaseId;
+
+  async function createLibsqlDatabase(name) {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const endpoint = 'http://127.0.0.1:65535';
+    return databaseRepo.save(databaseRepo.create({
+      name,
+      type: 'libsql',
+      status: 'active',
+      url: endpoint,
+      subdomain: name,
+      encryptedToken: encrypt('test-libsql-token'),
+      metadata: {
+        runtime: {
+          provider: 'docker-libsql',
+          connectionUrl: endpoint,
+          internalUrl: endpoint,
+          backendUrl: endpoint,
+          publicUrl: endpoint,
+        },
+      },
+      project: sourceProject,
+    }));
+  }
 
   test.before(async () => {
     await AppDataSource.initialize();
@@ -417,8 +553,12 @@ test.describe('Snapshots and restore points', () => {
       takenAt: new Date(),
     }));
     const tempPath = path.join(directory, `.tmp-${row.id}.db`);
+    const tempSqlPath = path.join(directory, `.tmp-${row.id}.sql`);
+    const sqlSibling = row.filePath.replace(/\.db$/i, '.sql');
     fs.writeFileSync(tempPath, 'temp');
+    fs.writeFileSync(tempSqlPath, 'temp');
     fs.writeFileSync(row.filePath, 'partial');
+    fs.writeFileSync(sqlSibling, 'partial');
 
     await snapshotService.recoverInterruptedSnapshots();
 
@@ -426,7 +566,88 @@ test.describe('Snapshots and restore points', () => {
     assert.equal(updated.status, 'failed');
     assert.match(updated.errorMessage, /restart/);
     assert.equal(fs.existsSync(tempPath), false);
+    assert.equal(fs.existsSync(tempSqlPath), false);
     assert.equal(fs.existsSync(row.filePath), false);
+    assert.equal(fs.existsSync(sqlSibling), false);
+  });
+
+  test('rejects a restore when the stored checksum no longer matches', async () => {
+    const snapshot = await snapshotService.createSnapshot(sourceDatabase.id, {
+      reason: 'manual',
+      pinned: true,
+    });
+
+    fs.appendFileSync(snapshot.filePath, Buffer.from('tampered'));
+
+    await assert.rejects(
+      snapshotService.restoreSnapshot(sourceDatabase.id, snapshot.id, {
+        name: 'checksum-restore-must-fail',
+      }),
+      /checksum verification failed/,
+    );
+
+    await snapshotService.deleteSnapshot(sourceDatabase.id, snapshot.id);
+  });
+
+  test('prune removes every artifact of a transitional snapshot', async () => {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const snapshotRepo = AppDataSource.getRepository(DatabaseSnapshot);
+    const prunePath = path.join(tempDir, 'prune-source.db');
+    const pruneSource = new SqliteClient(prunePath);
+    await pruneSource.exec('CREATE TABLE prune_items (id INTEGER PRIMARY KEY);');
+    await pruneSource.close();
+
+    const pruneDb = await databaseRepo.save(databaseRepo.create({
+      name: 'prune-both-database',
+      type: 'sqlite',
+      status: 'active',
+      url: prunePath,
+      subdomain: 'prune-both-database',
+      project: sourceProject,
+    }));
+
+    const directory = path.join(snapshotRoot, sourceProject.id, pruneDb.id);
+    fs.mkdirSync(directory, { recursive: true });
+    const now = new Date('2026-01-15T12:00:00.000Z');
+    const ages = [1, 2, 30 * 24];
+    const rows = [];
+
+    for (const [index, hours] of ages.entries()) {
+      const dumpFileName = `transitional-${index}.sql`;
+      const sqliteFileName = `transitional-${index}.db`;
+      const filePath = path.join(directory, dumpFileName);
+      fs.writeFileSync(filePath, 'dump');
+      fs.writeFileSync(path.join(directory, sqliteFileName), 'database');
+      rows.push(await snapshotRepo.save(snapshotRepo.create({
+        databaseId: pruneDb.id,
+        projectId: sourceProject.id,
+        status: 'ready',
+        reason: 'scheduled',
+        filePath,
+        fileName: dumpFileName,
+        sizeBytes: 4,
+        takenAt: new Date(now.getTime() - hours * 60 * 60 * 1000),
+        metadata: {
+          format: 'libsql-sqlite-export',
+          sqliteFileName,
+          sqliteSizeBytes: 8,
+          dumpFileName,
+          dumpSizeBytes: 4,
+          totalBytes: 12,
+        },
+      })));
+    }
+
+    const result = await snapshotService.pruneSnapshots(pruneDb.id, now);
+    assert.equal(result.deleted, 1);
+
+    const oldest = rows[2];
+    assert.equal(fs.existsSync(oldest.filePath), false);
+    assert.equal(fs.existsSync(path.join(directory, `transitional-2.db`)), false);
+    assert.equal(fs.existsSync(rows[0].filePath), true);
+    assert.equal(fs.existsSync(path.join(directory, `transitional-0.db`)), true);
+
+    await databaseRepo.remove(pruneDb);
   });
 
   test('scheduler creates an initial snapshot for a database without one', async () => {
@@ -533,6 +754,234 @@ test.describe('Snapshots and restore points', () => {
     });
     assert.equal(downloadRes.statusCode, 200);
     assert.ok(downloadRes.headers['content-disposition'].includes('.db'));
+    assert.equal(downloadRes.headers['x-backup-artifact'], 'db');
+    assert.equal(Number(downloadRes.headers['content-length']), downloadRes.rawPayload.length);
     assert.ok(downloadRes.rawPayload.length > 0);
+
+    const sqlDownloadRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/databases/${apiDatabaseId}/snapshots/${created.id}/download?format=sql`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(sqlDownloadRes.statusCode, 409, sqlDownloadRes.payload);
+
+    const sqlRestoreRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/databases/${apiDatabaseId}/snapshots/${created.id}/restore`,
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+      payload: { name: 'api-restore-sql-not-available', artifactFormat: 'sql' },
+    });
+    assert.equal(sqlRestoreRes.statusCode, 409, sqlRestoreRes.payload);
+  });
+
+  test('creates a verified SQLite export for a managed libSQL primary', async () => {
+    const stubs = installLibsqlStubs();
+    const previousArtifact = process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+    process.env.SNAPSHOT_LIBSQL_ARTIFACT = 'sqlite';
+
+    try {
+      const database = await createLibsqlDatabase('libsql-sqlite-mode');
+      const snapshot = await snapshotService.createSnapshot(database.id, {
+        reason: 'manual',
+        pinned: true,
+      });
+
+      assert.equal(snapshot.status, 'ready');
+      assert.match(snapshot.fileName, /\.db$/);
+      assert.equal(snapshot.metadata.format, 'libsql-sqlite-export');
+      assert.equal(snapshot.metadata.verified, true);
+      assert.equal(snapshot.metadata.sourcePragmas.userVersion, 11);
+      assert.equal(snapshot.metadata.sourcePragmas.applicationId, 4242);
+
+      const client = new SqliteClient(snapshot.filePath);
+      try {
+        const rows = await client.all('SELECT id, name FROM libsql_items ORDER BY id');
+        assert.deepEqual(rows, [{ id: 1, name: 'alpha' }, { id: 2, name: 'beta' }]);
+
+        const userVersion = await client.get('PRAGMA user_version');
+        const applicationId = await client.get('PRAGMA application_id');
+        const autoVacuum = await client.get('PRAGMA auto_vacuum');
+        assert.equal(Number(userVersion.user_version), 11);
+        assert.equal(Number(applicationId.application_id), 4242);
+        assert.equal(Number(autoVacuum.auto_vacuum), 1);
+      } finally {
+        await client.close();
+      }
+
+      const artifacts = getSnapshotArtifacts(snapshot);
+      assert.deepEqual(artifacts.downloadFormats, ['db']);
+      assert.equal(artifacts.totalBytes, snapshot.sizeBytes);
+
+      const download = await snapshotService.resolveSnapshotDownload(database.id, snapshot.id);
+      assert.equal(download.artifact.kind, 'db');
+      assert.equal(download.artifact.path, snapshot.filePath);
+      await assert.rejects(
+        snapshotService.resolveSnapshotDownload(database.id, snapshot.id, 'sql'),
+        /not retained/,
+      );
+
+      const artifactPath = snapshot.filePath;
+      await snapshotService.deleteSnapshot(database.id, snapshot.id);
+      assert.equal(fs.existsSync(artifactPath), false);
+      await AppDataSource.getRepository(Database).remove(database);
+    } finally {
+      stubs.restore();
+      if (previousArtifact === undefined) delete process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+      else process.env.SNAPSHOT_LIBSQL_ARTIFACT = previousArtifact;
+    }
+  });
+
+  test('keeps both artifacts in transitional mode and restores from either one', async () => {
+    const stubs = installLibsqlStubs();
+    const previousArtifact = process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+    process.env.SNAPSHOT_LIBSQL_ARTIFACT = 'both';
+
+    try {
+      const database = await createLibsqlDatabase('libsql-both-mode');
+      const snapshot = await snapshotService.createSnapshot(database.id, {
+        reason: 'manual',
+        pinned: true,
+      });
+
+      assert.equal(snapshot.status, 'ready');
+      assert.match(snapshot.fileName, /\.sql$/);
+      assert.equal(snapshot.metadata.format, 'libsql-sqlite-export');
+      assert.equal(snapshot.metadata.dumpFileName, snapshot.fileName);
+      assert.match(snapshot.metadata.sqliteFileName, /\.db$/);
+
+      const dbPath = path.join(path.dirname(snapshot.filePath), snapshot.metadata.sqliteFileName);
+      assert.equal(fs.existsSync(snapshot.filePath), true);
+      assert.equal(fs.existsSync(dbPath), true);
+      assert.ok(snapshot.sizeBytes > 0);
+      assert.equal(snapshot.metadata.totalBytes, snapshot.sizeBytes + snapshot.metadata.sqliteSizeBytes);
+
+      const artifacts = getSnapshotArtifacts(snapshot);
+      assert.equal(getSnapshotFormat(snapshot), 'libsql-sqlite-export');
+      assert.deepEqual(artifacts.downloadFormats, ['db', 'sql']);
+      assert.equal(artifacts.totalBytes, snapshot.metadata.totalBytes);
+
+      const defaultDownload = await snapshotService.resolveSnapshotDownload(database.id, snapshot.id);
+      assert.equal(defaultDownload.artifact.kind, 'db');
+      assert.equal(defaultDownload.artifact.path, dbPath);
+
+      const sqlDownload = await snapshotService.resolveSnapshotDownload(database.id, snapshot.id, 'sql');
+      assert.equal(sqlDownload.artifact.kind, 'sql');
+      assert.equal(sqlDownload.artifact.path, snapshot.filePath);
+
+      const restoredFromDb = await snapshotService.restoreSnapshot(database.id, snapshot.id, {
+        name: 'libsql-restored-from-db',
+      });
+      assert.equal(restoredFromDb.database.metadata.snapshotArtifact, 'db');
+      const dbClient = new SqliteClient(restoredFromDb.database.url);
+      try {
+        const rows = await dbClient.all('SELECT name FROM libsql_items ORDER BY id');
+        assert.deepEqual(rows.map((row) => row.name), ['alpha', 'beta']);
+      } finally {
+        await dbClient.close();
+      }
+
+      const restoredFromSql = await snapshotService.restoreSnapshot(database.id, snapshot.id, {
+        name: 'libsql-restored-from-sql',
+        artifactFormat: 'sql',
+      });
+      assert.equal(restoredFromSql.database.metadata.snapshotArtifact, 'sql');
+      const sqlClient = new SqliteClient(restoredFromSql.database.url);
+      try {
+        const rows = await sqlClient.all('SELECT name FROM libsql_items ORDER BY id');
+        assert.deepEqual(rows.map((row) => row.name), ['alpha', 'beta']);
+      } finally {
+        await sqlClient.close();
+      }
+
+      const releaseLease = snapshotService.acquireSnapshotLease(snapshot.id);
+      await assert.rejects(
+        snapshotService.deleteSnapshot(database.id, snapshot.id),
+        /running restore or download/,
+      );
+      releaseLease();
+
+      await snapshotService.deleteSnapshot(database.id, snapshot.id);
+      assert.equal(fs.existsSync(snapshot.filePath), false);
+      assert.equal(fs.existsSync(dbPath), false);
+
+      const databaseRepo = AppDataSource.getRepository(Database);
+      await databaseRepo.remove(restoredFromDb.database);
+      await databaseRepo.remove(restoredFromSql.database);
+      await databaseRepo.remove(database);
+    } finally {
+      stubs.restore();
+      if (previousArtifact === undefined) delete process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+      else process.env.SNAPSHOT_LIBSQL_ARTIFACT = previousArtifact;
+    }
+  });
+
+  test('retains legacy SQL-only snapshots in dump mode', async () => {
+    const stubs = installLibsqlStubs();
+    const previousArtifact = process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+    process.env.SNAPSHOT_LIBSQL_ARTIFACT = 'dump';
+
+    try {
+      const database = await createLibsqlDatabase('libsql-dump-mode');
+      const snapshot = await snapshotService.createSnapshot(database.id, {
+        reason: 'manual',
+        pinned: true,
+      });
+
+      assert.equal(snapshot.status, 'ready');
+      assert.match(snapshot.fileName, /\.sql$/);
+      assert.equal(snapshot.metadata.format, 'libsql-sql-dump');
+      assert.equal(snapshot.metadata.verified, true);
+
+      const dbPath = snapshot.filePath.replace(/\.sql$/i, '.db');
+      assert.equal(fs.existsSync(dbPath), false);
+
+      const artifacts = getSnapshotArtifacts(snapshot);
+      assert.deepEqual(artifacts.downloadFormats, ['sql']);
+      const download = await snapshotService.resolveSnapshotDownload(database.id, snapshot.id);
+      assert.equal(download.artifact.kind, 'sql');
+
+      await snapshotService.deleteSnapshot(database.id, snapshot.id);
+      assert.equal(fs.existsSync(snapshot.filePath), false);
+      await AppDataSource.getRepository(Database).remove(database);
+    } finally {
+      stubs.restore();
+      if (previousArtifact === undefined) delete process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+      else process.env.SNAPSHOT_LIBSQL_ARTIFACT = previousArtifact;
+    }
+  });
+
+  test('falls back to the validated SQL dump when materialization fails', async () => {
+    const stubs = installLibsqlStubs();
+    const previousArtifact = process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+    process.env.SNAPSHOT_LIBSQL_ARTIFACT = 'sqlite';
+    stubs.failReplay();
+
+    try {
+      const database = await createLibsqlDatabase('libsql-replay-fallback');
+      const snapshot = await snapshotService.createSnapshot(database.id, {
+        reason: 'manual',
+        pinned: true,
+      });
+
+      assert.equal(snapshot.status, 'ready');
+      assert.match(snapshot.fileName, /\.sql$/);
+      assert.equal(snapshot.metadata.format, 'libsql-sql-dump');
+      assert.equal(snapshot.metadata.verified, false);
+      assert.match(snapshot.metadata.warning, /SQLite export could not be materialized/);
+      assert.equal(fs.existsSync(snapshot.filePath), true);
+      assert.equal(fs.existsSync(snapshot.filePath.replace(/\.sql$/i, '.db')), false);
+
+      const artifacts = getSnapshotArtifacts(snapshot);
+      assert.equal(artifacts.preferred.kind, 'sql');
+      assert.deepEqual(artifacts.downloadFormats, ['sql']);
+      assert.match(artifacts.warning, /simulated replay failure/);
+
+      await snapshotService.deleteSnapshot(database.id, snapshot.id);
+      await AppDataSource.getRepository(Database).remove(database);
+    } finally {
+      stubs.restore();
+      if (previousArtifact === undefined) delete process.env.SNAPSHOT_LIBSQL_ARTIFACT;
+      else process.env.SNAPSHOT_LIBSQL_ARTIFACT = previousArtifact;
+    }
   });
 });

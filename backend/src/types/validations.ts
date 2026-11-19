@@ -57,11 +57,18 @@ export const backupDatabaseSchema = z.object({
 
 export const restoreSnapshotSchema = z.object({
   name: optionalString,
+  // Escape hatch: restore from the raw SQL dump when the SQLite export is
+  // unavailable or suspected to be corrupt.
+  artifactFormat: z.enum(['db', 'sql']).optional(),
 });
 
 export const snapshotListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   before: z.coerce.date().optional(),
+});
+
+export const snapshotDownloadQuerySchema = z.object({
+  format: z.enum(['db', 'sql']).optional(),
 });
 
 export const snapshotPolicySchema = z.object({

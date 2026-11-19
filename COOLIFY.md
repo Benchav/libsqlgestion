@@ -76,6 +76,18 @@ SNAPSHOT_MIN_FREE_BYTES=1073741824
 SNAPSHOT_STALE_MINUTES=30
 SNAPSHOT_VERIFY_ON_RESTORE=true
 
+# Optional: offsite S3/R2 bootstrap defaults. Prefer Settings -> Offsite
+# Backups in the panel; panel values override these variables.
+SNAPSHOT_OFFSITE_ENABLED=false
+SNAPSHOT_OFFSITE_ENDPOINT=
+SNAPSHOT_OFFSITE_BUCKET=
+SNAPSHOT_OFFSITE_REGION=auto
+SNAPSHOT_OFFSITE_PREFIX=libsqlite
+SNAPSHOT_OFFSITE_UPLOAD_MODE=daily
+SNAPSHOT_OFFSITE_ARTIFACTS=db
+SNAPSHOT_OFFSITE_RETENTION_DAYS=30
+SNAPSHOT_OFFSITE_TIMEOUT_MS=300000
+
 # Performance and persistent runtime health
 SCHEMA_CACHE_TTL_MS=60000
 SCHEMA_CACHE_MAX_ENTRIES=200
@@ -125,7 +137,7 @@ Notes:
 - `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
 - `SQL_QUERY_TIMEOUT_MS` cancels long read queries; `QUERY_HARD_MAX_ROWS` caps API/Studio result sets.
-- `SNAPSHOT_*` controls scheduled restore points for SQLite files and managed libSQL primaries. libSQL uses the engine's `/dump` endpoint, replays it into a standalone SQLite file, verifies integrity from a fresh connection, and stores SHA-256 checksums. `SNAPSHOT_LIBSQL_ARTIFACT=auto` (default) stores the verified `.db`; use `both` for a transitional rollout that keeps the legacy `.sql` and the `.db`, or `dump` to roll back behavior without a code downgrade. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups. See [docs/BACKUP_AND_MIGRATION.md](docs/BACKUP_AND_MIGRATION.md).
+- `SNAPSHOT_*` controls scheduled restore points for SQLite files and managed libSQL primaries. libSQL uses the engine's `/dump` endpoint, replays it into a standalone SQLite file, verifies integrity from a fresh connection, and stores SHA-256 checksums. `SNAPSHOT_LIBSQL_ARTIFACT=auto` (default) stores the verified `.db`; use `both` for a transitional rollout that keeps the legacy `.sql` and the `.db`, or `dump` to roll back behavior without a code downgrade. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots`. Configure **Settings → Offsite Backups** to copy finished snapshots to Cloudflare R2 or another S3-compatible bucket; local snapshots alone are not disaster recovery. See [docs/BACKUP_AND_MIGRATION.md](docs/BACKUP_AND_MIGRATION.md).
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - `MAX_UPLOAD_SIZE_BYTES` caps browser imports. The panel gzip-compresses in the browser when supported; the limit applies to the decompressed database. Larger databases should be placed on the server and imported through **Server path**.
 - `IMPORT_STAGING_DIR` must stay on the `/app/data` volume so uploads are not copied across filesystems. It defaults to `<data>/tmp`.

@@ -42,7 +42,7 @@ Instead of paying for managed cloud services or struggling with monolithic setup
 - **Built-in Studio**: Powerful schema browsing, data visualization, and raw query execution built right into the interface (synchronizes perfectly with your active `libsql-server` instances).
 - **libSQL-first mode**: New databases and imports are real libSQL primaries by default (shared `sqld` namespace or dedicated runtime). Legacy `LOCAL-FILE` databases remain accessible and can be migrated with `migrate:local-to-primary`.
 - **Migration Engine**: Apply, track, and execute safe migrations directly from code, CI/CD, or the API.
-- **Snapshots & Restore Points**: Scheduled, consistent SQLite snapshots and replay-verified libSQL logical backups, with point-in-time selection, selectable daily/weekly/monthly backups, tiered retention, and one-click restore into a new primary. See [Backup & Migration](docs/BACKUP_AND_MIGRATION.md).
+- **Snapshots & Restore Points**: Scheduled, consistent SQLite snapshots and replay-verified libSQL logical backups, with point-in-time selection, selectable daily/weekly/monthly backups, tiered retention, optional offsite copies to Cloudflare R2/S3, and one-click restore into a new primary. See [Backup & Migration](docs/BACKUP_AND_MIGRATION.md).
 - **Usage Analytics**: Query latency, rows read/written, traffic, storage history, error and source breakdowns, top databases/projects, and normalized query leaderboards, with no external analytics service.
 - **Enterprise-Grade Security**: Full RBAC, encrypted token storage via ED25519 JWT keys, comprehensive audit logging, and `HttpOnly` session hardening.
 - **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify**.

@@ -18,14 +18,41 @@ import { resolveLocalDatabasePath } from '../databases/local-database-path';
 import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import {
   fetchLibsqlDump,
-  isSqlDumpFile,
   replaySqlDumpToSqlite,
   validateLibsqlDump,
 } from './libsql-dump';
+import {
+  DatabaseSnapshotFileView,
+  getSnapshotArtifacts,
+  getSnapshotFormat,
+  SnapshotArtifact,
+  SnapshotArtifactKind,
+  SnapshotArtifacts,
+  SnapshotFormat,
+} from './snapshot-artifacts';
+import {
+  acquireSnapshotLease as leaseSnapshot,
+  beginSnapshotRemoval,
+  endSnapshotRemoval,
+  isSnapshotLeased,
+} from './snapshot-leases';
 import { getSnapshotConfig, getSnapshotPolicy, LibsqlArtifactMode } from './snapshot-config';
 import { SnapshotPolicyService, SnapshotPolicyView } from './SnapshotPolicyService';
 import { getMilestones, MilestoneDue } from './snapshot-schedule';
 import { AuditService } from '../audit/AuditService';
+import { getOffsiteBackupService } from '../offsite/OffsiteBackupService';
+import {
+  getOffsiteBackupSettings,
+  isOffsiteConfigured,
+} from '../settings/OffsiteBackupSettingsService';
+
+export { getSnapshotArtifacts, getSnapshotFormat };
+export type {
+  SnapshotArtifact,
+  SnapshotArtifactKind,
+  SnapshotArtifacts,
+  SnapshotFormat,
+};
 
 type SnapshotListOptions = {
   limit?: number;
@@ -51,27 +78,6 @@ type RestoreSnapshotInput = {
   ipAddress?: string;
 };
 
-export type SnapshotFormat = 'sqlite' | 'libsql-sql-dump' | 'libsql-sqlite-export';
-export type SnapshotArtifactKind = 'db' | 'sql';
-
-export type SnapshotArtifact = {
-  kind: SnapshotArtifactKind;
-  path: string;
-  fileName: string;
-  sizeBytes?: number;
-  checksumSha256?: string;
-};
-
-export type SnapshotArtifacts = {
-  primary: SnapshotArtifact;
-  db?: SnapshotArtifact;
-  dump?: SnapshotArtifact;
-  preferred: SnapshotArtifact;
-  downloadFormats: SnapshotArtifactKind[];
-  totalBytes: number;
-  warning?: string;
-};
-
 type SnapshotArtifactResult = {
   sizeBytes: number;
   checksumSha256: string;
@@ -87,25 +93,6 @@ type SourcePragmas = {
   encoding?: string;
   autoVacuum?: number;
 };
-
-type DatabaseSnapshotFileView = Pick<
-  DatabaseSnapshot,
-  'filePath' | 'fileName' | 'sizeBytes' | 'checksumSha256' | 'metadata'
->;
-
-function safeSnapshotFileName(value: unknown) {
-  if (typeof value !== 'string') return '';
-  const name = value.trim();
-  if (!name || name === '.' || name === '..') return '';
-  if (/[\\/]/.test(name)) return '';
-  if (path.basename(name) !== name) return '';
-  return name;
-}
-
-function metadataNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-}
 
 function normalizeSnapshotPath(value: string) {
   return path.normalize(path.resolve(value));
@@ -130,97 +117,6 @@ function finiteNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-/**
- * Describes every artifact that belongs to a snapshot without touching disk.
- *
- * Older snapshots have a single .sql file. New libSQL snapshots can carry a
- * materialized .db, and the transitional "both" mode keeps the legacy .sql as
- * the primary path so an older backend can still restore it.
- */
-export function getSnapshotArtifacts(snapshot: DatabaseSnapshotFileView): SnapshotArtifacts {
-  const primaryKind: SnapshotArtifactKind = isSqlDumpFile(snapshot.fileName) ? 'sql' : 'db';
-  const primary: SnapshotArtifact = {
-    kind: primaryKind,
-    path: snapshot.filePath,
-    fileName: snapshot.fileName,
-    sizeBytes: metadataNumber(snapshot.sizeBytes),
-    checksumSha256: snapshot.checksumSha256,
-  };
-
-  const directory = path.dirname(snapshot.filePath);
-  const artifacts: SnapshotArtifact[] = [primary];
-
-  const sqliteFileName = safeSnapshotFileName(snapshot.metadata?.sqliteFileName);
-  if (sqliteFileName) {
-    const sqliteSize = metadataNumber(snapshot.metadata?.sqliteSizeBytes);
-    const sqliteChecksum = typeof snapshot.metadata?.sqliteChecksumSha256 === 'string'
-      ? snapshot.metadata.sqliteChecksumSha256
-      : undefined;
-    const existing = artifacts.find((artifact) => artifact.kind === 'db');
-    if (!existing) {
-      artifacts.push({
-        kind: 'db',
-        path: path.join(directory, sqliteFileName),
-        fileName: sqliteFileName,
-        sizeBytes: sqliteSize,
-        checksumSha256: sqliteChecksum,
-      });
-    }
-  }
-
-  const dumpFileName = safeSnapshotFileName(snapshot.metadata?.dumpFileName);
-  if (dumpFileName) {
-    const dumpSize = metadataNumber(snapshot.metadata?.dumpSizeBytes);
-    const dumpChecksum = typeof snapshot.metadata?.dumpChecksumSha256 === 'string'
-      ? snapshot.metadata.dumpChecksumSha256
-      : undefined;
-    const existing = artifacts.find((artifact) => artifact.kind === 'sql');
-    if (!existing) {
-      artifacts.push({
-        kind: 'sql',
-        path: path.join(directory, dumpFileName),
-        fileName: dumpFileName,
-        sizeBytes: dumpSize,
-        checksumSha256: dumpChecksum,
-      });
-    }
-  }
-
-  const dbArtifact = artifacts.find((artifact) => artifact.kind === 'db');
-  const sqlArtifact = artifacts.find((artifact) => artifact.kind === 'sql');
-  const downloadFormats: SnapshotArtifactKind[] = [];
-  if (dbArtifact) downloadFormats.push('db');
-  if (sqlArtifact) downloadFormats.push('sql');
-
-  const totalBytes = metadataNumber(snapshot.metadata?.totalBytes)
-    ?? artifacts.reduce((total, artifact) => total + Number(artifact.sizeBytes || 0), 0);
-
-  return {
-    primary,
-    db: dbArtifact,
-    dump: sqlArtifact,
-    preferred: dbArtifact || primary,
-    downloadFormats,
-    totalBytes,
-    warning: typeof snapshot.metadata?.warning === 'string' ? snapshot.metadata.warning : undefined,
-  };
-}
-
-export function getSnapshotFormat(snapshot: Pick<DatabaseSnapshot, 'fileName' | 'metadata'>): SnapshotFormat {
-  const sqliteExport = snapshot.metadata?.format === 'libsql-sqlite-export'
-    || (
-      typeof snapshot.metadata?.sqliteFileName === 'string'
-      && snapshot.metadata?.sqliteVerified === true
-    );
-  if (sqliteExport) return 'libsql-sqlite-export';
-
-  const format = snapshot.metadata?.format;
-  if (format === 'libsql-sql-dump' || isSqlDumpFile(snapshot.fileName)) {
-    return 'libsql-sql-dump';
-  }
-  return 'sqlite';
-}
-
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -235,54 +131,7 @@ const snapshotRuntimeState = {
   // replays or imports. Track the temp path so orphan cleanup never deletes a
   // file that an in-flight restore still needs.
   activeRestorePaths: new Set<string>(),
-  // Restores and downloads hold a lease so retention cannot unlink a file
-  // while it is being read.
-  snapshotLeases: new Map<string, number>(),
-  // Held while delete/prune is unlinking artifacts. New leases are rejected so
-  // a download cannot start halfway through a deletion.
-  deletingSnapshotIds: new Set<string>(),
 };
-
-function acquireLease(snapshotId: string) {
-  if (snapshotRuntimeState.deletingSnapshotIds.has(snapshotId)) {
-    throw httpError(409, 'snapshot is being deleted');
-  }
-  snapshotRuntimeState.snapshotLeases.set(
-    snapshotId,
-    (snapshotRuntimeState.snapshotLeases.get(snapshotId) || 0) + 1,
-  );
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    const remaining = (snapshotRuntimeState.snapshotLeases.get(snapshotId) || 1) - 1;
-    if (remaining <= 0) {
-      snapshotRuntimeState.snapshotLeases.delete(snapshotId);
-    } else {
-      snapshotRuntimeState.snapshotLeases.set(snapshotId, remaining);
-    }
-  };
-}
-
-function isLeased(snapshotId: string) {
-  return (snapshotRuntimeState.snapshotLeases.get(snapshotId) || 0) > 0;
-}
-
-/**
- * Synchronously claims a snapshot for file removal. The check and the claim
- * happen without an await, so no new lease can slip in between them in the
- * Node event loop.
- */
-function beginSnapshotRemoval(snapshotId: string) {
-  if (snapshotRuntimeState.deletingSnapshotIds.has(snapshotId)) return false;
-  if (isLeased(snapshotId)) return false;
-  snapshotRuntimeState.deletingSnapshotIds.add(snapshotId);
-  return true;
-}
-
-function endSnapshotRemoval(snapshotId: string) {
-  snapshotRuntimeState.deletingSnapshotIds.delete(snapshotId);
-}
 
 function httpError(statusCode: number, message: string) {
   const error: any = new Error(message);
@@ -387,7 +236,7 @@ export class SnapshotService {
   }
 
   acquireSnapshotLease(snapshotId: string) {
-    return acquireLease(snapshotId);
+    return leaseSnapshot(snapshotId);
   }
 
   private async resolveArtifact(
@@ -487,11 +336,33 @@ export class SnapshotService {
       milestones[item.type] = item.key;
     }
 
-    snapshot.metadata = {
-      ...(snapshot.metadata ?? {}),
-      milestones,
-    };
-    return this.snapshotRepo.save(snapshot);
+    // Update only the milestones key so a concurrent offsite upload cannot
+    // overwrite the tag (and vice versa).
+    try {
+      await this.snapshotRepo.createQueryBuilder()
+        .update(DatabaseSnapshot)
+        .set({
+          metadata: () => `json_set(coalesce(metadata, '{}'), '$.milestones', json(:milestones))`,
+        })
+        .setParameter('milestones', JSON.stringify(milestones))
+        .where('id = :id', { id: snapshotId })
+        .execute();
+    } catch {
+      snapshot.metadata = {
+        ...(snapshot.metadata ?? {}),
+        milestones,
+      };
+      await this.snapshotRepo.save(snapshot);
+    }
+
+    const saved = await this.snapshotRepo.findOneBy({ id: snapshotId });
+    if (!saved) throw httpError(404, 'snapshot not found');
+    void getOffsiteBackupService().enqueue(saved.id).catch((error: any) => {
+      console.warn(
+        `[offsite] could not enqueue milestone snapshot ${saved.id}: ${error?.message || error}`,
+      );
+    });
+    return saved;
   }
 
   async createSnapshot(databaseId: string, options: CreateSnapshotOptions = {}) {
@@ -594,6 +465,15 @@ export class SnapshotService {
               `${artifact.metadata.format})`,
             );
           }
+
+          // Offsite upload is deliberately detached from snapshot creation. A
+          // missing S3 configuration or an R2 outage must never turn a valid
+          // local backup into a failed snapshot.
+          void getOffsiteBackupService().enqueue(saved.id).catch((error: any) => {
+            console.warn(
+              `[offsite] could not enqueue snapshot ${saved.id}: ${error?.message || error}`,
+            );
+          });
 
           return saved;
         } catch (error: any) {
@@ -962,7 +842,7 @@ export class SnapshotService {
     if (!beginSnapshotRemoval(snapshot.id)) {
       throw httpError(
         409,
-        isLeased(snapshot.id)
+        isSnapshotLeased(snapshot.id)
           ? 'snapshot is in use by a running restore or download'
           : 'snapshot is already being deleted',
       );
@@ -1011,7 +891,7 @@ export class SnapshotService {
 
     // Lease before reading the row so retention cannot unlink the artifact
     // between the status check and the restore itself.
-    const releaseLease = acquireLease(snapshotId);
+    const releaseLease = leaseSnapshot(snapshotId);
     try {
       const snapshot = await this.getSnapshot(databaseId, snapshotId);
       if (snapshot.status !== 'ready') {
@@ -1348,9 +1228,23 @@ export class SnapshotService {
       }
     }
 
+    const offsiteConfigured = isOffsiteConfigured();
+    const offsiteSettings = getOffsiteBackupSettings();
     let deleted = 0;
     for (const snapshot of snapshots) {
       if (keep.has(snapshot.id)) continue;
+      const offsite = snapshot.metadata?.offsite as { status?: string } | undefined;
+      // Do not unlink the local source while an offsite upload is queued or in
+      // progress. With the explicit `required` policy, also keep failed
+      // snapshots until the operator fixes the bucket; otherwise failed
+      // uploads follow normal retention with a visible error.
+      if (offsiteConfigured && (
+        offsite?.status === 'pending'
+        || offsite?.status === 'uploading'
+        || (offsiteSettings.required && offsite?.status !== 'uploaded')
+      )) {
+        continue;
+      }
       if (!beginSnapshotRemoval(snapshot.id)) continue;
       try {
         try {

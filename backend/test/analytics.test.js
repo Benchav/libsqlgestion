@@ -82,6 +82,12 @@ test.describe('Analytics', () => {
   });
 
   test('collects query, traffic and storage metrics and exposes the overview', async () => {
+    // Fix the window before inserting metrics. Computing "now - 2h" after the
+    // flush can push the rows into the previous one-hour bucket when the test
+    // crosses an hour boundary.
+    const from = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const to = new Date(Date.now() + 1000);
+
     analyticsCollector.recordQuery({
       databaseId: database.id,
       projectId: project.id,
@@ -137,8 +143,6 @@ test.describe('Analytics', () => {
 
     await analyticsCollector.flush();
 
-    const from = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    const to = new Date(Date.now() + 1000);
     const params = new URLSearchParams({
       range: 'today',
       from: from.toISOString(),

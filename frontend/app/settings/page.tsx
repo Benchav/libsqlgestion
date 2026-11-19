@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { AppShell } from '../../components/AppShell';
+import { OffsiteBackupCard } from '../../components/settings/OffsiteBackupCard';
 import { apiRequest } from '../../lib/api';
 import { User, Shield, Terminal, Globe, Plus, CheckCircle2, XCircle, Pencil, KeyRound, Mail, UserPlus, X, RefreshCw } from 'lucide-react';
 
@@ -304,6 +305,10 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+
+          {user?.permissions?.includes('settings.read') && (
+            <OffsiteBackupCard canWrite={Boolean(user?.permissions?.includes('settings.write'))} />
+          )}
 
           {/* System Health */}
           <div className="border border-zinc-800/80 rounded-xl bg-[#0f0f0f] overflow-hidden">

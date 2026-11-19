@@ -224,7 +224,8 @@ Suggested backup cadence:
 
 ### Restore points and long-term backups
 
-LibSQLite can create scheduled snapshots for `LOCAL-FILE` databases:
+LibSQLite can create scheduled snapshots for local SQLite databases and managed
+libSQL primaries:
 
 ```env
 SNAPSHOTS_ENABLED=true
@@ -240,6 +241,12 @@ SNAPSHOT_LIBSQL_ARTIFACT=auto
 
 `SNAPSHOT_INTERVAL_MINUTES` is the default for databases without a saved policy;
 each database can override it from its detail page.
+
+Local snapshots are **not** disaster recovery. Configure
+**Settings → Offsite Backups** to copy finished snapshots to Cloudflare R2 or
+another private S3-compatible bucket. The secret is encrypted at rest, uploads
+are asynchronous and an R2 outage never blocks local snapshot creation. For the
+R2 free tier, default to daily uploads and 30-day remote retention.
 
 Each database has an editable backup policy from its detail page:
 

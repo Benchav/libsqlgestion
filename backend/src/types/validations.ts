@@ -181,6 +181,28 @@ export const publicDatabaseSettingsSchema = z.object({
   protocol: z.enum(['http', 'https']).optional(),
 });
 
+export const offsiteBackupSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  endpoint: z.string().trim().max(512).optional(),
+  bucket: z.string().trim().max(63).optional(),
+  region: z.string().trim().max(64).optional(),
+  prefix: z.string().trim().max(128).optional(),
+  accessKeyId: z.string().trim().max(256).optional(),
+  secretAccessKey: z.string().max(512).optional(),
+  clearSecret: z.boolean().optional(),
+  uploadMode: z.enum(['all', 'daily', 'manual']).optional(),
+  artifacts: z.enum(['db', 'db+sql']).optional(),
+  retentionDays: z.coerce.number().int().min(1).max(3650).optional(),
+  required: z.boolean().optional(),
+  timeoutMs: z.coerce.number().int().min(5000).max(1800000).optional(),
+});
+
+export const offsiteSyncSchema = z.object({
+  includeExisting: z.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  snapshotId: z.string().trim().min(1).max(128).optional(),
+});
+
 export function parseAndValidate<T>(schema: z.ZodSchema<T>, data: unknown, errorLabel: string): T {
   const result = schema.safeParse(data);
   if (!result.success) {

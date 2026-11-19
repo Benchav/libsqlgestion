@@ -1133,11 +1133,20 @@ test.describe('Snapshots and restore points', () => {
       })();
 
       assert.equal(uploaded.metadata.offsite.status, 'uploaded');
+      assert.equal(uploaded.metadata.offsite.layoutVersion, 2);
+      assert.equal(uploaded.metadata.offsite.projectSlug, 'snapshots-project');
+      assert.equal(uploaded.metadata.offsite.databaseSlug, 'source-database');
       assert.equal(uploads.length, 1);
-      assert.match(uploads[0].key, /^prod\/.+\/.+\/.+\/.+\.db$/);
+      assert.match(
+        uploads[0].key,
+        /^prod\/snapshots-project\/source-database\/source-database_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[a-f0-9]{8}\.db$/,
+      );
       assert.equal(uploads[0].metadata.sha256, snapshot.checksumSha256);
       assert.ok(manifest);
-      assert.match(manifest.key, /\/manifest\.json$/);
+      assert.equal(manifest.key, uploads[0].key.replace(/\.db$/, '.manifest.json'));
+      assert.equal(manifest.body.layoutVersion, 2);
+      assert.equal(manifest.body.projectSlug, 'snapshots-project');
+      assert.equal(manifest.body.databaseSlug, 'source-database');
       assert.equal(manifest.body.snapshotId, snapshot.id);
       assert.equal(manifest.body.pinned, true);
       assert.equal(manifest.body.artifacts.length, 1);
@@ -1175,6 +1184,9 @@ test.describe('Snapshots and restore points', () => {
     const deleted = [];
     const oldManifest = 'prod/db-1/snap-1/manifest.json';
     const pinnedManifest = 'prod/db-1/snap-2/manifest.json';
+    const humanOldManifest = 'prod/proj/db/db_2025-01-01_00-00-00_aaaaaaaa.manifest.json';
+    const humanOldDb = 'prod/proj/db/db_2025-01-01_00-00-00_aaaaaaaa.db';
+    const humanNewDb = 'prod/proj/db/db_2026-01-01_00-00-00_bbbbbbbb.db';
     const fakeStore = {
       testConnection: async () => ({ latencyMs: 1 }),
       uploadFile: async () => undefined,
@@ -1191,6 +1203,9 @@ test.describe('Snapshots and restore points', () => {
         { key: pinnedManifest, lastModified: new Date('2025-01-01T00:00:00Z') },
         { key: 'prod/db-1/snap-2/data.db', lastModified: new Date('2025-01-01T00:00:00Z') },
         { key: 'prod/db-1/snap-3/manifest.json', lastModified: new Date() },
+        { key: humanOldManifest, lastModified: new Date('2025-01-01T00:00:00Z') },
+        { key: humanOldDb, lastModified: new Date('2025-01-01T00:00:00Z') },
+        { key: humanNewDb, lastModified: new Date() },
       ],
       deleteObject: async (key) => {
         deleted.push(key);
@@ -1213,11 +1228,14 @@ test.describe('Snapshots and restore points', () => {
         timeoutMs: 30000,
       });
       const result = await service.runRemoteRetention();
-      assert.equal(result.deleted, 1);
+      assert.equal(result.deleted, 2);
       assert.ok(deleted.includes(oldManifest));
       assert.ok(deleted.includes('prod/db-1/snap-1/data.db'));
       assert.equal(deleted.includes(pinnedManifest), false);
       assert.equal(deleted.includes('prod/db-1/snap-2/data.db'), false);
+      assert.ok(deleted.includes(humanOldManifest));
+      assert.ok(deleted.includes(humanOldDb));
+      assert.equal(deleted.includes(humanNewDb), false);
     } finally {
       service.storeFactory = originalFactory;
       await updateOffsiteBackupSettings({ enabled: false, clearSecret: true }).catch(() => undefined);

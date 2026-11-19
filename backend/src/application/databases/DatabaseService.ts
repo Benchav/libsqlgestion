@@ -16,10 +16,16 @@ import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
 import { getMaxUploadBytes } from '../../config/uploads';
 import { getRuntimeConnectionUrl, isRemoteDatabaseUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
+import { runtimeIdentityMatches } from './runtime-health-guard';
 
 type PrimaryMode = 'namespace' | 'runtime';
 type RequestedPrimaryMode = PrimaryMode | 'auto';
 type StorageMode = PrimaryMode | 'local';
+
+// DatabaseService is instantiated in several places (HTTP controllers,
+// background monitors, scripts). A module-level guard prevents two concurrent
+// rotations from racing on the same primary regardless of instance.
+const rotatingDatabaseIds = new Set<string>();
 
 function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value.trim() === '') return fallback;
@@ -783,19 +789,88 @@ export class DatabaseService {
         return { database, token: newToken };
       }
 
-      const runtimeBundle = await this.runtimeService.rotateDatabase(database);
-      if (!runtimeBundle) {
-        throw new Error('database runtime is missing');
+      if (rotatingDatabaseIds.has(id)) {
+        const error: any = new Error('A token rotation is already in progress for this database.');
+        error.statusCode = 409;
+        throw error;
       }
 
-      database.encryptedToken = encrypt(runtimeBundle.token);
-      database.metadata = mergeRuntimeMetadata(database.metadata, runtimeBundle.metadata);
-      await this.databaseRepo.save(database);
-      await this.auditService.record({ action: 'database.rotate-token', resourceType: 'database', resourceId: database.id });
-      if (runtimeBundle.metadata.routeHealth?.publicChecked === false) {
-        this.scheduleRuntimeHealthRefresh(database.id);
+      rotatingDatabaseIds.add(id);
+      try {
+        let persisted = false;
+        let persistedDatabase: Database | null = null;
+        const runtimeBundle = await this.runtimeService.rotateDatabase(database, {
+          persist: async (bundle) => {
+            // Re-read before saving so a concurrent rename/subdomain change is
+            // preserved. Only the credential and runtime metadata belong to
+            // this rotation.
+            const fresh = await this.databaseRepo.findOne({ where: { id } });
+            if (!fresh) {
+              throw new Error('database record disappeared during token rotation');
+            }
+            fresh.encryptedToken = encrypt(bundle.token);
+            fresh.metadata = mergeRuntimeMetadata(fresh.metadata, bundle.metadata);
+            try {
+              await this.databaseRepo.save(fresh);
+            } catch (error) {
+              // A local write can succeed while the driver still reports an
+              // error. Never delete the replacement if the row already points
+              // at it: that would leave the panel with an unusable runtime.
+              const check = await this.databaseRepo.findOne({ where: { id } }).catch(() => null);
+              const persistedRuntime = check?.metadata?.runtime as
+                | { containerId?: unknown }
+                | undefined;
+              if (check && persistedRuntime?.containerId === bundle.metadata.containerId) {
+                persistedDatabase = check;
+                persisted = true;
+                return;
+              }
+              throw error;
+            }
+            persistedDatabase = fresh;
+            persisted = true;
+          },
+        });
+
+        if (!runtimeBundle) {
+          throw new Error('database runtime is missing');
+        }
+
+        if (!persisted) {
+          // Defensive path for callers that rotate without the persist hook.
+          // The runtime has already been replaced, so the credential must be
+          // saved before reporting success.
+          const fresh = await this.databaseRepo.findOne({ where: { id } });
+          const target = fresh ?? database;
+          target.encryptedToken = encrypt(runtimeBundle.token);
+          target.metadata = mergeRuntimeMetadata(target.metadata, runtimeBundle.metadata);
+          await this.databaseRepo.save(target);
+          persistedDatabase = target;
+        }
+
+        // A successful rotation must not be reported as failed only because
+        // the audit insert failed: the new credential is already active.
+        try {
+          await this.auditService.record({
+            action: 'database.rotate-token',
+            resourceType: 'database',
+            resourceId: database.id,
+            metadata: { runtime: 'docker-libsql' },
+          });
+        } catch (auditError: any) {
+          console.warn(
+            `[DatabaseService] token rotated for ${database.id} but audit logging failed: ` +
+            `${auditError?.message || auditError}`,
+          );
+        }
+
+        if (runtimeBundle.metadata.routeHealth?.publicChecked === false) {
+          this.scheduleRuntimeHealthRefresh(database.id);
+        }
+        return { database: persistedDatabase ?? database, token: runtimeBundle.token };
+      } finally {
+        rotatingDatabaseIds.delete(id);
       }
-      return { database, token: runtimeBundle.token };
     }
 
     const newToken = randomToken();
@@ -803,6 +878,49 @@ export class DatabaseService {
     await this.databaseRepo.save(database);
     await this.auditService.record({ action: 'database.rotate-token', resourceType: 'database', resourceId: database.id });
     return { database, token: newToken };
+  }
+
+  /**
+   * Repairs rotations interrupted by a backend crash or redeploy. Runs before
+   * the HTTP listener starts so a stopped primary is brought back before it is
+   * reported unhealthy or receives traffic.
+   */
+  async recoverInterruptedRotations() {
+    if (!this.runtimeService.isEnabled()) {
+      return { restored: 0, finalized: 0, failed: 0 };
+    }
+
+    const databases = await this.databaseRepo.find();
+    let restored = 0;
+    let finalized = 0;
+    let failed = 0;
+
+    for (const database of databases) {
+      const runtime = database.metadata?.runtime as Record<string, unknown> | undefined;
+      if (runtime?.provider !== 'docker-libsql') continue;
+
+      try {
+        const result = await this.runtimeService.recoverInterruptedRotation(database);
+        if (result === 'restored') {
+          restored += 1;
+          console.warn(
+            `[DatabaseService] recovered interrupted token rotation for ${database.name} (${database.id})`,
+          );
+        } else if (result === 'finalized') {
+          finalized += 1;
+        } else if (result === 'failed') {
+          failed += 1;
+        }
+      } catch (error: any) {
+        failed += 1;
+        console.warn(
+          `[DatabaseService] rotation recovery failed for ${database.name} (${database.id}): ` +
+          `${error?.message || error}`,
+        );
+      }
+    }
+
+    return { restored, finalized, failed };
   }
 
   async testConnection(id: string) {
@@ -1431,6 +1549,16 @@ export class DatabaseService {
       throw wrapped;
     }
 
+    const checkedIdentity = {
+      containerId: typeof runtime.containerId === 'string' ? runtime.containerId : '',
+      authKeyPem: typeof runtime.authKeyPem === 'string' ? runtime.authKeyPem : '',
+    };
+    if (!checkedIdentity.containerId) {
+      const error: any = new Error('Runtime metadata is missing the container id.');
+      error.statusCode = 409;
+      throw error;
+    }
+
     const health = await this.runtimeService.checkRouteHealth(database, token, options);
     if (!health) {
       const error: any = new Error('Runtime metadata is missing or incomplete.');
@@ -1438,21 +1566,30 @@ export class DatabaseService {
       throw error;
     }
 
-    const previousHealth = runtime.routeHealth as Record<string, unknown> | undefined;
+    // Re-read immediately before writing. A rotation may have replaced the
+    // runtime while the public route was being checked; in that case the
+    // fresh row owns the current credential and this health result is stale.
+    const fresh = await this.databaseRepo.findOne({ where: { id } });
+    const freshRuntime = fresh?.metadata?.runtime as Record<string, unknown> | undefined;
+    if (!fresh || !runtimeIdentityMatches(freshRuntime, checkedIdentity)) {
+      return fresh ?? database;
+    }
+
+    const previousHealth = freshRuntime?.routeHealth as Record<string, unknown> | undefined;
     const healthChanged = !previousHealth
       || previousHealth.internalOk !== health.internalOk
       || previousHealth.backendOk !== health.backendOk
       || previousHealth.publicOk !== health.publicOk
       || previousHealth.publicChecked !== health.publicChecked;
 
-    database.metadata = {
-      ...(database.metadata ?? {}),
+    fresh.metadata = {
+      ...(fresh.metadata ?? {}),
       runtime: {
-        ...runtime,
+        ...freshRuntime,
         routeHealth: health,
       },
     };
-    await this.databaseRepo.save(database);
+    await this.databaseRepo.save(fresh);
 
     // The periodic monitor records only transitions, avoiding an audit row
     // every few minutes for a healthy primary.
@@ -1460,7 +1597,7 @@ export class DatabaseService {
       await this.auditService.record({
         action: 'database.health_check',
         resourceType: 'database',
-        resourceId: database.id,
+        resourceId: fresh.id,
         metadata: {
           internalOk: health.internalOk,
           backendOk: health.backendOk,
@@ -1471,7 +1608,7 @@ export class DatabaseService {
       });
     }
 
-    return database;
+    return fresh;
   }
 
   private scheduleRuntimeHealthRefresh(databaseId: string, delayMs = 3000, attempt = 1) {

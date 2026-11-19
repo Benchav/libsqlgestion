@@ -68,6 +68,8 @@ export default function StudioPage() {
 
   const [database, setDatabase] = useState<DatabaseInfo | null>(null);
   const [tables, setTables] = useState<TableSchema[]>([]);
+  const [rowCounts, setRowCounts] = useState<Record<string, number>>({});
+  const tablesRef = useRef<TableSchema[]>([]);
   const [activeKind, setActiveKind] = useState<'table' | 'view'>('table');
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'data' | 'sql'>('data');
@@ -140,17 +142,25 @@ export default function StudioPage() {
         `/databases/${dbId}/schema?counts=0${force ? '&refresh=1' : ''}`,
       );
       const combined = [...(result.tables || []), ...(result.views || [])];
+      tablesRef.current = combined;
       setTables(combined);
-      const initialGroup = combined.filter((schema) => schema.kind === activeKind);
-      if (!activeTable && initialGroup.length > 0) {
-        setActiveTable(initialGroup[0].table);
+      if (force) {
+        rowCountCache.current.clear();
+        setRowCounts({});
       }
+      const initialGroup = combined.filter((schema) => schema.kind === activeKind);
+      setActiveTable((previous) => {
+        if (previous && combined.some((schema) => schema.table === previous)) {
+          return previous;
+        }
+        return initialGroup[0]?.table ?? null;
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
       setSchemaLoading(false);
     }
-  }, [dbId, activeTable]);
+  }, [dbId, activeKind]);
 
   useEffect(() => {
     if (dbId) loadSchema();
@@ -171,15 +181,15 @@ export default function StudioPage() {
         rowCountCache.current.set(activeTable, count);
       }
       setTotalRows(count);
-      setTables((previous) => {
-        const target = previous.find((schema) => schema.table === activeTable);
-        if (!target || target.rowCount === count) return previous;
-        return previous.map((schema) => (
-          schema.table === activeTable ? { ...schema, rowCount: count } : schema
-        ));
-      });
+      // Counts live in their own map. Mutating `tables` here changed the
+      // loadTableData dependency and triggered a second, identical query.
+      setRowCounts((previous) => (
+        previous[activeTable] === count
+          ? previous
+          : { ...previous, [activeTable]: count }
+      ));
 
-      const tableSchema = tables.find((schema) => schema.table === activeTable);
+      const tableSchema = tablesRef.current.find((schema) => schema.table === activeTable);
       const primaryKey = tableSchema?.columns.find((column) => column.pk === 1)?.name;
       const orderExpression = sortColumn
         ? `"${sortColumn}"`
@@ -203,7 +213,7 @@ export default function StudioPage() {
     } finally {
       setGridLoading(false);
     }
-  }, [dbId, activeTable, page, sortColumn, sortDir, tables]);
+  }, [dbId, activeTable, page, sortColumn, sortDir]);
 
   useEffect(() => {
     loadTableData();
@@ -522,6 +532,7 @@ export default function StudioPage() {
       const isWrite = result.rows === undefined;
       if (isWrite) {
         rowCountCache.current.clear();
+        setRowCounts({});
         loadSchema();
         if (activeTable) loadTableData({ refreshCount: true });
       }
@@ -765,7 +776,7 @@ export default function StudioPage() {
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <TableSidebar
-            tables={visibleSchemas.map((t) => ({ table: t.table, kind: t.kind, rowCount: t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
+            tables={visibleSchemas.map((t) => ({ table: t.table, kind: t.kind, rowCount: rowCounts[t.table] ?? t.rowCount, columns: t.columns.map((c) => ({ name: c.name, type: c.type, pk: c.pk })) }))}
             activeTable={activeTable}
             activeKind={activeKind}
             activeTab={activeTab}

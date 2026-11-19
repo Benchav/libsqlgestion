@@ -38,9 +38,18 @@ type RuntimeMetadata = {
   routeHealth: RuntimeRouteHealth;
 };
 
-type RuntimeBundle = {
+export type RuntimeBundle = {
   token: string;
   metadata: RuntimeMetadata;
+};
+
+export type RotateDatabaseOptions = {
+  /**
+   * Persists the new credential and runtime metadata before the previous
+   * primary is destroyed. If this throws, the rotation is rolled back and the
+   * previous token remains valid.
+   */
+  persist?: (bundle: RuntimeBundle) => Promise<void>;
 };
 
 type RuntimePaths = {
@@ -120,7 +129,10 @@ export class LibsqlRuntimeService {
     }
   }
 
-  async rotateDatabase(database: Database): Promise<RuntimeBundle | null> {
+  async rotateDatabase(
+    database: Database,
+    options: RotateDatabaseOptions = {},
+  ): Promise<RuntimeBundle | null> {
     const runtime = this.readRuntimeMetadata(database);
     if (!runtime) return null;
 
@@ -134,16 +146,19 @@ export class LibsqlRuntimeService {
     const previousAuthPem = await fs.promises.readFile(authPemPath, 'utf8').catch(() => null);
     const previousContainerName = `${runtime.containerName}-previous-${Date.now()}`;
 
+    // Write the recovery marker before touching Docker. If the backend is
+    // killed mid-rotation, startup reconciliation restores the previous key
+    // and runtime instead of leaving the primary stopped with a token that no
+    // longer matches auth.pem.
+    await this.writeRotationMarker(authPemPath, previousAuthPem);
+
     let createdContainerId: string | undefined;
-    let oldRenamed = false;
-    let oldDisconnected = false;
+    let committed = false;
 
     try {
       // Keep the previous primary recoverable until the replacement accepts
-      // authenticated queries. A failed rotation must not destroy the only
-      // working runtime.
+      // authenticated queries and the new credential is persisted.
       await this.renameContainer(runtime.containerId, previousContainerName);
-      oldRenamed = true;
       await this.stopContainer(runtime.containerId);
 
       // Remove the stopped container from the routing network so Traefik does
@@ -154,7 +169,6 @@ export class LibsqlRuntimeService {
           `/networks/${encodeURIComponent(networkName)}/disconnect`,
           { Container: runtime.containerId, Force: true },
         );
-        oldDisconnected = true;
       } catch (error: any) {
         console.warn(
           `[LibsqlRuntimeService] could not disconnect previous runtime from "${networkName}": ` +
@@ -172,20 +186,7 @@ export class LibsqlRuntimeService {
         backendUrl,
       }, authBundle.token);
 
-      // The replacement is ready. The old container is no longer needed.
-      await this.removeContainer(runtime.containerId).catch((error: any) => {
-        console.warn(
-          `[LibsqlRuntimeService] rotated runtime but could not remove the previous container ` +
-          `"${previousContainerName}": ${error?.message || error}`,
-        );
-      });
-
-      console.log(
-        `[LibsqlRuntimeService] rotated ${database.id} in ${Date.now() - rotateStartedAt}ms ` +
-        `(network=${networkName}, internal=${readiness.routeHealth.internalOk}, ` +
-        `backend=${readiness.routeHealth.backendOk}; public check deferred)`,
-      );
-      return {
+      const bundle: RuntimeBundle = {
         token: authBundle.token,
         metadata: {
           provider: 'docker-libsql',
@@ -204,56 +205,253 @@ export class LibsqlRuntimeService {
           routeHealth: readiness.routeHealth,
         },
       };
-    } catch (error: any) {
-      if (createdContainerId) {
-        try { await this.removeContainer(createdContainerId); } catch { /* best-effort */ }
-      } else {
-        try { await this.requestVoid('DELETE', `/containers/${paths.containerName}?force=true&v=true`); } catch { /* best-effort */ }
+
+      // Persist the replacement credential before destroying the previous
+      // primary. If the write fails, the catch block restores the old runtime
+      // and the old token continues to authenticate.
+      if (options.persist) {
+        await options.persist(bundle);
+        // From this point the database row points at the replacement. A later
+        // failure must never delete it or revive the previous credential.
+        committed = true;
       }
 
-      // Restore the signing key before restarting the previous container.
-      // Otherwise its still-valid token would stop authenticating after a
-      // restart because the new public key had already replaced auth.pem.
-      try {
-        if (previousAuthPem !== null) {
-          await fs.promises.writeFile(authPemPath, previousAuthPem, 'utf8');
-        } else {
-          await fs.promises.rm(authPemPath, { force: true });
-        }
-      } catch (restoreError: any) {
-        console.error(
-          `[LibsqlRuntimeService] could not restore previous auth key after failed rotation: ` +
-          `${restoreError?.message || restoreError}`,
+      await this.removeContainer(runtime.containerId).catch((error: any) => {
+        console.warn(
+          `[LibsqlRuntimeService] rotated runtime but could not remove the previous container ` +
+          `"${previousContainerName}": ${error?.message || error}`,
         );
+      });
+
+      await this.clearRotationMarker(authPemPath);
+
+      console.log(
+        `[LibsqlRuntimeService] rotated ${database.id} in ${Date.now() - rotateStartedAt}ms ` +
+        `(network=${networkName}, internal=${readiness.routeHealth.internalOk}, ` +
+        `backend=${readiness.routeHealth.backendOk}; public check deferred)`,
+      );
+      return bundle;
+    } catch (error: any) {
+      if (committed) {
+        // The new credential is already persisted. Rolling back here would
+        // leave the control plane pointing at a deleted runtime.
+        console.error(
+          `[LibsqlRuntimeService] rotation for ${database.id} was committed but ` +
+          `finalization failed: ${error?.message || error}`,
+        );
+        throw error;
       }
 
-      let rollbackOk = false;
-      if (oldRenamed) {
-        try {
-          if (oldDisconnected) {
-            await this.requestJson(
-              'POST',
-              `/networks/${encodeURIComponent(networkName)}/connect`,
-              { Container: runtime.containerId },
-            );
-          }
-          await this.renameContainer(runtime.containerId, runtime.containerName);
-          // start is idempotent: Docker returns 304 when it is already running.
-          await this.startContainer(runtime.containerId);
-          rollbackOk = true;
-        } catch (rollbackError: any) {
-          console.error(
-            `[LibsqlRuntimeService] rollback failed for ${database.id}; previous container ` +
-            `"${previousContainerName}" may need manual recovery: ${rollbackError?.message || rollbackError}`,
+      // Only remove a replacement whose creation was positively confirmed.
+      // Deleting by container name here could destroy the original runtime
+      // when the initial rename failed.
+      if (createdContainerId) {
+        await this.removeContainer(createdContainerId).catch((cleanupError: any) => {
+          console.warn(
+            `[LibsqlRuntimeService] could not remove failed replacement ${createdContainerId}: ` +
+            `${cleanupError?.message || cleanupError}`,
           );
-        }
+        });
+      }
+
+      const recovery = await this.recoverPreviousRuntime({
+        containerId: runtime.containerId,
+        containerName: runtime.containerName,
+        networkName,
+        authPemPath,
+        previousAuthPem,
+      });
+
+      if (recovery.ok) {
+        await this.clearRotationMarker(authPemPath);
+      } else {
+        console.error(
+          `[LibsqlRuntimeService] rollback failed for ${database.id}; previous container ` +
+          `"${previousContainerName}" may need manual recovery: ${recovery.error}`,
+        );
       }
 
       throw new Error(
         `libSQL token rotation failed and the previous runtime ` +
-        `${rollbackOk ? 'was restored' : 'could not be restored automatically'}: ` +
+        `${recovery.ok ? 'was restored' : 'could not be restored automatically'}: ` +
+        `${error?.message || error}` +
+        `${recovery.ok ? '' : ` (recovery error: ${recovery.error})`}`,
+      );
+    }
+  }
+
+  private async inspectContainer(containerId: string): Promise<DockerJson | null> {
+    try {
+      return await this.requestJson('GET', `/containers/${containerId}/json`);
+    } catch (error: any) {
+      if (String(error?.message || '').includes('404')) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async writeRotationMarker(authPemPath: string, previousAuthPem: string | null) {
+    const markerPath = `${authPemPath}.rotation`;
+    if (previousAuthPem === null) {
+      await fs.promises.rm(markerPath, { force: true }).catch(() => undefined);
+      return;
+    }
+
+    const tempPath = `${markerPath}.tmp`;
+    await fs.promises.writeFile(tempPath, previousAuthPem, { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.rename(tempPath, markerPath);
+  }
+
+  private async clearRotationMarker(authPemPath: string) {
+    await fs.promises.rm(`${authPemPath}.rotation`, { force: true }).catch(() => undefined);
+    await fs.promises.rm(`${authPemPath}.rotation.tmp`, { force: true }).catch(() => undefined);
+  }
+
+  /**
+   * Repairs a rotation interrupted by a backend crash or redeploy. The marker
+   * is written before the previous runtime is touched, so this runs whenever
+   * auth.pem.rotation exists on startup.
+   */
+  async recoverInterruptedRotation(database: Database): Promise<'none' | 'restored' | 'finalized' | 'failed'> {
+    const runtime = this.readRuntimeMetadata(database);
+    if (!runtime) return 'none';
+
+    const authPemPath = path.join(this.resolveDatabaseRootDir(runtime.databasePath), 'auth.pem');
+    const markerPath = `${authPemPath}.rotation`;
+    const previousAuthPem = await fs.promises.readFile(markerPath, 'utf8').catch(() => null);
+    if (previousAuthPem === null) return 'none';
+
+    let inspection: DockerJson | null;
+    try {
+      inspection = await this.inspectContainer(runtime.containerId);
+    } catch (error: any) {
+      console.warn(
+        `[LibsqlRuntimeService] could not inspect ${database.id} during rotation recovery: ` +
         `${error?.message || error}`,
       );
+      return 'failed';
+    }
+
+    const currentName = String(inspection?.Name || '').replace(/^\/+/, '');
+    if (inspection?.State?.Running === true && currentName === runtime.containerName) {
+      // The runtime referenced by the persisted metadata is healthy. Either
+      // the rotation never reached the replacement or its credential was
+      // already saved; the marker is no longer needed.
+      await this.clearRotationMarker(authPemPath);
+      return 'finalized';
+    }
+
+    // A replacement that was created but never persisted still owns the
+    // canonical container name. Remove it before renaming the old runtime back.
+    try {
+      const replacement = await this.inspectContainer(runtime.containerName);
+      if (replacement?.Id && replacement.Id !== runtime.containerId) {
+        await this.removeContainer(replacement.Id);
+      }
+    } catch (error: any) {
+      console.warn(
+        `[LibsqlRuntimeService] could not inspect a possible replacement for ${database.id}: ` +
+        `${error?.message || error}`,
+      );
+    }
+
+    let networkName = typeof runtime.network === 'string' ? runtime.network.trim() : '';
+    if (!networkName) {
+      try {
+        networkName = await this.resolveBackendNetworkName();
+      } catch (error: any) {
+        console.error(
+          `[LibsqlRuntimeService] could not resolve the runtime network for ${database.id}: ` +
+          `${error?.message || error}`,
+        );
+        return 'failed';
+      }
+    }
+
+    const recovery = await this.recoverPreviousRuntime({
+      containerId: runtime.containerId,
+      containerName: runtime.containerName,
+      networkName,
+      authPemPath,
+      previousAuthPem,
+    });
+
+    if (!recovery.ok) {
+      console.error(
+        `[LibsqlRuntimeService] interrupted rotation recovery failed for ${database.id}: ${recovery.error}`,
+      );
+      return 'failed';
+    }
+
+    await this.clearRotationMarker(authPemPath);
+    return 'restored';
+  }
+
+  /**
+   * Restores the previous primary from its actual Docker state instead of
+   * assuming the earlier stop/rename/disconnect sequence completed. This is
+   * what makes a failed rotation safe when a Docker call succeeds server-side
+   * but the response is lost.
+   */
+  private async recoverPreviousRuntime(params: {
+    containerId: string;
+    containerName: string;
+    networkName: string;
+    authPemPath: string;
+    previousAuthPem: string | null;
+  }): Promise<{ ok: boolean; error?: string }> {
+    // Restore the JWT verification key before starting the previous container.
+    // Otherwise its still-valid token would stop authenticating after a
+    // restart because the new public key had already replaced auth.pem.
+    try {
+      if (params.previousAuthPem !== null) {
+        await fs.promises.writeFile(params.authPemPath, params.previousAuthPem, 'utf8');
+      } else {
+        await fs.promises.rm(params.authPemPath, { force: true });
+      }
+    } catch (error: any) {
+      return { ok: false, error: `could not restore auth key: ${error?.message || error}` };
+    }
+
+    let inspect: DockerJson | null;
+    try {
+      inspect = await this.inspectContainer(params.containerId);
+    } catch (error: any) {
+      return { ok: false, error: `could not inspect previous runtime: ${error?.message || error}` };
+    }
+
+    if (!inspect) {
+      return {
+        ok: false,
+        error: `previous runtime container ${params.containerId} no longer exists`,
+      };
+    }
+
+    try {
+      const currentName = String(inspect?.Name || '').replace(/^\/+/, '');
+      if (currentName && currentName !== params.containerName) {
+        await this.renameContainer(params.containerId, params.containerName);
+      }
+
+      const networks = inspect?.NetworkSettings?.Networks;
+      const attached = networks && typeof networks === 'object' ? Object.keys(networks) : [];
+      if (!attached.includes(params.networkName)) {
+        await this.requestJson(
+          'POST',
+          `/networks/${encodeURIComponent(params.networkName)}/connect`,
+          { Container: params.containerId },
+        );
+      }
+
+      if (inspect?.State?.Running !== true) {
+        // Docker returns 304 when the container is already running.
+        await this.startContainer(params.containerId);
+      }
+
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) };
     }
   }
 
@@ -517,9 +715,21 @@ export class LibsqlRuntimeService {
       throw new Error('Docker did not return a container id');
     }
 
-    await this.requestVoid('POST', `/containers/${containerId}/start`);
-    await this.assertContainerOnNetwork(containerId, networkName);
-    return containerId;
+    try {
+      await this.requestVoid('POST', `/containers/${containerId}/start`);
+      await this.assertContainerOnNetwork(containerId, networkName);
+      return containerId;
+    } catch (error) {
+      // The caller does not receive the id when startup fails, so remove the
+      // half-created container here by its confirmed identity.
+      await this.removeContainer(containerId).catch((cleanupError: any) => {
+        console.warn(
+          `[LibsqlRuntimeService] could not remove container ${containerId} after startup failure: ` +
+          `${cleanupError?.message || cleanupError}`,
+        );
+      });
+      throw error;
+    }
   }
 
   private async assertContainerOnNetwork(containerId: string, networkName: string) {

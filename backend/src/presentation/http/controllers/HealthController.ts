@@ -8,7 +8,7 @@ export default async function healthRoutes(app: FastifyInstance) {
     return reply.send({ ok: true, service: 'libsqlite-backend', timestamp: new Date().toISOString(), runtimeSummary });
   });
 
-  app.get('/ready', async (_request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/ready', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!AppDataSource.isInitialized) {
       return reply.code(503).send({ ok: false, reason: 'database not initialized' });
     }
@@ -16,8 +16,15 @@ export default async function healthRoutes(app: FastifyInstance) {
     try {
       await AppDataSource.query('SELECT 1');
 
+      // Readiness describes the control plane, not every tenant runtime. One
+      // unhealthy ERP primary must not make the admin panel unready or cause
+      // the backend to be restarted by the orchestrator. Monitoring can opt
+      // into strict tenant checks with ?strict=1.
       const runtimeSummary = await summarizeRuntimeHealth();
-      if (runtimeSummary.unhealthyPublicRuntimeCount > 0) {
+      const degraded = runtimeSummary.unhealthyPublicRuntimeCount > 0;
+      const strict = String((request.query as any)?.strict || '') === '1';
+
+      if (strict && degraded) {
         return reply.code(503).send({
           ok: false,
           reason: 'one or more public runtimes are unhealthy',
@@ -25,7 +32,7 @@ export default async function healthRoutes(app: FastifyInstance) {
         });
       }
 
-      return reply.send({ ok: true, runtimeSummary });
+      return reply.send({ ok: true, degraded, runtimeSummary });
     } catch (error: any) {
       return reply.code(503).send({ ok: false, reason: error.message });
     }

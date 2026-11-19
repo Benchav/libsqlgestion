@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { Readable } = require('node:stream');
 
 process.env.SNAPSHOT_LIBSQL_MAX_BYTES = String(64 * 1024 * 1024);
 process.env.SNAPSHOT_LIBSQL_DUMP_TIMEOUT_MS = '5000';
@@ -27,6 +28,87 @@ INSERT INTO users(id,name) VALUES(1,'Ana');
 INSERT INTO users(id,name) VALUES(2,'Luis');
 COMMIT;
 `;
+
+function sqlLiteral(value) {
+  if (value === null || value === undefined) return 'NULL';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'bigint') return value.toString();
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return `X'${Buffer.from(value).toString('hex')}'`;
+  }
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function quoteIdentifier(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
+/**
+ * Produces a dump in the same shape as sqld's /dump exporter: virtual tables
+ * are registered through writable_schema, shadow tables are dumped as regular
+ * tables, and data rows follow the schema.
+ */
+async function exportSqldLikeDump(sourcePath, dumpPath) {
+  const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
+  const client = new SqliteClient(sourcePath);
+  const lines = ['PRAGMA foreign_keys=OFF;', 'BEGIN TRANSACTION;'];
+  let writableSchema = false;
+
+  try {
+    const tables = await client.all(
+      "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL ORDER BY rowid",
+    );
+
+    if (tables.some((table) => table.name === 'sqlite_sequence')) {
+      lines.push('DELETE FROM sqlite_sequence;');
+    }
+
+    for (const table of tables) {
+      if (table.name === 'sqlite_sequence') continue;
+      if (table.name.startsWith('sqlite_')) continue;
+
+      if (table.sql.startsWith('CREATE VIRTUAL TABLE')) {
+        if (!writableSchema) {
+          lines.push('PRAGMA writable_schema=ON;');
+          writableSchema = true;
+        }
+        const name = String(table.name).replace(/'/g, "''");
+        lines.push(
+          "INSERT INTO sqlite_schema(type,name,tbl_name,rootpage,sql)" +
+          `VALUES('table','${name}','${name}',0,${sqlLiteral(table.sql)});`,
+        );
+        continue;
+      }
+
+      lines.push(`CREATE TABLE IF NOT EXISTS ${table.sql.replace(/^CREATE TABLE\s+/i, '')};`);
+      const rows = await client.all(`SELECT * FROM ${quoteIdentifier(table.name)}`);
+      for (const row of rows) {
+        const columns = Object.keys(row);
+        lines.push(
+          `INSERT INTO ${quoteIdentifier(table.name)}` +
+          `(${columns.map(quoteIdentifier).join(',')}) ` +
+          `VALUES(${columns.map((column) => sqlLiteral(row[column])).join(',')});`,
+        );
+      }
+    }
+
+    if (writableSchema) {
+      lines.push('PRAGMA writable_schema=OFF;');
+    }
+
+    const schemaObjects = await client.all(
+      "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND type IN ('index','trigger','view')",
+    );
+    for (const object of schemaObjects) {
+      lines.push(`${object.sql};`);
+    }
+
+    lines.push('COMMIT;', '');
+    fs.writeFileSync(dumpPath, lines.join('\n'));
+  } finally {
+    await client.close();
+  }
+}
 
 test.after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
@@ -129,6 +211,58 @@ test('streams statements without splitting quoted semicolons', async () => {
   assert.match(statements[0], /a; b/);
 });
 
+test('keeps bracketed identifiers and comment delimiters split across chunks', async () => {
+  const originalCreateReadStream = fs.createReadStream;
+  try {
+    fs.createReadStream = () => Readable.from([
+      'CREATE TABLE [a;b] (id INTEGER); /* comment *',
+      '/ INSERT INTO [a;b] VALUES(1);',
+    ]);
+
+    const statements = [];
+    for await (const statement of streamSqlStatements('memory-only')) {
+      statements.push(statement);
+    }
+
+    assert.equal(statements.length, 2);
+    assert.match(statements[0], /\[a;b\]/);
+    assert.match(statements[1], /INSERT INTO \[a;b\]/);
+  } finally {
+    fs.createReadStream = originalCreateReadStream;
+  }
+});
+
+test('detects a trigger preceded by a comment', async () => {
+  const originalCreateReadStream = fs.createReadStream;
+  try {
+    fs.createReadStream = () => Readable.from([
+      '-- saved trigger\nCREATE TRIGGER tr AFTER INSERT ON t BEGIN INSERT INTO audit VALUES(1); INSERT INTO audit VALUES(2); END;\nSELECT 1;',
+    ]);
+
+    const statements = [];
+    for await (const statement of streamSqlStatements('memory-only')) {
+      statements.push(statement);
+    }
+
+    assert.equal(statements.length, 2);
+    assert.match(statements[0], /CREATE TRIGGER/);
+    assert.match(statements[0], /INSERT INTO audit VALUES\(2\)/);
+    assert.match(statements[0], /END$/);
+    assert.match(statements[1], /SELECT 1/);
+  } finally {
+    fs.createReadStream = originalCreateReadStream;
+  }
+});
+
+test('rejects a dump whose only COMMIT appears inside row data', async () => {
+  const misleading = path.join(tempDir, 'misleading.sql');
+  fs.writeFileSync(
+    misleading,
+    "BEGIN TRANSACTION;\nINSERT INTO notes(body) VALUES('COMMIT;');\n",
+  );
+  await assert.rejects(() => validateLibsqlDump(misleading), /truncated|COMMIT/i);
+});
+
 test('keeps trigger bodies with internal semicolons as one statement', async () => {
   const triggerDump = path.join(tempDir, 'trigger.sql');
   fs.writeFileSync(triggerDump, `CREATE TRIGGER audit_users AFTER INSERT ON users
@@ -197,30 +331,34 @@ test('replays a libSQL dump into a verified SQLite database', async () => {
   }
 });
 
-test('replays FTS5 virtual tables emitted through writable_schema', async () => {
-  const source = path.join(tempDir, 'fts-dump.sql');
-  fs.writeFileSync(source, `PRAGMA foreign_keys=OFF;
-BEGIN TRANSACTION;
-CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT);
-INSERT INTO notes(id,body) VALUES(1,'hello world');
-PRAGMA writable_schema=ON;
-INSERT INTO sqlite_schema(type,name,tbl_name,rootpage,sql)VALUES('table','notes_fts','notes_fts',0,'CREATE VIRTUAL TABLE notes_fts USING fts5(body, content=''notes'', content_rowid=''id'')');
-PRAGMA writable_schema=OFF;
-COMMIT;
-`);
+test('round-trips a real FTS5 database and supports MATCH after reopen', async () => {
+  const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
+  const sourcePath = path.join(tempDir, 'fts-source.db');
+  const source = new SqliteClient(sourcePath);
+  try {
+    await source.exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL);');
+    await source.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(body);');
+    await source.exec("INSERT INTO notes_fts(rowid, body) VALUES (1, 'hello world'), (2, 'another document');");
+  } finally {
+    await source.close();
+  }
+
+  const dump = path.join(tempDir, 'fts-real.sql');
+  await exportSqldLikeDump(sourcePath, dump);
+  await validateLibsqlDump(dump);
 
   const target = path.join(tempDir, 'fts-restored.db');
-  await replaySqlDumpToSqlite(source, target);
+  await replaySqlDumpToSqlite(dump, target);
 
-  const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
   const client = new SqliteClient(target);
   try {
-    const objects = await client.all("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name");
-    assert.ok(objects.some((row) => row.name === 'notes_fts'));
-    const rows = await client.all('SELECT COUNT(*) AS cnt FROM notes');
-    assert.equal(Number(rows[0].cnt), 1);
-    // This synthetic fixture omits the FTS5 shadow-table rows that sqld emits
-    // in a real dump; the normal-table test above asserts full integrity.
+    const integrity = await client.checkIntegrity();
+    assert.equal(integrity.ok, true, integrity.details);
+
+    const matches = await client.all(
+      "SELECT rowid FROM notes_fts WHERE notes_fts MATCH 'hello' ORDER BY rowid",
+    );
+    assert.deepEqual(matches.map((row) => Number(row.rowid)), [1]);
   } finally {
     await client.close();
   }

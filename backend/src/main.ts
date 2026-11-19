@@ -35,6 +35,18 @@ const start = async () => {
     console.log(`Reconciled ${reconciliation.reconciled} legacy database record(s).`);
   }
 
+  try {
+    const rotationRecovery = await databaseService.recoverInterruptedRotations();
+    if (rotationRecovery.restored || rotationRecovery.finalized || rotationRecovery.failed) {
+      console.log(
+        `[main] Rotation recovery: ${rotationRecovery.restored} restored, ` +
+        `${rotationRecovery.finalized} finalized, ${rotationRecovery.failed} failed.`,
+      );
+    }
+  } catch (error: any) {
+    console.warn('[main] Could not reconcile interrupted token rotations:', error?.message || error);
+  }
+
   const discoveryProjectId = process.env.SQLITE_DISCOVERY_PROJECT_ID;
   const discoveryPath = process.env.SQLITE_DISCOVERY_PATH;
   if (discoveryProjectId && discoveryPath) {

@@ -126,7 +126,9 @@ test.describe('Import → Schema → Query End-to-End Integration', () => {
     await ConnectionPool.getInstance().shutdown();
     if (app) await app.close();
     await AppDataSource.destroy();
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    // Windows can briefly retain a handle after the pool closes; retry the
+    // recursive delete instead of failing the suite.
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   // ──────────────────────────────────────────────────────────
@@ -227,6 +229,46 @@ test.describe('Import → Schema → Query End-to-End Integration', () => {
           url: `/api/v1/databases/${apiDbId}/query`,
           headers,
           payload: { sql: 'DROP TABLE IF EXISTS cache_probe;' },
+        });
+      }
+    });
+
+    test('never serves row counts from the schema metadata cache', async () => {
+      const headers = { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken };
+      const loadCounts = async () => {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/v1/databases/${apiDbId}/schema?counts=1`,
+          headers: { cookie: cookieHeader },
+        });
+        assert.equal(res.statusCode, 200);
+        const body = JSON.parse(res.payload);
+        return body.tables.find((table) => table.table === 'clientes');
+      };
+
+      // Prime the metadata cache with a counts request.
+      assert.equal((await loadCounts()).rowCount, 3);
+
+      const insertRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/databases/${apiDbId}/query`,
+        headers,
+        payload: {
+          sql: "INSERT INTO clientes (nombre, email, activo) VALUES ('Cache Freshness', 'cache@test.test', 1)",
+        },
+      });
+      assert.equal(insertRes.statusCode, 200);
+
+      try {
+        // PRAGMA schema_version does not change on INSERT; the endpoint must
+        // still return the new count instead of a cached value.
+        assert.equal((await loadCounts()).rowCount, 4);
+      } finally {
+        await app.inject({
+          method: 'POST',
+          url: `/api/v1/databases/${apiDbId}/query`,
+          headers,
+          payload: { sql: "DELETE FROM clientes WHERE email = 'cache@test.test'" },
         });
       }
     });

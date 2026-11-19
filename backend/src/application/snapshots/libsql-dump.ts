@@ -177,32 +177,55 @@ export async function validateLibsqlDump(filePath: string): Promise<{ sizeBytes:
   if (!/BEGIN\s+TRANSACTION/i.test(head)) {
     throw new Error('The libSQL dump does not contain a BEGIN TRANSACTION marker.');
   }
-  if (!/COMMIT\s*;/i.test(tail)) {
+  // sqld writes COMMIT; as the final statement. Anchoring to the end rejects
+  // truncated dumps whose earlier rows happen to contain the word COMMIT.
+  if (!/COMMIT\s*;\s*$/i.test(tail)) {
     throw new Error('The libSQL dump is truncated: missing final COMMIT.');
   }
 
   return { sizeBytes: stat.size };
 }
 
+function isCreateTrigger(keywords: string[]) {
+  if (keywords[0] !== 'CREATE') return false;
+  if (keywords.length === 2) return keywords[1] === 'TRIGGER';
+  if (keywords.length >= 3) {
+    if (keywords[1] === 'TEMP' || keywords[1] === 'TEMPORARY') {
+      return keywords[2] === 'TRIGGER';
+    }
+    return false;
+  }
+  return false;
+}
+
 /**
  * Quote-aware streaming statement reader. sqld emits one statement per line
- * for rows, but schema SQL may span lines, so a line-based split is unsafe.
+ * for rows, but schema SQL may span lines and trigger bodies contain
+ * semicolons, so a line-based split is unsafe.
+ *
+ * One character is deliberately carried between chunks so tokens split across
+ * a 1 MiB boundary (block-comment delimiters, doubled quotes) are still
+ * recognized.
  */
 export async function* streamSqlStatements(filePath: string): AsyncGenerator<string> {
   const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 });
   let buffer = '';
-  let state: 'normal' | 'single' | 'double' | 'backtick' | 'line-comment' | 'block-comment' = 'normal';
+  let state: 'normal' | 'single' | 'double' | 'backtick' | 'bracket' | 'line-comment' | 'block-comment' = 'normal';
   let word = '';
+  let keywords: string[] = [];
   let inTrigger = false;
   let triggerBodyStarted = false;
   let triggerEndSeen = false;
   let caseDepth = 0;
   let blockDepth = 0;
+  let carry = '';
+  const completed: string[] = [];
   const isWordChar = /[A-Za-z0-9_$]/;
 
   const resetStatement = () => {
     buffer = '';
     word = '';
+    keywords = [];
     inTrigger = false;
     triggerBodyStarted = false;
     triggerEndSeen = false;
@@ -210,149 +233,211 @@ export async function* streamSqlStatements(filePath: string): AsyncGenerator<str
     blockDepth = 0;
   };
 
-  for await (const chunk of stream) {
-    for (let index = 0; index < chunk.length; index += 1) {
-      const char = chunk[index];
-      const next = chunk[index + 1];
+  const flushStatement = () => {
+    const statement = buffer.trim();
+    if (statement) completed.push(statement);
+    resetStatement();
+  };
 
-      if (state === 'line-comment') {
-        buffer += char;
-        if (char === '\n') state = 'normal';
-        continue;
-      }
-
-      if (state === 'block-comment') {
-        buffer += char;
-        if (char === '*' && next === '/') {
-          buffer += next;
-          index += 1;
-          state = 'normal';
-        }
-        continue;
-      }
-
-      if (state === 'single') {
-        buffer += char;
-        if (char === "'" && next === "'") {
-          buffer += next;
-          index += 1;
-          continue;
-        }
-        if (char === "'") state = 'normal';
-        continue;
-      }
-
-      if (state === 'double') {
-        buffer += char;
-        if (char === '"' && next === '"') {
-          buffer += next;
-          index += 1;
-          continue;
-        }
-        if (char === '"') state = 'normal';
-        continue;
-      }
-
-      if (state === 'backtick') {
-        buffer += char;
-        if (char === '`') state = 'normal';
-        continue;
-      }
-
-      if (isWordChar.test(char)) {
-        word += char;
-        buffer += char;
-        continue;
-      }
-
-      if (word) {
-        const token = word.toUpperCase();
-        word = '';
-
-        if (
-          token === 'TRIGGER'
-          && /^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\b/i.test(buffer)
-        ) {
-          inTrigger = true;
-        }
-
-        if (inTrigger) {
-          if (token === 'BEGIN') {
-            if (!triggerBodyStarted) {
-              triggerBodyStarted = true;
-              blockDepth = 1;
-            } else {
-              blockDepth += 1;
-            }
-          } else if (token === 'CASE') {
-            caseDepth += 1;
-          } else if (token === 'END') {
-            if (caseDepth > 0) {
-              caseDepth -= 1;
-            } else if (blockDepth > 0) {
-              blockDepth -= 1;
-              if (blockDepth === 0) {
-                triggerEndSeen = true;
-              }
-            }
-          }
-        }
-      }
-
-      if (char === '-' && next === '-') {
-        buffer += char + next;
-        index += 1;
-        state = 'line-comment';
-        continue;
-      }
-
-      if (char === '/' && next === '*') {
-        buffer += char + next;
-        index += 1;
-        state = 'block-comment';
-        continue;
-      }
-
-      if (char === "'") {
-        buffer += char;
-        state = 'single';
-        continue;
-      }
-
-      if (char === '"') {
-        buffer += char;
-        state = 'double';
-        continue;
-      }
-
-      if (char === '`') {
-        buffer += char;
-        state = 'backtick';
-        continue;
-      }
-
-      if (char === ';') {
-        // A CREATE TRIGGER body contains semicolons; only the semicolon after
-        // the final END terminates the statement.
-        if (inTrigger && !triggerEndSeen) {
-          buffer += char;
-          continue;
-        }
-
-        const statement = buffer.trim();
-        if (statement) yield statement;
-        resetStatement();
-        continue;
-      }
-
-      buffer += char;
+  const noteKeyword = (token: string) => {
+    const upper = token.toUpperCase();
+    if (keywords.length < 3) {
+      keywords.push(upper);
     }
+
+    if (!inTrigger && isCreateTrigger(keywords)) {
+      inTrigger = true;
+    }
+
+    if (!inTrigger) return;
+
+    if (upper === 'BEGIN') {
+      if (!triggerBodyStarted) {
+        triggerBodyStarted = true;
+        blockDepth = 1;
+      } else {
+        blockDepth += 1;
+      }
+    } else if (upper === 'CASE') {
+      caseDepth += 1;
+    } else if (upper === 'END') {
+      if (caseDepth > 0) {
+        caseDepth -= 1;
+      } else if (blockDepth > 0) {
+        blockDepth -= 1;
+        if (blockDepth === 0) {
+          triggerEndSeen = true;
+        }
+      }
+    }
+  };
+
+  /**
+   * Processes one character. Returns true when `next` was consumed as part of
+   * a two-character token or an escaped quote.
+   */
+  const handle = (char: string, next: string | undefined): boolean => {
+    if (state === 'line-comment') {
+      buffer += char;
+      if (char === '\n') state = 'normal';
+      return false;
+    }
+
+    if (state === 'block-comment') {
+      buffer += char;
+      if (char === '*' && next === '/') {
+        buffer += next;
+        state = 'normal';
+        return true;
+      }
+      return false;
+    }
+
+    if (state === 'single') {
+      buffer += char;
+      if (char === "'" && next === "'") {
+        buffer += next;
+        return true;
+      }
+      if (char === "'") state = 'normal';
+      return false;
+    }
+
+    if (state === 'double') {
+      buffer += char;
+      if (char === '"' && next === '"') {
+        buffer += next;
+        return true;
+      }
+      if (char === '"') state = 'normal';
+      return false;
+    }
+
+    if (state === 'backtick') {
+      buffer += char;
+      if (char === '`' && next === '`') {
+        buffer += next;
+        return true;
+      }
+      if (char === '`') state = 'normal';
+      return false;
+    }
+
+    if (state === 'bracket') {
+      buffer += char;
+      if (char === ']') state = 'normal';
+      return false;
+    }
+
+    if (isWordChar.test(char)) {
+      word += char;
+      buffer += char;
+      return false;
+    }
+
+    if (word) {
+      const token = word;
+      word = '';
+      noteKeyword(token);
+    }
+
+    if (char === '-' && next === '-') {
+      buffer += char + next;
+      state = 'line-comment';
+      return true;
+    }
+
+    if (char === '/' && next === '*') {
+      buffer += char + next;
+      state = 'block-comment';
+      return true;
+    }
+
+    if (char === "'") {
+      buffer += char;
+      state = 'single';
+      return false;
+    }
+
+    if (char === '"') {
+      buffer += char;
+      state = 'double';
+      return false;
+    }
+
+    if (char === '`') {
+      buffer += char;
+      state = 'backtick';
+      return false;
+    }
+
+    // SQLite bracket quoting cannot contain an escaped closing bracket.
+    if (char === '[') {
+      buffer += char;
+      state = 'bracket';
+      return false;
+    }
+
+    if (char === ';') {
+      // A CREATE TRIGGER body contains semicolons; only the semicolon after
+      // the final END terminates the statement.
+      if (inTrigger && !triggerEndSeen) {
+        buffer += char;
+        return false;
+      }
+
+      flushStatement();
+      return false;
+    }
+
+    buffer += char;
+    return false;
+  };
+
+  const processBody = (body: string, trailing: string | undefined) => {
+    let trailingConsumed = false;
+    for (let index = 0; index < body.length; index += 1) {
+      const nextInBody = index + 1 < body.length ? body[index + 1] : undefined;
+      const next = nextInBody === undefined ? trailing : nextInBody;
+      const consumed = handle(body[index], next);
+
+      if (consumed) {
+        if (nextInBody !== undefined) {
+          index += 1;
+        } else {
+          trailingConsumed = true;
+        }
+      }
+    }
+    return trailingConsumed;
+  };
+
+  for await (const chunk of stream) {
+    const text = carry + chunk;
+    carry = text.slice(-1);
+    const body = text.slice(0, -1);
+    if (processBody(body, carry)) {
+      carry = '';
+    }
+
+    for (const statement of completed) {
+      yield statement;
+    }
+    completed.length = 0;
   }
 
+  if (carry) {
+    handle(carry, undefined);
+  }
   if (word) {
-    // The last token does not affect statement boundaries once the file ends.
+    noteKeyword(word);
     word = '';
   }
+
+  for (const statement of completed) {
+    yield statement;
+  }
+  completed.length = 0;
 
   const rest = buffer.trim();
   if (rest) yield rest;
@@ -369,9 +454,7 @@ export async function replaySqlDumpToSqlite(
   options: { chunkBytes?: number } = {},
 ): Promise<void> {
   const chunkBytes = positiveInt(String(options.chunkBytes || 2 * 1024 * 1024), 2 * 1024 * 1024);
-  await fs.promises.rm(targetPath, { force: true }).catch(() => undefined);
-  await fs.promises.rm(`${targetPath}-wal`, { force: true }).catch(() => undefined);
-  await fs.promises.rm(`${targetPath}-shm`, { force: true }).catch(() => undefined);
+  await removeDatabaseFiles(targetPath);
 
   const client = new SqliteClient(targetPath);
   let inTransaction = false;
@@ -406,21 +489,37 @@ export async function replaySqlDumpToSqlite(
     // importer moves it; WAL sidecars are not part of the import operation.
     await client.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     await client.exec('PRAGMA foreign_keys = ON;');
-
-    const integrity = await client.checkIntegrity();
-    if (!integrity.ok) {
-      throw new Error(`restored database integrity check failed: ${integrity.details}`);
-    }
   } catch (error) {
     if (inTransaction) {
       await client.exec('ROLLBACK;').catch(() => undefined);
     }
-    await fs.promises.rm(targetPath, { force: true }).catch(() => undefined);
-    await fs.promises.rm(`${targetPath}-wal`, { force: true }).catch(() => undefined);
-    await fs.promises.rm(`${targetPath}-shm`, { force: true }).catch(() => undefined);
+    await removeDatabaseFiles(targetPath);
     throw error;
   } finally {
     await client.close().catch(() => undefined);
+  }
+
+  // Validate from a fresh connection. The import deliberately writes virtual
+  // table definitions through writable_schema, so checking integrity on the
+  // same connection can accept an in-memory schema that does not survive
+  // reopening. A restore is only valid if the file parses from disk.
+  const verifier = new SqliteClient(targetPath);
+  try {
+    const integrity = await verifier.checkIntegrity();
+    if (!integrity.ok) {
+      throw new Error(`restored database integrity check failed: ${integrity.details}`);
+    }
+  } catch (error) {
+    await removeDatabaseFiles(targetPath);
+    throw error;
+  } finally {
+    await verifier.close().catch(() => undefined);
+  }
+}
+
+async function removeDatabaseFiles(filePath: string) {
+  for (const candidate of [filePath, `${filePath}-wal`, `${filePath}-shm`]) {
+    await fs.promises.rm(candidate, { force: true }).catch(() => undefined);
   }
 }
 

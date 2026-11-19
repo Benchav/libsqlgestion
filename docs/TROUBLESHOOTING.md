@@ -59,10 +59,16 @@ is no longer proven restorable at creation time.
 
 ## Token rotation failed
 
-Rotation now keeps the previous runtime until the replacement accepts an
-authenticated query. If it fails, the backend attempts to restore the previous
-container, network and `auth.pem`, then returns an error saying whether rollback
-succeeded.
+Rotation now writes the previous signing key to `auth.pem.rotation`, keeps the
+previous runtime until the replacement accepts an authenticated query, and
+persists the new credential before deleting anything. If it fails, the backend
+inspects the previous container's real Docker state, restores `auth.pem`,
+renames it back, reconnects it and starts it again.
+
+If the backend is killed mid-rotation, startup reconciliation uses the marker to
+remove an unpersisted replacement and restore the previous primary before
+accepting HTTP traffic. A failed recovery keeps `auth.pem.rotation` for manual
+inspection.
 
 If rollback also failed, inspect:
 
@@ -77,8 +83,9 @@ verified against a running runtime.
 ## Studio takes too long to open
 
 The Studio requests schema metadata with `counts=0`; row counts load only for the
-selected table. Schema metadata is cached by `PRAGMA schema_version`. If it is
-still slow:
+selected table. Schema metadata is cached by `PRAGMA schema_version`, while
+counts are never cached because that pragma does not change on INSERT/DELETE.
+If it is still slow:
 
 - Check the number of tables and views.
 - Run `PRAGMA schema_version;` and confirm it is stable when idle.

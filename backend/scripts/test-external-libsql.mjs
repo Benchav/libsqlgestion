@@ -102,7 +102,10 @@ async function testEmbedded() {
 }
 
 async function testDeep() {
-  const table = '__libsqlite_sync_check';
+  // Unique per run: a fixed name could delete a real table or collide with a
+  // concurrent diagnostic run. Cleanup only ever touches this exact table.
+  const table = `__libsqlite_sync_check_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+  const quotedTable = `"${table.replace(/"/g, '""')}"`;
   const marker = `check-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-embedded-deep-'));
   const filePath = path.join(tempDir, 'replica.db');
@@ -115,26 +118,25 @@ async function testDeep() {
   });
 
   try {
-    await remote.execute(`DROP TABLE IF EXISTS ${table}`);
-    await remote.execute(`CREATE TABLE ${table} (id TEXT PRIMARY KEY, created_at TEXT NOT NULL)`);
+    await remote.execute(`CREATE TABLE ${quotedTable} (id TEXT PRIMARY KEY, created_at TEXT NOT NULL)`);
     await remote.execute({
-      sql: `INSERT INTO ${table} (id, created_at) VALUES (?, ?)`,
+      sql: `INSERT INTO ${quotedTable} (id, created_at) VALUES (?, ?)`,
       args: [marker, new Date().toISOString()],
     });
 
     const createSync = await time('sync after remote insert', () => replica.sync());
     const visible = await replica.execute({
-      sql: `SELECT id FROM ${table} WHERE id = ?`,
+      sql: `SELECT id FROM ${quotedTable} WHERE id = ?`,
       args: [marker],
     });
     if (visible.rows.length !== 1) {
       throw new Error('The remote write did not propagate to the embedded replica.');
     }
 
-    await remote.execute({ sql: `DELETE FROM ${table} WHERE id = ?`, args: [marker] });
+    await remote.execute({ sql: `DELETE FROM ${quotedTable} WHERE id = ?`, args: [marker] });
     const deleteSync = await time('sync after remote delete', () => replica.sync());
     const gone = await replica.execute({
-      sql: `SELECT id FROM ${table} WHERE id = ?`,
+      sql: `SELECT id FROM ${quotedTable} WHERE id = ?`,
       args: [marker],
     });
     if (gone.rows.length !== 0) {
@@ -143,11 +145,12 @@ async function testDeep() {
 
     return {
       ok: true,
+      table,
       insertPropagationMs: createSync.durationMs,
       deletePropagationMs: deleteSync.durationMs,
     };
   } finally {
-    await remote.execute(`DROP TABLE IF EXISTS ${table}`).catch(() => undefined);
+    await remote.execute(`DROP TABLE IF EXISTS ${quotedTable}`).catch(() => undefined);
     remote.close();
     replica.close();
     fs.rmSync(tempDir, { recursive: true, force: true });

@@ -28,6 +28,29 @@ function backendInspect(networks) {
   return { NetworkSettings: { Networks: Object.fromEntries(networks.map((name) => [name, {}])) } };
 }
 
+function runtimeDatabase() {
+  return {
+    id: 'database-1',
+    metadata: {
+      runtime: {
+        provider: 'docker-libsql',
+        image: 'libsql-server',
+        containerId: 'old-container',
+        containerName: 'libsqlite-database-1',
+        network: 'coolify',
+        databasePath: '/tmp/database-1/dbs/default/data',
+        authKeyPem: 'OLD-PUBLIC-KEY',
+        internalUrl: 'http://libsqlite-database-1:8080',
+        connectionUrl: 'http://libsqlite-database-1:8080',
+        backendUrl: 'http://host.docker.internal:32769',
+        publicHost: 'host.docker.internal',
+        publicPort: '32769',
+        publicUrl: 'https://erp-db.data.example.com',
+      },
+    },
+  };
+}
+
 test.describe('LibSQL runtime Docker network selection', () => {
   test.afterEach(() => {
     delete process.env.LIBSQL_RUNTIME_NETWORK;
@@ -276,5 +299,211 @@ test.describe('LibSQL runtime Docker network selection', () => {
       () => service['assertContainerOnNetwork']('runtime-1', 'coolify'),
       /not attached to Docker network "coolify"/,
     );
+  });
+
+  test('never deletes the original runtime when the initial rename fails', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-rotation-rename-'));
+    try {
+      fs.writeFileSync(path.join(tempDir, 'auth.pem'), 'OLD-KEY', 'utf8');
+
+      const service = new LibsqlRuntimeService();
+      service['resolveBackendNetworkName'] = async () => 'coolify';
+      service['resolvePaths'] = () => ({
+        databasePath: path.join(tempDir, 'dbs', 'default', 'data'),
+        containerName: 'libsqlite-database-1',
+      });
+      service['resolveDatabaseRootDir'] = () => tempDir;
+      service['renameContainer'] = async () => {
+        throw new Error('simulated rename failure');
+      };
+
+      const deletes = [];
+      service['removeContainer'] = async (containerId) => {
+        deletes.push(containerId);
+      };
+      service['requestJson'] = async (method, requestPath) => {
+        if (method === 'GET' && requestPath === '/containers/old-container/json') {
+          return {
+            Id: 'old-container',
+            Name: '/libsqlite-database-1',
+            State: { Running: true },
+            NetworkSettings: { Networks: { coolify: {} } },
+          };
+        }
+        if (method === 'POST' && requestPath.startsWith('/networks/')) {
+          return {};
+        }
+        throw new Error(`unexpected ${method} ${requestPath}`);
+      };
+      service['requestVoid'] = async (method, requestPath) => {
+        throw new Error(`unexpected ${method} ${requestPath}`);
+      };
+
+      await assert.rejects(
+        () => service['rotateDatabase'](runtimeDatabase()),
+        /was restored/,
+      );
+      assert.deepEqual(deletes, [], 'the original runtime must never be deleted by a failed rotation');
+      assert.equal(fs.readFileSync(path.join(tempDir, 'auth.pem'), 'utf8'), 'OLD-KEY');
+      assert.equal(
+        fs.existsSync(path.join(tempDir, 'auth.pem.rotation')),
+        false,
+        'rollback must clear the recovery marker',
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps the previous runtime until the new credential is persisted', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-rotation-persist-'));
+    try {
+      const databasePath = path.join(tempDir, 'dbs', 'default', 'data');
+      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+      const authPemPath = path.join(tempDir, 'auth.pem');
+      fs.writeFileSync(authPemPath, 'OLD-KEY', 'utf8');
+
+      const service = new LibsqlRuntimeService();
+      const renames = [];
+      const deletes = [];
+      const starts = [];
+      let connectCalls = 0;
+
+      service['resolveBackendNetworkName'] = async () => 'coolify';
+      service['resolvePaths'] = () => ({
+        databasePath,
+        containerName: 'libsqlite-database-1',
+        subdomain: 'erp-db',
+      });
+      // The fixture metadata uses a placeholder path; point auth.pem at the
+      // temp directory that the test controls.
+      service['resolveDatabaseRootDir'] = () => tempDir;
+      service['generateAuthBundle'] = () => ({ publicKeyPem: 'NEW-KEY', token: 'NEW-TOKEN' });
+      service['renameContainer'] = async (containerId, name) => {
+        renames.push({ containerId, name });
+      };
+      service['stopContainer'] = async () => undefined;
+      service['createAndStartContainer'] = async () => {
+        fs.writeFileSync(authPemPath, 'NEW-KEY', 'utf8');
+        return 'new-container';
+      };
+      service['waitForPublishedPort'] = async () => '32770';
+      service['waitForReady'] = async () => ({
+        connectionUrl: 'http://libsqlite-database-1:8080',
+        routeHealth: {
+          checkedAt: new Date().toISOString(),
+          internalOk: true,
+          backendOk: true,
+          publicOk: true,
+          publicChecked: false,
+        },
+      });
+      service['removeContainer'] = async (containerId) => {
+        deletes.push(containerId);
+      };
+      service['startContainer'] = async (containerId) => {
+        starts.push(containerId);
+      };
+      service['requestJson'] = async (method, requestPath) => {
+        if (method === 'GET' && requestPath === '/containers/old-container/json') {
+          return {
+            Name: '/libsqlite-database-1-previous-1',
+            State: { Running: false },
+            NetworkSettings: { Networks: {} },
+          };
+        }
+        if (method === 'POST' && requestPath === '/networks/coolify/disconnect') {
+          return {};
+        }
+        if (method === 'POST' && requestPath === '/networks/coolify/connect') {
+          connectCalls += 1;
+          return {};
+        }
+        throw new Error(`unexpected ${method} ${requestPath}`);
+      };
+
+      await assert.rejects(
+        () => service['rotateDatabase'](runtimeDatabase(), {
+          persist: async () => {
+            throw new Error('database write failed');
+          },
+        }),
+        /was restored/,
+      );
+
+      assert.deepEqual(deletes, ['new-container'], 'only the failed replacement may be removed');
+      assert.equal(renames[0].name.startsWith('libsqlite-database-1-previous-'), true);
+      assert.deepEqual(renames[1], {
+        containerId: 'old-container',
+        name: 'libsqlite-database-1',
+      });
+      assert.equal(connectCalls, 1);
+      assert.deepEqual(starts, ['old-container']);
+      assert.equal(fs.readFileSync(authPemPath, 'utf8'), 'OLD-KEY');
+      assert.equal(fs.existsSync(`${authPemPath}.rotation`), false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('recovers a rotation interrupted after creating the replacement', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-rotation-recovery-'));
+    try {
+      const authPemPath = path.join(tempDir, 'auth.pem');
+      fs.writeFileSync(authPemPath, 'NEW-KEY', 'utf8');
+      fs.writeFileSync(`${authPemPath}.rotation`, 'OLD-KEY', 'utf8');
+
+      const service = new LibsqlRuntimeService();
+      const deletes = [];
+      const renames = [];
+      const starts = [];
+
+      service['resolveDatabaseRootDir'] = () => tempDir;
+      service['removeContainer'] = async (containerId) => {
+        deletes.push(containerId);
+      };
+      service['renameContainer'] = async (containerId, name) => {
+        renames.push({ containerId, name });
+      };
+      service['startContainer'] = async (containerId) => {
+        starts.push(containerId);
+      };
+      service['requestJson'] = async (method, requestPath) => {
+        if (method === 'GET' && requestPath === '/containers/old-container/json') {
+          return {
+            Id: 'old-container',
+            Name: '/libsqlite-database-1-previous-1',
+            State: { Running: false },
+            NetworkSettings: { Networks: {} },
+          };
+        }
+        if (method === 'GET' && requestPath === '/containers/libsqlite-database-1/json') {
+          return {
+            Id: 'new-container',
+            Name: '/libsqlite-database-1',
+            State: { Running: true },
+            NetworkSettings: { Networks: { coolify: {} } },
+          };
+        }
+        if (method === 'POST' && requestPath === '/networks/coolify/connect') {
+          return {};
+        }
+        throw new Error(`unexpected ${method} ${requestPath}`);
+      };
+
+      const result = await service.recoverInterruptedRotation(runtimeDatabase());
+
+      assert.equal(result, 'restored');
+      assert.equal(fs.readFileSync(authPemPath, 'utf8'), 'OLD-KEY');
+      assert.equal(fs.existsSync(`${authPemPath}.rotation`), false);
+      assert.deepEqual(deletes, ['new-container']);
+      assert.deepEqual(renames, [{
+        containerId: 'old-container',
+        name: 'libsqlite-database-1',
+      }]);
+      assert.deepEqual(starts, ['old-container']);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

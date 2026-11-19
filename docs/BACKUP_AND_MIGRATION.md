@@ -24,10 +24,13 @@ avoids a proxy timeout while the engine exports a large database.
 Every libSQL snapshot is:
 
 1. Streamed to a temporary file.
-2. Checked for a valid `BEGIN TRANSACTION` / final `COMMIT`.
+2. Checked for a valid `BEGIN TRANSACTION` and a final `COMMIT` statement at the
+   end of the file (a `COMMIT;` inside row data is not accepted).
 3. Replayed into a temporary SQLite database (including triggers and FTS5
    virtual tables emitted through `writable_schema`).
-4. Integrity-checked.
+4. Closed and reopened, then integrity-checked from disk. This matters because
+   virtual-table definitions are written through `writable_schema`; checking on
+   the same connection can accept a schema that does not survive reopening.
 5. Stored with SHA-256 checksum and `format=libsql-sql-dump`.
 
 Set `SNAPSHOT_LIBSQL_VERIFY_REPLAY=false` only if replay time is unacceptable
@@ -86,33 +89,53 @@ npm --prefix backend run test:external -- \
   "https://<restored-host>" "<new-jwt>" --embedded --deep
 ```
 
-The `--deep` check writes a temporary table, verifies propagation to an embedded
-replica, deletes it and cleans up. Run it against a test or newly restored
-database, not the live primary during business hours.
+The `--deep` check creates a uniquely named temporary table, verifies
+propagation to an embedded replica, deletes the marker and drops only that
+table. Run it against a test or newly restored database, not the live primary
+during business hours.
 
 ## 4. Token rotation and downtime
 
 **Create new token** performs a guarded rotation:
 
-1. The previous runtime is renamed, stopped and disconnected from the routing
+1. The previous JWT verification key (sqld's `auth.pem`) is written to
+   `auth.pem.rotation` as a recovery marker **before** Docker is touched.
+2. The previous runtime is renamed, stopped and disconnected from the routing
    network.
-2. A replacement starts with a new signing key and token.
-3. The replacement must accept an authenticated query.
-4. Only then is the previous runtime removed and the new credential persisted.
+3. A replacement starts with a new signing key and token.
+4. The replacement must accept an authenticated query.
+5. The new credential and metadata are persisted to the control database.
+6. Only after that write succeeds is the previous runtime removed and the
+   marker cleared.
 
-If the replacement fails, the backend restores the previous `auth.pem`, renames
-the old runtime back, reconnects it and starts it again. The operation returns an
-error explaining whether rollback succeeded.
+If any step fails, the backend restores the previous `auth.pem`, inspects the
+old container's real state, renames it back, reconnects it and starts it. Only a
+replacement whose creation was positively confirmed is ever removed; a failure
+in the initial rename can no longer delete the original runtime.
+
+If the backend process is killed mid-rotation, startup reconciliation reads
+`auth.pem.rotation`, removes any unpersisted replacement, restores the old key
+and brings the previous primary back before HTTP traffic is accepted. Failed
+recovery keeps the marker for manual inspection.
 
 Rotation is not zero-downtime: it involves a short restart window and the old
 token stops being valid after success. Schedule it during a maintenance window
-and update the ERP immediately.
+and update the ERP immediately. Do not use **Create new token** as a routine
+health refresh.
+
+Before an ERP cutover, rehearse rotation on a disposable database: confirm the
+new token works, the old token is rejected, and the runtime survives a backend
+restart. The automated tests cover the Docker state machine and crash recovery,
+but the first real rotation on your server remains the acceptance test.
 
 ## 5. Runtime health
 
 The backend persists internal, backend and public route health. A monitor
 refreshes stale results every 10 minutes and on startup, so health survives
-backend restarts.
+backend restarts. Checks run with bounded concurrency and are only written when
+the runtime identity (container id and signing key) is still the one that was
+checked. A rotation that finishes during a health check can therefore never be
+overwritten with stale metadata.
 
 Configuration:
 
@@ -120,12 +143,19 @@ Configuration:
 RUNTIME_HEALTH_INTERVAL_MINUTES=10
 RUNTIME_HEALTH_PUBLIC_TIMEOUT_MS=5000
 RUNTIME_HEALTH_STARTUP_DELAY_SECONDS=20
+RUNTIME_HEALTH_CONCURRENCY=4
 ```
 
 A public health success means the backend resolved the host through DoH and
 completed an authenticated query against the public URL. It does not prove that
 an ERP's machine, corporate DNS or firewall can reach the same host. For that,
 run the external test from the ERP network.
+
+`/ready` reports control-plane readiness (control database reachable). It
+returns `degraded: true` with the runtime summary when a tenant primary is
+unhealthy, but it does not fail the backend, because an ERP primary issue must
+not restart or unroute the admin panel. Use `/ready?strict=1` from an external
+monitor if that monitor should alert on tenant runtime health.
 
 ## 6. Performance model
 
@@ -135,7 +165,10 @@ The Studio now:
 - caches schema by `PRAGMA schema_version`, so repeated opens avoid re-reading
   every table;
 - batches libSQL metadata reads per chunk instead of two round trips per table;
-- loads the exact row count only for the table being opened.
+- loads the exact row count only for the table being opened;
+- keeps counts outside the schema cache. `schema_version` changes on DDL only,
+  so caching a response with `COUNT(*)` would serve stale numbers after normal
+  inserts and deletes. Requests with counts are always executed fresh.
 
 The dashboard samples Docker stats with limited concurrency and serves a short
 cache (`METRICS_CACHE_TTL_MS`, default 5000 ms).
@@ -195,7 +228,7 @@ npm --prefix backend run migrate:local-to-primary -- --mode=runtime --apply
 npm --prefix backend run test:external -- \
   "libsql://<host>" "<jwt>" --embedded --deep
 
-# Backend tests (99+ tests) and full quality gate.
+# Backend tests (110+ tests) and full quality gate.
 npm --prefix backend test
 npm test
 ```
@@ -223,6 +256,7 @@ METRICS_CACHE_TTL_MS=5000
 RUNTIME_HEALTH_INTERVAL_MINUTES=10
 RUNTIME_HEALTH_PUBLIC_TIMEOUT_MS=5000
 RUNTIME_HEALTH_STARTUP_DELAY_SECONDS=20
+RUNTIME_HEALTH_CONCURRENCY=4
 ```
 
 ## 10. First deployment of libSQL snapshots

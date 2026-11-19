@@ -215,6 +215,10 @@ export class SchemaService {
     }
 
     const includeRowCounts = options.includeRowCounts !== false;
+    // PRAGMA schema_version changes on DDL only, not on INSERT/DELETE. Caching
+    // responses with row counts would therefore serve stale numbers, so only
+    // metadata-only responses participate in the cache.
+    const cacheable = !includeRowCounts;
     const pool = ConnectionPool.getInstance();
     const client = pool.getClient(database);
     const version = await readSchemaVersion(client);
@@ -223,7 +227,8 @@ export class SchemaService {
     const cached = schemaCache.get(cacheKey);
 
     if (
-      !options.refresh
+      cacheable
+      && !options.refresh
       && cached
       && version !== null
       && cached.version === version
@@ -237,7 +242,7 @@ export class SchemaService {
         ? await loadSchemaViaSqlite(client, includeRowCounts)
         : await loadSchemaViaLibsql(client as LibsqlClient, includeRowCounts);
 
-      if (version !== null) {
+      if (cacheable && version !== null) {
         schemaCache.set(cacheKey, {
           version,
           loadedAt: now,

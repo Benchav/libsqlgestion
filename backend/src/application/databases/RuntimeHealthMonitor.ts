@@ -13,6 +13,24 @@ type RuntimeHealthMonitorOptions = {
   force?: boolean;
 };
 
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  const concurrency = Math.max(1, Math.min(limit, items.length || 1));
+
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      await worker(items[index]);
+    }
+  }));
+}
+
 /**
  * Periodically refreshes persisted runtime health outside request handlers.
  *
@@ -65,19 +83,27 @@ export class RuntimeHealthMonitor {
     let skipped = 0;
     let failed = 0;
 
-    for (const database of databases) {
+    const candidates = databases.filter((database) => {
       const runtime = database.metadata?.runtime as Record<string, any> | undefined;
       if (runtime?.provider !== 'docker-libsql') {
         skipped += 1;
-        continue;
+        return false;
       }
 
       const checkedAt = Date.parse(String(runtime?.routeHealth?.checkedAt || ''));
       if (!options.force && Number.isFinite(checkedAt) && now - checkedAt < intervalMs) {
         skipped += 1;
-        continue;
+        return false;
       }
 
+      return true;
+    });
+
+    // Public checks include DNS and TLS and can take seconds. A sequential
+    // loop made a large fleet miss its own interval, so checks run with a
+    // bounded concurrency instead of serializing every database.
+    const concurrency = positiveInt(process.env.RUNTIME_HEALTH_CONCURRENCY, 4);
+    await mapWithConcurrency(candidates, concurrency, async (database) => {
       try {
         await this.databaseService.refreshRuntimeHealth(database.id, {
           publicTimeoutMs,
@@ -91,7 +117,7 @@ export class RuntimeHealthMonitor {
           `${error?.message || error}`,
         );
       }
-    }
+    });
 
     return { checked, skipped, failed };
   }

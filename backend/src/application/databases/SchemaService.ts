@@ -65,8 +65,11 @@ function pruneCache() {
   }
 }
 
-function schemaCacheKey(databaseId: string, includeRowCounts: boolean) {
-  return `${databaseId}:${includeRowCounts ? 'counts' : 'fast'}`;
+function schemaCacheKey(databaseId: string, databaseUrl: string | null | undefined, includeRowCounts: boolean) {
+  // The URL changes when a legacy local file is converted to a managed
+  // runtime/namespace, so include it to avoid reusing a schema for a different
+  // physical database that happens to share the same id.
+  return `${databaseId}:${databaseUrl || ''}:${includeRowCounts ? 'counts' : 'fast'}`;
 }
 
 export function clearSchemaCache(databaseId?: string) {
@@ -216,7 +219,7 @@ export class SchemaService {
     const client = pool.getClient(database);
     const version = await readSchemaVersion(client);
     const now = Date.now();
-    const cacheKey = schemaCacheKey(database.id, includeRowCounts);
+    const cacheKey = schemaCacheKey(database.id, database.url, includeRowCounts);
     const cached = schemaCache.get(cacheKey);
 
     if (

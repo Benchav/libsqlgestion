@@ -1,7 +1,9 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import { AppDataSource } from '../../infrastructure/db/data-source';
+import { Database } from '../../domain/entities/Database';
 import { DatabaseSnapshot } from '../../domain/entities/DatabaseSnapshot';
+import { Project } from '../../domain/entities/Project';
 import { AuditService } from '../audit/AuditService';
 import {
   getSnapshotArtifacts,
@@ -29,8 +31,11 @@ import {
 import {
   offsiteArtifactKey,
   offsiteContentType,
-  offsiteManifestKey,
-  offsiteSnapshotPrefix,
+  offsiteHumanArtifactKey,
+  offsiteHumanManifestKey,
+  offsiteHumanPrefix,
+  offsiteSlug,
+  offsiteSnapshotStem,
 } from './offsite-object-key';
 
 export type OffsiteStatus = 'disabled' | 'pending' | 'uploading' | 'uploaded' | 'failed';
@@ -46,6 +51,12 @@ export type OffsiteArtifactRecord = {
 export type OffsiteSnapshotState = {
   status: OffsiteStatus;
   provider: 's3';
+  layoutVersion?: 1 | 2;
+  projectName?: string;
+  databaseName?: string;
+  projectSlug?: string;
+  databaseSlug?: string;
+  artifactStem?: string;
   bucket: string;
   prefix: string;
   artifactKind: 'db' | 'sql';
@@ -63,9 +74,15 @@ export type OffsiteSnapshotState = {
 
 type OffsiteManifest = {
   schemaVersion: 1;
+  layoutVersion?: 1 | 2;
   snapshotId: string;
   databaseId: string;
   projectId: string;
+  projectName?: string;
+  databaseName?: string;
+  projectSlug?: string;
+  databaseSlug?: string;
+  artifactStem?: string;
   takenAt: string;
   reason: string;
   pinned: boolean;
@@ -136,6 +153,8 @@ function shouldUploadForMode(snapshot: DatabaseSnapshot, mode: string, manual: b
 
 export class OffsiteBackupService {
   private snapshotRepo = AppDataSource.getRepository(DatabaseSnapshot);
+  private databaseRepo = AppDataSource.getRepository(Database);
+  private projectRepo = AppDataSource.getRepository(Project);
   private auditService = new AuditService();
   private queue: string[] = [];
   private queued = new Set<string>();
@@ -181,6 +200,66 @@ export class OffsiteBackupService {
         new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
       ]);
     }
+  }
+
+  private async resolveHumanLayout(snapshot: DatabaseSnapshot, settings: OffsiteBackupInternalSettings) {
+    let database: Database | null = null;
+    let project: Project | null = null;
+    try {
+      database = await this.databaseRepo.findOne({
+        where: { id: snapshot.databaseId },
+        relations: ['project'],
+      });
+      project = database?.project || null;
+    } catch {
+      // A missing database/project must not block an otherwise valid snapshot.
+    }
+    if (!project) {
+      project = await this.projectRepo.findOneBy({ id: snapshot.projectId }).catch(() => null);
+    }
+
+    const projectId = project?.id || snapshot.projectId;
+    let projectSlug = offsiteSlug(project?.name, `project-${projectId.slice(0, 8)}`);
+    try {
+      const projects = await this.projectRepo.find();
+      if (projects.some((candidate) => (
+        candidate.id !== projectId
+        && offsiteSlug(candidate.name, '') === projectSlug
+      ))) {
+        projectSlug = `${projectSlug}-${projectId.slice(0, 8)}`;
+      }
+    } catch {
+      // Collision handling is best-effort.
+    }
+
+    const databaseId = database?.id || snapshot.databaseId;
+    let databaseSlug = offsiteSlug(database?.name, `database-${databaseId.slice(0, 8)}`);
+    try {
+      const siblings = await this.databaseRepo.find({
+        where: { project: { id: projectId } },
+      });
+      if (siblings.some((candidate) => (
+        candidate.id !== databaseId
+        && offsiteSlug(candidate.name, '') === databaseSlug
+      ))) {
+        databaseSlug = `${databaseSlug}-${databaseId.slice(0, 8)}`;
+      }
+    } catch {
+      // Collision handling is best-effort.
+    }
+
+    return {
+      projectName: project?.name,
+      databaseName: database?.name,
+      projectSlug,
+      databaseSlug,
+      prefix: offsiteHumanPrefix({
+        prefix: settings.prefix,
+        projectSlug,
+        databaseSlug,
+      }),
+      stem: offsiteSnapshotStem(databaseSlug, snapshot.takenAt, snapshot.id),
+    };
   }
 
   async testConnection(settingsOverride?: OffsiteBackupInternalSettings) {
@@ -246,21 +325,22 @@ export class OffsiteBackupService {
     if (!preferred) {
       return { queued: false, reason: 'no-artifact' as const };
     }
-    const prefix = settings.prefix;
-    const snapshotPrefix = offsiteSnapshotPrefix({
-      prefix,
-      projectId: snapshot.projectId,
-      databaseId: snapshot.databaseId,
-      snapshotId: snapshot.id,
-    });
-    const manifestKey = offsiteManifestKey(snapshotPrefix);
-    const objectKey = offsiteArtifactKey(snapshotPrefix, preferred.fileName);
+    const layout = await this.resolveHumanLayout(snapshot, settings);
+    const snapshotPrefix = layout.prefix;
+    const manifestKey = offsiteHumanManifestKey(snapshotPrefix, layout.stem);
+    const objectKey = offsiteHumanArtifactKey(snapshotPrefix, layout.stem, preferred.kind);
 
     const state: OffsiteSnapshotState = {
       status: 'pending',
       provider: 's3',
+      layoutVersion: 2,
+      projectName: layout.projectName,
+      databaseName: layout.databaseName,
+      projectSlug: layout.projectSlug,
+      databaseSlug: layout.databaseSlug,
+      artifactStem: layout.stem,
       bucket: settings.bucket,
-      prefix,
+      prefix: settings.prefix,
       artifactKind: preferred.kind,
       fileName: preferred.fileName,
       objectKey,
@@ -270,7 +350,7 @@ export class OffsiteBackupService {
       artifacts: artifacts.map((artifact) => ({
         kind: artifact.kind,
         fileName: artifact.fileName,
-        objectKey: offsiteArtifactKey(snapshotPrefix, artifact.fileName),
+        objectKey: offsiteHumanArtifactKey(snapshotPrefix, layout.stem, artifact.kind),
         sizeBytes: artifact.sizeBytes || 0,
         checksumSha256: artifact.checksumSha256 || '',
       })),
@@ -355,7 +435,7 @@ export class OffsiteBackupService {
     const prefix = settings.prefix ? `${settings.prefix}/` : '';
     const cutoff = Date.now() - settings.retentionDays * 24 * 60 * 60 * 1000;
     const objects = await store.listObjects(prefix);
-    const manifests = objects.filter((object) => object.key.endsWith('/manifest.json'));
+    const manifests = objects.filter((object) => object.key.endsWith('manifest.json'));
     let deleted = 0;
 
     for (const manifestObject of manifests) {
@@ -363,8 +443,23 @@ export class OffsiteBackupService {
       try {
         const manifest = await store.getJson<OffsiteManifest>(manifestObject.key);
         if (manifest.pinned) continue;
-        const snapshotPrefix = manifestObject.key.slice(0, -'/manifest.json'.length);
-        const group = objects.filter((object) => object.key.startsWith(`${snapshotPrefix}/`));
+
+        let group: typeof objects;
+        if (manifestObject.key.endsWith('/manifest.json')) {
+          // Legacy layout: <projectId>/<databaseId>/<snapshotId>/...
+          const snapshotPrefix = manifestObject.key.slice(0, -'/manifest.json'.length);
+          group = objects.filter((object) => object.key.startsWith(`${snapshotPrefix}/`));
+        } else {
+          // Human layout: <project>/<database>/<stem>.db + <stem>.manifest.json
+          const stem = manifestObject.key.slice(0, -'.manifest.json'.length);
+          const keys = new Set([
+            `${stem}.db`,
+            `${stem}.sql`,
+            `${stem}.manifest.json`,
+          ]);
+          group = objects.filter((object) => keys.has(object.key));
+        }
+
         for (const object of group) {
           await store.deleteObject(object.key);
         }
@@ -432,12 +527,40 @@ export class OffsiteBackupService {
       });
 
       const store = this.storeFactory(settings);
-      const snapshotPrefix = offsiteSnapshotPrefix({
-        prefix: settings.prefix,
-        projectId: snapshot.projectId,
-        databaseId: snapshot.databaseId,
-        snapshotId: snapshot.id,
-      });
+      const humanLayout = current.layoutVersion === 2
+        && current.projectSlug
+        && current.databaseSlug
+        && current.artifactStem;
+      const legacyLayout = !humanLayout && Boolean(current.manifestKey);
+      const legacyPrefix = legacyLayout && current.manifestKey.endsWith('/manifest.json')
+        ? current.manifestKey.slice(0, -'/manifest.json'.length)
+        : undefined;
+      let snapshotPrefix: string;
+      let artifactStem: string | undefined;
+      let manifestKey: string;
+      let layoutVersion: 1 | 2;
+
+      if (humanLayout) {
+        snapshotPrefix = offsiteHumanPrefix({
+          prefix: settings.prefix,
+          projectSlug: current.projectSlug as string,
+          databaseSlug: current.databaseSlug as string,
+        });
+        artifactStem = current.artifactStem;
+        manifestKey = offsiteHumanManifestKey(snapshotPrefix, artifactStem as string);
+        layoutVersion = 2;
+      } else if (legacyLayout && legacyPrefix) {
+        snapshotPrefix = legacyPrefix;
+        manifestKey = current.manifestKey;
+        layoutVersion = 1;
+      } else {
+        const layout = await this.resolveHumanLayout(snapshot, settings);
+        snapshotPrefix = layout.prefix;
+        artifactStem = layout.stem;
+        manifestKey = offsiteHumanManifestKey(snapshotPrefix, artifactStem);
+        layoutVersion = 2;
+      }
+
       const artifacts = selectedArtifacts(snapshot, settings.artifacts);
       if (artifacts.length === 0) throw new Error('snapshot has no artifacts to upload');
 
@@ -451,7 +574,10 @@ export class OffsiteBackupService {
         if (artifact.checksumSha256 && artifact.checksumSha256 !== checksum) {
           throw new Error(`snapshot artifact checksum mismatch: ${artifact.fileName}`);
         }
-        const objectKey = offsiteArtifactKey(snapshotPrefix, artifact.fileName);
+        const objectKey = layoutVersion === 2 && artifactStem
+          ? offsiteHumanArtifactKey(snapshotPrefix, artifactStem, artifact.kind)
+          : current.artifacts?.find((candidate) => candidate.kind === artifact.kind)?.objectKey
+            || offsiteArtifactKey(snapshotPrefix, artifact.fileName);
         await store.uploadFile({
           filePath: artifact.path,
           key: objectKey,
@@ -477,9 +603,15 @@ export class OffsiteBackupService {
       const preferred = records[0];
       const manifest: OffsiteManifest = {
         schemaVersion: 1,
+        layoutVersion,
         snapshotId: snapshot.id,
         databaseId: snapshot.databaseId,
         projectId: snapshot.projectId,
+        projectName: current.projectName,
+        databaseName: current.databaseName,
+        projectSlug: current.projectSlug,
+        databaseSlug: current.databaseSlug,
+        artifactStem,
         takenAt: new Date(snapshot.takenAt).toISOString(),
         reason: snapshot.reason,
         pinned: Boolean(snapshot.pinned),
@@ -494,13 +626,18 @@ export class OffsiteBackupService {
         appVersion: process.env.APP_VERSION || undefined,
         createdAt: new Date().toISOString(),
       };
-      const manifestKey = offsiteManifestKey(snapshotPrefix);
       await store.putJson(manifestKey, manifest);
 
       await this.saveOffsiteState(snapshot.id, {
         ...current,
         status: 'uploaded',
         provider: 's3',
+        layoutVersion,
+        projectName: current.projectName,
+        databaseName: current.databaseName,
+        projectSlug: current.projectSlug,
+        databaseSlug: current.databaseSlug,
+        artifactStem,
         bucket: settings.bucket,
         prefix: settings.prefix,
         artifactKind: preferred.kind,

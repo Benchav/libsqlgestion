@@ -35,6 +35,10 @@ export class SnapshotScheduler {
     console.log(
       `[snapshots] scheduler enabled (tick every ${config.tickMinutes} min, default restore interval ${config.intervalMinutes} min)`,
     );
+    console.log(
+      `[snapshots] libSQL artifact mode: ${config.libsqlArtifactMode} `
+      + `(setting: ${config.libsqlArtifactSetting}, replay verification: ${config.verifyReplay})`,
+    );
   }
 
   async stop() {

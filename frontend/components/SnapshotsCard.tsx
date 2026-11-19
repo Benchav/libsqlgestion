@@ -412,7 +412,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
         <div className="p-6 space-y-4">
           {!supported && (
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
-              Snapshots are available for LOCAL-FILE databases in this version.
+              Snapshots are available for local SQLite databases and managed libSQL primaries.
             </div>
           )}
 
@@ -461,6 +461,14 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                         <span className="text-[10px] uppercase tracking-wider text-zinc-500">
                           {reasonLabel(snapshot.reason)}
                         </span>
+                        {snapshot.format === 'libsql-sqlite-export' && (
+                          <span
+                            className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300"
+                            title="Standalone SQLite file materialized from the libSQL engine dump and replay-verified"
+                          >
+                            SQLite export{snapshot.verified ? ' · verified' : ''}
+                          </span>
+                        )}
                         {snapshot.format === 'libsql-sql-dump' && (
                           <span
                             className="rounded border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-300"
@@ -481,7 +489,13 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                       </p>
                       <p className="text-xs text-zinc-500">
                         {formatAge(snapshot.takenAt)} · {formatBytes(snapshot.sizeBytes)}
+                        {snapshot.totalSizeBytes && snapshot.totalSizeBytes > snapshot.sizeBytes
+                          ? ` (${formatBytes(snapshot.totalSizeBytes)} on disk)`
+                          : ''}
                       </p>
+                      {snapshot.status === 'ready' && snapshot.warning && (
+                        <p className="mt-1 text-xs text-amber-300 break-words">{snapshot.warning}</p>
+                      )}
                       {snapshot.status === 'failed' && snapshot.errorMessage && (
                         <p className="mt-1 text-xs text-red-400 break-words">{snapshot.errorMessage}</p>
                       )}
@@ -499,14 +513,31 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                       <button
                         type="button"
                         onClick={() => {
-                          window.location.href = `/api/v1/databases/${database.id}/snapshots/${snapshot.id}/download`;
+                          const format = snapshot.downloadFormats?.includes('db') ? '?format=db' : '';
+                          window.location.href = `/api/v1/databases/${database.id}/snapshots/${snapshot.id}/download${format}`;
                         }}
                         disabled={snapshot.status !== 'ready'}
                         className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Download snapshot"
+                        title={snapshot.downloadFormats?.includes('db')
+                          ? 'Download SQLite database (.db)'
+                          : 'Download SQL dump (.sql)'}
                       >
                         <Download size={14} />
                       </button>
+                      {snapshot.status === 'ready'
+                        && snapshot.downloadFormats?.includes('db')
+                        && snapshot.downloadFormats?.includes('sql') && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              window.location.href = `/api/v1/databases/${database.id}/snapshots/${snapshot.id}/download?format=sql`;
+                            }}
+                            className="rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-1 text-[10px] font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
+                            title="Download raw SQL dump (.sql)"
+                          >
+                            SQL
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => handleDeleteSnapshot(snapshot)}
@@ -554,6 +585,13 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
               <p><span className="text-zinc-500">Snapshot:</span> {formatTimestamp(restoreTarget.takenAt)}</p>
               <p><span className="text-zinc-500">Size:</span> {formatBytes(restoreTarget.sizeBytes)}</p>
               <p><span className="text-zinc-500">Source:</span> {reasonLabel(restoreTarget.reason)}</p>
+              <p className="mt-1 text-zinc-500">
+                {restoreTarget.format === 'libsql-sqlite-export'
+                  ? 'Restore will import the verified SQLite export (.db).'
+                  : restoreTarget.format === 'libsql-sql-dump'
+                    ? 'Restore will replay the SQL dump; it may take longer on large databases.'
+                    : 'Restore will copy the SQLite snapshot.'}
+              </p>
             </div>
 
             {restoreError && (

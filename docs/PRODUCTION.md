@@ -234,6 +234,8 @@ SNAPSHOT_SIX_HOURLY_WINDOW_HOURS=72
 SNAPSHOT_RETENTION_DAYS=14
 SNAPSHOT_SCHEDULER_TICK_MINUTES=5
 SNAPSHOT_MIN_FREE_BYTES=1073741824
+# auto | sqlite | both | dump. Managed libSQL primaries keep a verified .db by default.
+SNAPSHOT_LIBSQL_ARTIFACT=auto
 ```
 
 `SNAPSHOT_INTERVAL_MINUTES` is the default for databases without a saved policy;

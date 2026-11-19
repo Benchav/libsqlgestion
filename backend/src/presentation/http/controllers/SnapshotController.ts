@@ -1,6 +1,10 @@
 import fs from 'fs';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { getSnapshotFormat, SnapshotService } from '../../../application/snapshots/SnapshotService';
+import {
+  getSnapshotArtifacts,
+  getSnapshotFormat,
+  SnapshotService,
+} from '../../../application/snapshots/SnapshotService';
 import { SnapshotPolicyService } from '../../../application/snapshots/SnapshotPolicyService';
 import { getMilestones } from '../../../application/snapshots/snapshot-schedule';
 import { DatabaseSnapshot } from '../../../domain/entities/DatabaseSnapshot';
@@ -9,6 +13,7 @@ import { ensureDatabaseAccess, ensurePermission } from '../guards';
 import {
   parseAndValidate,
   restoreSnapshotSchema,
+  snapshotDownloadQuerySchema,
   snapshotListQuerySchema,
   snapshotPolicySchema,
   ValidationError,
@@ -17,6 +22,7 @@ import { presentDatabase } from '../database-presenter';
 import { resolveEffectiveDatabaseType } from '../../../application/databases/database-runtime';
 
 function presentSnapshot(snapshot: DatabaseSnapshot) {
+  const artifacts = getSnapshotArtifacts(snapshot);
   return {
     id: snapshot.id,
     databaseId: snapshot.databaseId,
@@ -26,6 +32,9 @@ function presentSnapshot(snapshot: DatabaseSnapshot) {
     format: getSnapshotFormat(snapshot),
     verified: snapshot.metadata?.verified === true,
     sizeBytes: snapshot.sizeBytes,
+    totalSizeBytes: artifacts.totalBytes,
+    downloadFormats: artifacts.downloadFormats,
+    warning: artifacts.warning,
     checksumSha256: snapshot.checksumSha256,
     milestones: getMilestones(snapshot),
     takenAt: snapshot.takenAt,
@@ -147,6 +156,7 @@ export default async function snapshotRoutes(app: FastifyInstance) {
     try {
       const result = await snapshotService.restoreSnapshot(id, snapshotId, {
         name: body.name,
+        artifactFormat: body.artifactFormat,
         actorId: (request as any).user?.sub,
         ipAddress: request.ip,
       });
@@ -166,25 +176,59 @@ export default async function snapshotRoutes(app: FastifyInstance) {
     if (!access) return;
 
     try {
-      const snapshot = await snapshotService.getSnapshot(id, snapshotId);
-      if (snapshot.status !== 'ready') {
-        return reply.status(409).send({ error: 'snapshot is not ready' });
-      }
-      if (!fs.existsSync(snapshot.filePath)) {
-        return reply.status(404).send({ error: 'snapshot file not found on disk' });
+      const query = parseAndValidate(snapshotDownloadQuerySchema, request.query || {}, 'query');
+
+      // Take the lease before resolving the artifact. Otherwise retention could
+      // unlink the file between the stat and the stream creation.
+      const releaseLease = snapshotService.acquireSnapshotLease(snapshotId);
+      let snapshot;
+      let artifact;
+      try {
+        ({ snapshot, artifact } = await snapshotService.resolveSnapshotDownload(
+          id,
+          snapshotId,
+          query.format,
+        ));
+      } catch (error) {
+        releaseLease();
+        throw error;
       }
 
-      const format = getSnapshotFormat(snapshot);
-      const extension = format === 'libsql-sql-dump' ? 'sql' : 'db';
       const timestamp = new Date(snapshot.takenAt).toISOString().replace(/[:.]/g, '-');
-      const safeName = access.name.replace(/["\r\n]/g, '-');
+      const safeName = access.name.replace(/[\\/:*?"<>|\r\n]/g, '-');
+      const extension = artifact.kind;
       reply.header('Content-Disposition', `attachment; filename="${safeName}-${timestamp}.${extension}"`);
       reply.header(
         'Content-Type',
-        format === 'libsql-sql-dump' ? 'application/sql; charset=utf-8' : 'application/x-sqlite3',
+        extension === 'sql' ? 'application/sql; charset=utf-8' : 'application/vnd.sqlite3',
       );
-      return reply.send(fs.createReadStream(snapshot.filePath));
+      if (typeof artifact.sizeBytes === 'number' && Number.isFinite(artifact.sizeBytes)) {
+        reply.header('Content-Length', String(artifact.sizeBytes));
+      }
+      reply.header('Cache-Control', 'private, no-store, max-age=0');
+      reply.header('X-Backup-Artifact', extension);
+
+      // Retention and explicit deletes must not unlink a file while it is
+      // streaming to the operator.
+      const stream = fs.createReadStream(artifact.path);
+      let released = false;
+      const releaseOnce = () => {
+        if (released) return;
+        released = true;
+        releaseLease();
+      };
+      stream.once('close', releaseOnce);
+      stream.once('error', releaseOnce);
+
+      try {
+        return await reply.send(stream);
+      } catch (error) {
+        releaseOnce();
+        stream.destroy();
+        throw error;
+      }
     } catch (error: any) {
+      if (reply.sent) return;
       return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to download snapshot' });
     }
   });

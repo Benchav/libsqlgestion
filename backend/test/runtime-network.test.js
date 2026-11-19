@@ -506,4 +506,73 @@ test.describe('LibSQL runtime Docker network selection', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test('finalizes a persisted replacement with its new key, never the old one', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libsqlite-rotation-committed-'));
+    try {
+      const authPemPath = path.join(tempDir, 'auth.pem');
+      fs.writeFileSync(authPemPath, 'OLD-KEY', 'utf8');
+      fs.writeFileSync(`${authPemPath}.rotation`, JSON.stringify({
+        version: 1,
+        phase: 'replacement-ready',
+        startedAt: new Date().toISOString(),
+        oldContainerId: 'old-container',
+        oldContainerName: 'libsqlite-database-1',
+        network: 'coolify',
+        previousAuthPem: 'OLD-KEY',
+        newContainerId: 'new-container',
+        newContainerName: 'libsqlite-database-1',
+        newAuthKeyPem: 'NEW-KEY',
+      }), 'utf8');
+
+      const database = runtimeDatabase();
+      database.metadata = {
+        runtime: {
+          ...database.metadata.runtime,
+          containerId: 'new-container',
+          authKeyPem: 'NEW-PUBLIC-KEY',
+        },
+      };
+
+      const service = new LibsqlRuntimeService();
+      const deletes = [];
+      const starts = [];
+
+      service['resolveDatabaseRootDir'] = () => tempDir;
+      service['removeContainer'] = async (containerId) => {
+        deletes.push(containerId);
+      };
+      service['startContainer'] = async (containerId) => {
+        starts.push(containerId);
+      };
+      service['requestJson'] = async (method, requestPath) => {
+        if (method === 'GET' && requestPath === '/containers/new-container/json') {
+          return {
+            Id: 'new-container',
+            Name: '/libsqlite-database-1',
+            State: { Running: false },
+            NetworkSettings: { Networks: {} },
+          };
+        }
+        if (method === 'POST' && requestPath === '/networks/coolify/connect') {
+          return {};
+        }
+        throw new Error(`unexpected ${method} ${requestPath}`);
+      };
+
+      const result = await service.recoverInterruptedRotation(database);
+
+      assert.equal(result, 'finalized');
+      assert.equal(
+        fs.readFileSync(authPemPath, 'utf8'),
+        'NEW-KEY',
+        'a persisted replacement must be started with its own verification key',
+      );
+      assert.equal(fs.existsSync(`${authPemPath}.rotation`), false);
+      assert.deepEqual(deletes, ['old-container']);
+      assert.deepEqual(starts, ['new-container']);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -11,11 +11,27 @@ type PooledClient = {
   lastUsed: number;
 };
 
+type SqliteReadPool = {
+  clients: SqliteClient[];
+  next: number;
+  lastUsed: number;
+  // Serializes connection growth so two connections never switch an empty
+  // database to WAL at the same time (which returns SQLITE_BUSY).
+  creating: Promise<void>;
+};
+
 export class ConnectionPool {
   private static instance: ConnectionPool;
   private readonly pool = new Map<string, PooledClient>();
+  // SQLite allows concurrent readers in WAL mode, but a single sqlite3
+  // connection serializes every statement. Dedicated read connections let the
+  // Studio and API serve independent queries in parallel without touching the
+  // single-writer connection.
+  private readonly readPool = new Map<string, SqliteReadPool>();
   private readonly maxSize = Math.max(1, Number(process.env.DB_CONNECTION_POOL_MAX_SIZE || 256));
+  private readonly readPoolSize = Math.max(1, Number(process.env.SQLITE_READ_POOL_SIZE || 4));
   private readonly idleTtlMs = Math.max(1000, Number(process.env.DB_CONNECTION_POOL_IDLE_TTL_MS || 30 * 60 * 1000));
+  private readonly pendingCloses = new Set<Promise<void>>();
   private lastSweepAt = 0;
 
   private constructor() {}
@@ -50,12 +66,91 @@ export class ConnectionPool {
     return client;
   }
 
+  /**
+   * Returns a connection suitable for read-only work. Remote libSQL clients
+   * already multiplex over HTTP, so they keep using the shared client. Local
+   * SQLite gets a bounded pool of WAL readers.
+   */
+  async getReadClient(
+    database: Database,
+    retry = 0,
+  ): Promise<SqliteClient | ReturnType<typeof createLibsqlClient>> {
+    if (resolveEffectiveDatabaseType(database) !== 'sqlite') {
+      return this.getClient(database);
+    }
+
+    this.sweepIdleConnections();
+    this.ensureCapacity();
+
+    let pool = this.readPool.get(database.id);
+    if (!pool) {
+      pool = {
+        clients: [],
+        next: 0,
+        lastUsed: Date.now(),
+        creating: Promise.resolve(),
+      };
+      this.readPool.set(database.id, pool);
+    }
+
+    if (pool.clients.length < this.readPoolSize) {
+      const activePool = pool;
+      const creation = activePool.creating
+        .catch(() => undefined)
+        .then(async () => {
+          if (activePool.clients.length >= this.readPoolSize) return;
+          const client = new SqliteClient(this.resolveSqliteFilePath(database));
+          // This SELECT is queued after the constructor's PRAGMA sequence on
+          // the same connection, so WAL/busy_timeout are applied before the
+          // connection joins the pool.
+          await client.all('SELECT 1');
+
+          if (this.readPool.get(database.id) !== activePool) {
+            // A rotation or conversion evicted the database while this
+            // connection was opening. Do not leak it into an orphaned pool.
+            await client.close().catch(() => undefined);
+            return;
+          }
+          activePool.clients.push(client);
+        });
+
+      activePool.creating = creation;
+      try {
+        await creation;
+      } catch (error) {
+        if (activePool.creating === creation) {
+          activePool.creating = Promise.resolve();
+        }
+        throw error;
+      }
+      if (activePool.creating === creation) {
+        activePool.creating = Promise.resolve();
+      }
+    }
+
+    const currentPool = this.readPool.get(database.id);
+    if (!currentPool || currentPool.clients.length === 0) {
+      if (retry >= 1) {
+        throw new Error(`Database ${database.id} was evicted while opening a read connection`);
+      }
+      return this.getReadClient(database, retry + 1);
+    }
+
+    const client = currentPool.clients[currentPool.next % currentPool.clients.length];
+    currentPool.next += 1;
+    currentPool.lastUsed = Date.now();
+    return client;
+  }
+
   evict(databaseId: string): void {
     const entry = this.pool.get(databaseId);
-    if (!entry) return;
+    const readClients = this.readPool.get(databaseId);
+    this.readPool.delete(databaseId);
 
-    this.pool.delete(databaseId);
-    void this.closeClient(entry);
+    if (!entry && !readClients) return;
+    if (entry) this.pool.delete(databaseId);
+    if (entry) this.trackClose(this.closeClient(entry));
+    if (readClients) this.trackClose(this.closeReadPool(readClients));
   }
 
   evictOnError(databaseId: string, error: unknown): void {
@@ -65,10 +160,21 @@ export class ConnectionPool {
 
   async shutdown(): Promise<void> {
     const entries = Array.from(this.pool.entries());
+    const readPools = Array.from(this.readPool.values());
     this.pool.clear();
+    this.readPool.clear();
 
     for (const [, entry] of entries) {
       await this.closeClient(entry);
+    }
+    for (const pool of readPools) {
+      await this.closeReadPool(pool);
+    }
+
+    // Evictions start background closes; graceful shutdown must wait for
+    // those handles to be released too.
+    if (this.pendingCloses.size > 0) {
+      await Promise.allSettled(Array.from(this.pendingCloses));
     }
   }
 
@@ -79,6 +185,7 @@ export class ConnectionPool {
   get stats() {
     return {
       size: this.pool.size,
+      readPoolSize: this.readPoolSize,
       maxSize: this.maxSize,
       idleTtlMs: this.idleTtlMs,
     };
@@ -143,6 +250,13 @@ export class ConnectionPool {
     }
   }
 
+  private async closeReadPool(pool: SqliteReadPool): Promise<void> {
+    for (const client of pool.clients) {
+      await client.close().catch(() => undefined);
+    }
+    pool.clients.length = 0;
+  }
+
   private isFatalError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     const msg = error.message.toLowerCase();
@@ -168,8 +282,22 @@ export class ConnectionPool {
       }
 
       this.pool.delete(databaseId);
-      void this.closeClient(entry);
+      this.trackClose(this.closeClient(entry));
     }
+
+    for (const [databaseId, pool] of this.readPool.entries()) {
+      if (now - pool.lastUsed <= this.idleTtlMs) {
+        continue;
+      }
+
+      this.readPool.delete(databaseId);
+      this.trackClose(this.closeReadPool(pool));
+    }
+  }
+
+  private trackClose(work: Promise<void>) {
+    this.pendingCloses.add(work);
+    void work.finally(() => this.pendingCloses.delete(work)).catch(() => undefined);
   }
 
   private ensureCapacity() {
@@ -183,6 +311,12 @@ export class ConnectionPool {
     }
 
     this.pool.delete(oldest[0]);
-    void this.closeClient(oldest[1]);
+    this.trackClose(this.closeClient(oldest[1]));
+
+    const readPool = this.readPool.get(oldest[0]);
+    if (readPool) {
+      this.readPool.delete(oldest[0]);
+      this.trackClose(this.closeReadPool(readPool));
+    }
   }
 }

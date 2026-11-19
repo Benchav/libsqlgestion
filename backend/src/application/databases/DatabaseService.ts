@@ -10,7 +10,7 @@ import { createLibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
 import { assertValidSubdomainLabel, ensureSubdomain } from '../../infrastructure/security/slug';
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
-import { LibsqlRuntimeService } from '../../infrastructure/docker/LibsqlRuntimeService';
+import { LibsqlRuntimeService, RuntimeRouteHealth } from '../../infrastructure/docker/LibsqlRuntimeService';
 import { LibsqlNamespaceService } from '../../infrastructure/libsql/LibsqlNamespaceService';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
@@ -899,8 +899,20 @@ export class DatabaseService {
       const runtime = database.metadata?.runtime as Record<string, unknown> | undefined;
       if (runtime?.provider !== 'docker-libsql') continue;
 
+      let token: string | undefined;
+      if (database.encryptedToken) {
+        try {
+          token = decrypt(database.encryptedToken);
+        } catch (error: any) {
+          console.warn(
+            `[DatabaseService] cannot decrypt token for ${database.id}; ` +
+            `rotation recovery will not validate authentication: ${error?.message || error}`,
+          );
+        }
+      }
+
       try {
-        const result = await this.runtimeService.recoverInterruptedRotation(database);
+        const result = await this.runtimeService.recoverInterruptedRotation(database, token);
         if (result === 'restored') {
           restored += 1;
           console.warn(
@@ -1566,9 +1578,9 @@ export class DatabaseService {
       throw error;
     }
 
-    // Re-read immediately before writing. A rotation may have replaced the
-    // runtime while the public route was being checked; in that case the
-    // fresh row owns the current credential and this health result is stale.
+    // Compare-and-swap health into metadata. A plain read/modify/save could
+    // overwrite a rotation that finishes between those steps; the conditional
+    // UPDATE only applies while the runtime identity is still the one checked.
     const fresh = await this.databaseRepo.findOne({ where: { id } });
     const freshRuntime = fresh?.metadata?.runtime as Record<string, unknown> | undefined;
     if (!fresh || !runtimeIdentityMatches(freshRuntime, checkedIdentity)) {
@@ -1582,14 +1594,16 @@ export class DatabaseService {
       || previousHealth.publicOk !== health.publicOk
       || previousHealth.publicChecked !== health.publicChecked;
 
-    fresh.metadata = {
-      ...(fresh.metadata ?? {}),
-      runtime: {
-        ...freshRuntime,
-        routeHealth: health,
-      },
-    };
-    await this.databaseRepo.save(fresh);
+    const applied = await this.updateRuntimeHealthIfCurrent(
+      database.id,
+      checkedIdentity,
+      health,
+    );
+    const current = await this.databaseRepo.findOne({ where: { id } });
+    if (!applied || !current) {
+      // A rotation won the race. Keep the new credential and skip stale audit.
+      return current ?? database;
+    }
 
     // The periodic monitor records only transitions, avoiding an audit row
     // every few minutes for a healthy primary.
@@ -1597,7 +1611,7 @@ export class DatabaseService {
       await this.auditService.record({
         action: 'database.health_check',
         resourceType: 'database',
-        resourceId: fresh.id,
+        resourceId: current.id,
         metadata: {
           internalOk: health.internalOk,
           backendOk: health.backendOk,
@@ -1608,7 +1622,58 @@ export class DatabaseService {
       });
     }
 
-    return fresh;
+    return current;
+  }
+
+  private async updateRuntimeHealthIfCurrent(
+    databaseId: string,
+    expected: { containerId: string; authKeyPem: string },
+    health: RuntimeRouteHealth,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const rawRow = await this.databaseRepo
+        .createQueryBuilder('database')
+        .select('database.metadata', 'metadata')
+        .where('database.id = :id', { id: databaseId })
+        .getRawOne<{ metadata: string | null }>();
+
+      const raw = rawRow?.metadata;
+      if (raw === null || raw === undefined) return false;
+
+      let metadata: Record<string, unknown>;
+      try {
+        metadata = typeof raw === 'string'
+          ? JSON.parse(raw) as Record<string, unknown>
+          : raw as Record<string, unknown>;
+      } catch {
+        return false;
+      }
+
+      const runtime = metadata.runtime as Record<string, unknown> | undefined;
+      if (!runtimeIdentityMatches(runtime, expected)) return false;
+
+      const nextMetadata = {
+        ...metadata,
+        runtime: {
+          ...runtime,
+          routeHealth: health,
+        },
+      };
+
+      const result = await AppDataSource.createQueryBuilder()
+        .update(Database)
+        .set({ metadata: nextMetadata })
+        .where('id = :id', { id: databaseId })
+        .andWhere('metadata = :raw', { raw })
+        .execute();
+
+      if (Number(result.affected ?? 0) > 0) {
+        return true;
+      }
+      // Another writer changed the row; re-read and retry with fresh identity.
+    }
+
+    return false;
   }
 
   private scheduleRuntimeHealthRefresh(databaseId: string, delayMs = 3000, attempt = 1) {

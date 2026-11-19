@@ -14,6 +14,8 @@ process.env.SQLITE_STORAGE_ROOT = storageRoot;
 process.env.MASTER_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 const { AppDataSource } = require('../dist/infrastructure/db/data-source');
+const { Database } = require('../dist/domain/entities/Database');
+const { DatabaseService } = require('../dist/application/databases/DatabaseService');
 const { ConnectionPool } = require('../dist/infrastructure/db/ConnectionPool');
 const { bootstrapSecurityCatalog } = require('../dist/application/auth/auth.bootstrap');
 const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
@@ -270,6 +272,68 @@ test.describe('Import → Schema → Query End-to-End Integration', () => {
           headers,
           payload: { sql: "DELETE FROM clientes WHERE email = 'cache@test.test'" },
         });
+      }
+    });
+
+    test('runtime health updates are conditional on the checked identity', async () => {
+      const repo = AppDataSource.getRepository(Database);
+      const probe = await repo.save(repo.create({
+        name: 'health-cas-probe',
+        type: 'libsql',
+        status: 'active',
+        metadata: {
+          runtime: {
+            provider: 'docker-libsql',
+            containerId: 'cas-runtime-1',
+            authKeyPem: 'CAS-KEY-1',
+          },
+        },
+        project: { id: apiProjectId },
+      }));
+
+      try {
+        const service = new DatabaseService();
+        const health = {
+          checkedAt: new Date().toISOString(),
+          internalOk: true,
+          backendOk: true,
+          publicOk: false,
+          publicChecked: false,
+        };
+
+        const applied = await service['updateRuntimeHealthIfCurrent'](
+          probe.id,
+          { containerId: 'cas-runtime-1', authKeyPem: 'CAS-KEY-1' },
+          health,
+        );
+        assert.equal(applied, true);
+
+        // Simulate a rotation that completes while the health check is in
+        // flight. The stale result must not overwrite the new identity.
+        const rotated = await repo.findOneByOrFail({ id: probe.id });
+        rotated.metadata = {
+          runtime: {
+            ...rotated.metadata?.runtime,
+            containerId: 'cas-runtime-2',
+            authKeyPem: 'CAS-KEY-2',
+          },
+        };
+        await repo.save(rotated);
+
+        const stale = await service['updateRuntimeHealthIfCurrent'](
+          probe.id,
+          { containerId: 'cas-runtime-1', authKeyPem: 'CAS-KEY-1' },
+          { ...health, internalOk: false },
+        );
+        assert.equal(stale, false);
+
+        const after = await repo.findOneByOrFail({ id: probe.id });
+        const runtime = after.metadata?.runtime;
+        assert.equal(runtime.containerId, 'cas-runtime-2');
+        assert.equal(runtime.authKeyPem, 'CAS-KEY-2');
+        assert.equal(runtime.routeHealth.internalOk, true);
+      } finally {
+        await repo.delete({ id: probe.id });
       }
     });
   });

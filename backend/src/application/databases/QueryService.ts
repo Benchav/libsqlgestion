@@ -154,7 +154,11 @@ export class QueryService {
     }
 
     const pool = ConnectionPool.getInstance();
-    const client = pool.getClient(database);
+    // Reads use a dedicated WAL reader pool so independent UI/API queries do
+    // not queue behind the single-writer connection.
+    const client = isRead && !isScript
+      ? await pool.getReadClient(database)
+      : pool.getClient(database);
 
     if (client instanceof SqliteClient) {
       const startedAt = Date.now();

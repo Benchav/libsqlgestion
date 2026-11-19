@@ -52,6 +52,38 @@ export type RotateDatabaseOptions = {
   persist?: (bundle: RuntimeBundle) => Promise<void>;
 };
 
+type RotationJournalPhase = 'started' | 'replacement-ready' | 'committed';
+
+type RotationJournal = {
+  version: 1;
+  phase: RotationJournalPhase;
+  startedAt: string;
+  oldContainerId: string;
+  oldContainerName: string;
+  network: string;
+  previousAuthPem: string | null;
+  newContainerId?: string;
+  newContainerName?: string;
+  newAuthKeyPem?: string;
+};
+
+function parseRotationJournal(content: string): RotationJournal | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<RotationJournal>;
+    if (
+      parsed?.version === 1
+      && typeof parsed.phase === 'string'
+      && typeof parsed.oldContainerId === 'string'
+      && typeof parsed.oldContainerName === 'string'
+    ) {
+      return parsed as RotationJournal;
+    }
+  } catch {
+    // Legacy marker: a raw PEM file from the first implementation.
+  }
+  return null;
+}
+
 type RuntimePaths = {
   databasePath: string;
   containerName: string;
@@ -146,11 +178,19 @@ export class LibsqlRuntimeService {
     const previousAuthPem = await fs.promises.readFile(authPemPath, 'utf8').catch(() => null);
     const previousContainerName = `${runtime.containerName}-previous-${Date.now()}`;
 
-    // Write the recovery marker before touching Docker. If the backend is
-    // killed mid-rotation, startup reconciliation restores the previous key
-    // and runtime instead of leaving the primary stopped with a token that no
-    // longer matches auth.pem.
-    await this.writeRotationMarker(authPemPath, previousAuthPem);
+    // Write the recovery journal before touching Docker. It records which
+    // container/key pair the persisted credential belongs to, so startup
+    // reconciliation never applies the old key to a committed replacement.
+    const journalBase: RotationJournal = {
+      version: 1,
+      phase: 'started',
+      startedAt: new Date().toISOString(),
+      oldContainerId: runtime.containerId,
+      oldContainerName: runtime.containerName,
+      network: networkName,
+      previousAuthPem,
+    };
+    await this.writeRotationJournal(authPemPath, journalBase);
 
     let createdContainerId: string | undefined;
     let committed = false;
@@ -206,6 +246,15 @@ export class LibsqlRuntimeService {
         },
       };
 
+      const readyJournal: RotationJournal = {
+        ...journalBase,
+        phase: 'replacement-ready',
+        newContainerId: createdContainerId,
+        newContainerName: paths.containerName,
+        newAuthKeyPem: authBundle.publicKeyPem,
+      };
+      await this.writeRotationJournal(authPemPath, readyJournal);
+
       // Persist the replacement credential before destroying the previous
       // primary. If the write fails, the catch block restores the old runtime
       // and the old token continues to authenticate.
@@ -214,6 +263,18 @@ export class LibsqlRuntimeService {
         // From this point the database row points at the replacement. A later
         // failure must never delete it or revive the previous credential.
         committed = true;
+        await this.writeRotationJournal(authPemPath, {
+          ...readyJournal,
+          phase: 'committed',
+        }).catch((error: any) => {
+          // The database already points at the replacement. Losing this phase
+          // update is safe: startup also treats a persisted replacement id as
+          // committed.
+          console.warn(
+            `[LibsqlRuntimeService] could not mark rotation committed for ${database.id}: ` +
+            `${error?.message || error}`,
+          );
+        });
       }
 
       await this.removeContainer(runtime.containerId).catch((error: any) => {
@@ -291,16 +352,28 @@ export class LibsqlRuntimeService {
     }
   }
 
-  private async writeRotationMarker(authPemPath: string, previousAuthPem: string | null) {
-    const markerPath = `${authPemPath}.rotation`;
-    if (previousAuthPem === null) {
-      await fs.promises.rm(markerPath, { force: true }).catch(() => undefined);
-      return;
-    }
+  private async writeRotationJournal(authPemPath: string, journal: RotationJournal) {
+    const journalPath = `${authPemPath}.rotation`;
+    const tempPath = `${journalPath}.tmp`;
+    await fs.promises.writeFile(tempPath, JSON.stringify(journal), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    await fs.promises.rename(tempPath, journalPath);
+  }
 
-    const tempPath = `${markerPath}.tmp`;
-    await fs.promises.writeFile(tempPath, previousAuthPem, { encoding: 'utf8', mode: 0o600 });
-    await fs.promises.rename(tempPath, markerPath);
+  private async readRotationJournal(
+    authPemPath: string,
+  ): Promise<RotationJournal | { legacyAuthPem: string } | null> {
+    const content = await fs.promises
+      .readFile(`${authPemPath}.rotation`, 'utf8')
+      .catch(() => null);
+    if (content === null) return null;
+
+    const journal = parseRotationJournal(content);
+    if (journal) return journal;
+    if (content.trim()) return { legacyAuthPem: content };
+    return null;
   }
 
   private async clearRotationMarker(authPemPath: string) {
@@ -308,84 +381,361 @@ export class LibsqlRuntimeService {
     await fs.promises.rm(`${authPemPath}.rotation.tmp`, { force: true }).catch(() => undefined);
   }
 
+  private async resolveRuntimeNetwork(databaseId: string, runtime: RuntimeMetadata, journal?: RotationJournal) {
+    const candidates = [
+      journal?.network,
+      typeof runtime.network === 'string' ? runtime.network.trim() : '',
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    return this.resolveBackendNetworkName();
+  }
+
   /**
-   * Repairs a rotation interrupted by a backend crash or redeploy. The marker
-   * is written before the previous runtime is touched, so this runs whenever
-   * auth.pem.rotation exists on startup.
+   * Brings a specific container to its canonical name, network and running
+   * state without assuming which earlier Docker calls completed.
    */
-  async recoverInterruptedRotation(database: Database): Promise<'none' | 'restored' | 'finalized' | 'failed'> {
+  private async ensureRuntimeState(params: {
+    containerId: string;
+    containerName: string;
+    networkName: string;
+  }): Promise<{ ok: boolean; error?: string }> {
+    let inspection: DockerJson | null;
+    try {
+      inspection = await this.inspectContainer(params.containerId);
+    } catch (error: any) {
+      return { ok: false, error: `could not inspect runtime: ${error?.message || error}` };
+    }
+
+    if (!inspection) {
+      return { ok: false, error: `container ${params.containerId} no longer exists` };
+    }
+
+    try {
+      const currentName = String(inspection?.Name || '').replace(/^\/+/, '');
+      if (currentName && currentName !== params.containerName) {
+        await this.renameContainer(params.containerId, params.containerName);
+      }
+
+      const networks = inspection?.NetworkSettings?.Networks;
+      const attached = networks && typeof networks === 'object' ? Object.keys(networks) : [];
+      if (!attached.includes(params.networkName)) {
+        await this.requestJson(
+          'POST',
+          `/networks/${encodeURIComponent(params.networkName)}/connect`,
+          { Container: params.containerId },
+        );
+      }
+
+      if (inspection?.State?.Running !== true) {
+        // Docker returns 304 when the container is already running.
+        await this.startContainer(params.containerId);
+      }
+
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+
+  private async validateRuntimeToken(
+    containerId: string,
+    runtime: RuntimeMetadata,
+    token: string | undefined,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!token) {
+      // Docker state can still be repaired when MASTER_KEY/decryption is
+      // unavailable; authentication validation is the only skipped step.
+      console.warn('[LibsqlRuntimeService] no token available; skipping runtime auth validation');
+      return { ok: true };
+    }
+
+    try {
+      await this.waitForReady(containerId, {
+        internalUrl: runtime.internalUrl,
+        backendUrl: runtime.backendUrl,
+      }, token);
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+
+  /**
+   * Repairs a rotation interrupted by a backend crash or redeploy.
+   *
+   * The journal records which container/key pair the persisted credential
+   * belongs to. A committed rotation is finalized with the NEW verification
+   * key; only an uncommitted rotation restores the previous key. This prevents
+   * starting a replacement container with the old public key, which would make
+   * the persisted token unusable.
+   */
+  async recoverInterruptedRotation(
+    database: Database,
+    token?: string,
+  ): Promise<'none' | 'restored' | 'finalized' | 'failed'> {
     const runtime = this.readRuntimeMetadata(database);
     if (!runtime) return 'none';
 
     const authPemPath = path.join(this.resolveDatabaseRootDir(runtime.databasePath), 'auth.pem');
-    const markerPath = `${authPemPath}.rotation`;
-    const previousAuthPem = await fs.promises.readFile(markerPath, 'utf8').catch(() => null);
-    if (previousAuthPem === null) return 'none';
+    const journalRead = await this.readRotationJournal(authPemPath);
+    if (!journalRead) return 'none';
 
-    let inspection: DockerJson | null;
-    try {
-      inspection = await this.inspectContainer(runtime.containerId);
-    } catch (error: any) {
-      console.warn(
-        `[LibsqlRuntimeService] could not inspect ${database.id} during rotation recovery: ` +
-        `${error?.message || error}`,
+    if ('legacyAuthPem' in journalRead) {
+      return this.recoverLegacyRotation(
+        database.id,
+        runtime,
+        authPemPath,
+        journalRead.legacyAuthPem,
+        token,
       );
-      return 'failed';
     }
 
-    const currentName = String(inspection?.Name || '').replace(/^\/+/, '');
-    if (inspection?.State?.Running === true && currentName === runtime.containerName) {
-      // The runtime referenced by the persisted metadata is healthy. Either
-      // the rotation never reached the replacement or its credential was
-      // already saved; the marker is no longer needed.
+    const journal = journalRead;
+    const persistedIsReplacement = Boolean(
+      journal.newContainerId && runtime.containerId === journal.newContainerId,
+    );
+
+    if (persistedIsReplacement) {
+      const result = await this.finalizeCommittedRotation(database.id, runtime, authPemPath, journal, token);
+      if (!result.ok) {
+        console.error(
+          `[LibsqlRuntimeService] committed rotation recovery failed for ${database.id}: ${result.error}`,
+        );
+        return 'failed';
+      }
       await this.clearRotationMarker(authPemPath);
       return 'finalized';
     }
 
-    // A replacement that was created but never persisted still owns the
-    // canonical container name. Remove it before renaming the old runtime back.
-    try {
-      const replacement = await this.inspectContainer(runtime.containerName);
-      if (replacement?.Id && replacement.Id !== runtime.containerId) {
-        await this.removeContainer(replacement.Id);
-      }
-    } catch (error: any) {
-      console.warn(
-        `[LibsqlRuntimeService] could not inspect a possible replacement for ${database.id}: ` +
-        `${error?.message || error}`,
-      );
-    }
-
-    let networkName = typeof runtime.network === 'string' ? runtime.network.trim() : '';
-    if (!networkName) {
-      try {
-        networkName = await this.resolveBackendNetworkName();
-      } catch (error: any) {
-        console.error(
-          `[LibsqlRuntimeService] could not resolve the runtime network for ${database.id}: ` +
-          `${error?.message || error}`,
-        );
-        return 'failed';
-      }
-    }
-
-    const recovery = await this.recoverPreviousRuntime({
-      containerId: runtime.containerId,
-      containerName: runtime.containerName,
-      networkName,
-      authPemPath,
-      previousAuthPem,
-    });
-
-    if (!recovery.ok) {
+    if (journal.phase === 'committed' || runtime.containerId !== journal.oldContainerId) {
       console.error(
-        `[LibsqlRuntimeService] interrupted rotation recovery failed for ${database.id}: ${recovery.error}`,
+        `[LibsqlRuntimeService] rotation journal for ${database.id} does not match the persisted ` +
+        `runtime (phase=${journal.phase}, persisted=${runtime.containerId}). Manual review required.`,
+      );
+      return 'failed';
+    }
+
+    const result = await this.rollbackPendingRotation(database.id, runtime, authPemPath, journal, token);
+    if (!result.ok) {
+      console.error(
+        `[LibsqlRuntimeService] interrupted rotation recovery failed for ${database.id}: ${result.error}`,
       );
       return 'failed';
     }
 
     await this.clearRotationMarker(authPemPath);
     return 'restored';
+  }
+
+  private async finalizeCommittedRotation(
+    databaseId: string,
+    runtime: RuntimeMetadata,
+    authPemPath: string,
+    journal: RotationJournal,
+    token: string | undefined,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const newContainerId = runtime.containerId || journal.newContainerId || '';
+    const newContainerName = journal.newContainerName || runtime.containerName;
+    if (!newContainerId || !newContainerName) {
+      return { ok: false, error: 'journal is missing the replacement container identity' };
+    }
+
+    // The persisted token belongs to the replacement key. Never restore the
+    // previous PEM in this path.
+    if (journal.newAuthKeyPem) {
+      await fs.promises.writeFile(authPemPath, journal.newAuthKeyPem, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+    }
+
+    let networkName: string;
+    try {
+      networkName = await this.resolveRuntimeNetwork(databaseId, runtime, journal);
+    } catch (error: any) {
+      return { ok: false, error: `could not resolve network: ${error?.message || error}` };
+    }
+
+    const state = await this.ensureRuntimeState({
+      containerId: newContainerId,
+      containerName: newContainerName,
+      networkName,
+    });
+    if (!state.ok) return state;
+
+    const auth = await this.validateRuntimeToken(newContainerId, runtime, token);
+    if (!auth.ok) return auth;
+
+    if (journal.oldContainerId && journal.oldContainerId !== newContainerId) {
+      await this.removeContainer(journal.oldContainerId).catch((error: any) => {
+        console.warn(
+          `[LibsqlRuntimeService] could not remove previous container after committed rotation: ` +
+          `${error?.message || error}`,
+        );
+      });
+    }
+
+    return { ok: true };
+  }
+
+  private async rollbackPendingRotation(
+    databaseId: string,
+    runtime: RuntimeMetadata,
+    authPemPath: string,
+    journal: RotationJournal,
+    token: string | undefined,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const oldContainerId = journal.oldContainerId || runtime.containerId;
+    const oldContainerName = journal.oldContainerName || runtime.containerName;
+
+    // Remove an unpersisted replacement before renaming the previous runtime
+    // back to its canonical name.
+    const replacements = new Set<string>();
+    if (journal.newContainerId && journal.newContainerId !== oldContainerId) {
+      replacements.add(journal.newContainerId);
+    }
+
+    try {
+      const canonical = await this.inspectContainer(oldContainerName);
+      if (canonical?.Id && canonical.Id !== oldContainerId) {
+        replacements.add(canonical.Id);
+      }
+    } catch (error: any) {
+      console.warn(
+        `[LibsqlRuntimeService] could not inspect canonical runtime for ${databaseId}: ` +
+        `${error?.message || error}`,
+      );
+    }
+
+    for (const containerId of replacements) {
+      await this.removeContainer(containerId).catch((error: any) => {
+        console.warn(
+          `[LibsqlRuntimeService] could not remove unpersisted replacement ${containerId}: ` +
+          `${error?.message || error}`,
+        );
+      });
+    }
+
+    let networkName: string;
+    try {
+      networkName = await this.resolveRuntimeNetwork(databaseId, runtime, journal);
+    } catch (error: any) {
+      return { ok: false, error: `could not resolve network: ${error?.message || error}` };
+    }
+
+    const recovery = await this.recoverPreviousRuntime({
+      containerId: oldContainerId,
+      containerName: oldContainerName,
+      networkName,
+      authPemPath,
+      previousAuthPem: journal.previousAuthPem,
+    });
+    if (!recovery.ok) return recovery;
+
+    const auth = await this.validateRuntimeToken(oldContainerId, runtime, token);
+    if (!auth.ok) return auth;
+
+    return { ok: true };
+  }
+
+  private async recoverLegacyRotation(
+    databaseId: string,
+    runtime: RuntimeMetadata,
+    authPemPath: string,
+    previousAuthPem: string,
+    token: string | undefined,
+  ): Promise<'none' | 'restored' | 'finalized' | 'failed'> {
+    // Compatibility with the first marker format (raw PEM). It has no phase
+    // information, so decide from the actual containers:
+    // - a different container owns the canonical name -> the persisted one is
+    //   the old runtime, roll back and remove the uncommitted replacement;
+    // - otherwise the persisted container is the only candidate: never
+    //   overwrite its key with the legacy one, just start and validate it.
+    let persisted: DockerJson | null = null;
+    try {
+      persisted = await this.inspectContainer(runtime.containerId);
+    } catch (error: any) {
+      console.warn(
+        `[LibsqlRuntimeService] could not inspect ${databaseId} during legacy rotation recovery: ` +
+        `${error?.message || error}`,
+      );
+      return 'failed';
+    }
+
+    if (!persisted) {
+      console.error(
+        `[LibsqlRuntimeService] legacy rotation for ${databaseId} references a missing container ` +
+        `${runtime.containerId}; manual review required.`,
+      );
+      return 'failed';
+    }
+
+    let canonical: DockerJson | null = null;
+    try {
+      canonical = await this.inspectContainer(runtime.containerName);
+    } catch {
+      canonical = null;
+    }
+
+    if (canonical?.Id && canonical.Id !== runtime.containerId) {
+      const journal: RotationJournal = {
+        version: 1,
+        phase: 'started',
+        startedAt: new Date().toISOString(),
+        oldContainerId: runtime.containerId,
+        oldContainerName: runtime.containerName,
+        network: runtime.network,
+        previousAuthPem,
+      };
+
+      const result = await this.rollbackPendingRotation(databaseId, runtime, authPemPath, journal, token);
+      if (!result.ok) {
+        console.error(
+          `[LibsqlRuntimeService] legacy rotation recovery failed for ${databaseId}: ${result.error}`,
+        );
+        return 'failed';
+      }
+
+      await this.clearRotationMarker(authPemPath);
+      return 'restored';
+    }
+
+    // Only the persisted container exists. Its current auth.pem is the only
+    // key that can match the persisted token, so do not replace it blindly.
+    let networkName: string;
+    try {
+      networkName = await this.resolveRuntimeNetwork(databaseId, runtime);
+    } catch (error: any) {
+      return 'failed';
+    }
+
+    const state = await this.ensureRuntimeState({
+      containerId: runtime.containerId,
+      containerName: runtime.containerName,
+      networkName,
+    });
+    if (!state.ok) {
+      console.error(
+        `[LibsqlRuntimeService] legacy rotation recovery failed for ${databaseId}: ${state.error}`,
+      );
+      return 'failed';
+    }
+
+    const auth = await this.validateRuntimeToken(runtime.containerId, runtime, token);
+    if (!auth.ok) {
+      console.error(
+        `[LibsqlRuntimeService] legacy rotation for ${databaseId} could not validate the persisted ` +
+        `token; the recovery marker was kept for manual review: ${auth.error}`,
+      );
+      return 'failed';
+    }
+
+    await this.clearRotationMarker(authPemPath);
+    return 'finalized';
   }
 
   /**

@@ -98,25 +98,33 @@ during business hours.
 
 **Create new token** performs a guarded rotation:
 
-1. The previous JWT verification key (sqld's `auth.pem`) is written to
-   `auth.pem.rotation` as a recovery marker **before** Docker is touched.
+1. A recovery journal is written to `auth.pem.rotation` **before** Docker is
+   touched. It records the old container id/name, the previous verification key
+   and, once known, the replacement container id and its new key.
 2. The previous runtime is renamed, stopped and disconnected from the routing
    network.
 3. A replacement starts with a new signing key and token.
 4. The replacement must accept an authenticated query.
-5. The new credential and metadata are persisted to the control database.
+5. The new credential and metadata are persisted to the control database; the
+   journal moves to the `committed` phase.
 6. Only after that write succeeds is the previous runtime removed and the
-   marker cleared.
+   journal cleared.
 
 If any step fails, the backend restores the previous `auth.pem`, inspects the
 old container's real state, renames it back, reconnects it and starts it. Only a
 replacement whose creation was positively confirmed is ever removed; a failure
 in the initial rename can no longer delete the original runtime.
 
-If the backend process is killed mid-rotation, startup reconciliation reads
-`auth.pem.rotation`, removes any unpersisted replacement, restores the old key
-and brings the previous primary back before HTTP traffic is accepted. Failed
-recovery keeps the marker for manual inspection.
+If the backend process is killed mid-rotation, startup reconciliation reads the
+journal and compares it with the persisted runtime id:
+
+- If the control plane points at the replacement, it starts that container with
+  its **new** key and validates the persisted token. It never applies the old
+  key to a committed replacement.
+- If the control plane still points at the old runtime, it removes the
+  unpersisted replacement, restores the old key and brings the previous primary
+  back.
+- Failed validation keeps the journal for manual inspection.
 
 Rotation is not zero-downtime: it involves a short restart window and the old
 token stops being valid after success. Schedule it during a maintenance window
@@ -165,10 +173,19 @@ The Studio now:
 - caches schema by `PRAGMA schema_version`, so repeated opens avoid re-reading
   every table;
 - batches libSQL metadata reads per chunk instead of two round trips per table;
+- loads rows immediately and runs `COUNT(*)` in parallel instead of waiting for
+  the count before painting the grid;
+- discards responses from a table/page that is no longer active;
 - loads the exact row count only for the table being opened;
 - keeps counts outside the schema cache. `schema_version` changes on DDL only,
   so caching a response with `COUNT(*)` would serve stale numbers after normal
   inserts and deletes. Requests with counts are always executed fresh.
+
+For local SQLite, reads use a bounded WAL reader pool
+(`SQLITE_READ_POOL_SIZE`, default 4) instead of sharing the single sqlite3
+connection used for writes. This is what lets independent Studio/API reads run
+concurrently. Remote libSQL clients already multiplex over HTTP and are not
+affected by this setting.
 
 The dashboard samples Docker stats with limited concurrency and serves a short
 cache (`METRICS_CACHE_TTL_MS`, default 5000 ms).
@@ -177,10 +194,15 @@ Important limits:
 
 - Increasing `DB_CONNECTION_POOL_MAX_SIZE` does not increase SQLite write
   throughput. Measure lock contention, transaction duration and disk latency.
+- `SQLITE_READ_POOL_SIZE` improves concurrent local reads, not writes. SQLite
+  still has a single writer.
 - `SQLITE_PERFORMANCE_PROFILE` tunes the backend's local SQLite client. It does
   not change the `sqld` primary's configuration.
-- `COUNT(*)` on a huge table is a full scan. The Studio caches it per session and
-  refreshes it after writes to that table.
+- `COUNT(*)` on a huge table is still a full scan; it now runs in parallel with
+  the first page instead of blocking it. An index on the filtered/sorted columns
+  is usually the larger win.
+- Remote ERP reads from an embedded replica are local; writes to the primary
+  still pay the network round trip.
 
 ## 7. Turso Cloud → LibSQLite cutover
 
@@ -228,7 +250,11 @@ npm --prefix backend run migrate:local-to-primary -- --mode=runtime --apply
 npm --prefix backend run test:external -- \
   "libsql://<host>" "<jwt>" --embedded --deep
 
-# Backend tests (110+ tests) and full quality gate.
+# Comparable latency benchmark (run the same command against Turso).
+npm --prefix backend run test:external -- \
+  "libsql://<host>" "<jwt>" --bench --table=<table> --iterations=30
+
+# Backend tests (114+ tests) and full quality gate.
 npm --prefix backend test
 npm test
 ```

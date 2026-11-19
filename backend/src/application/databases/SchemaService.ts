@@ -220,7 +220,7 @@ export class SchemaService {
     // metadata-only responses participate in the cache.
     const cacheable = !includeRowCounts;
     const pool = ConnectionPool.getInstance();
-    const client = pool.getClient(database);
+    const client = await pool.getReadClient(database);
     const version = await readSchemaVersion(client);
     const now = Date.now();
     const cacheKey = schemaCacheKey(database.id, database.url, includeRowCounts);

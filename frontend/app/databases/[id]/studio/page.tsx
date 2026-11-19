@@ -82,6 +82,7 @@ export default function StudioPage() {
   const [sortDir, setSortDir] = useState<'ASC' | 'DESC'>('ASC');
   const [gridLoading, setGridLoading] = useState(false);
   const rowCountCache = useRef<Map<string, number>>(new Map());
+  const loadRequestRef = useRef(0);
 
   // Manual insert state
   const [isInsertOpen, setIsInsertOpen] = useState(false);
@@ -166,51 +167,74 @@ export default function StudioPage() {
     if (dbId) loadSchema();
   }, [dbId]);
 
-  // Load table data. The count is cached per table and only refreshed after writes.
+  // Load table data. Rows are requested immediately; COUNT(*) runs in
+  // parallel and updates the footer/sidebar when it finishes.
   const loadTableData = useCallback(async (options: { refreshCount?: boolean } = {}) => {
     if (!activeTable || !dbId) return;
+
+    const requestId = ++loadRequestRef.current;
     setGridLoading(true);
-    try {
-      let count = rowCountCache.current.get(activeTable);
-      if (count === undefined || options.refreshCount) {
-        const countResult = await apiRequest<{ ok: boolean; rows: Array<{ cnt: number }> }>(`/databases/${dbId}/query`, {
+
+    const tableSchema = tablesRef.current.find((schema) => schema.table === activeTable);
+    const primaryKey = tableSchema?.columns.find((column) => column.pk === 1)?.name;
+    const orderExpression = sortColumn
+      ? `"${sortColumn}"`
+      : primaryKey
+        ? `"${primaryKey}"`
+        : tableSchema?.kind === 'table'
+          ? 'rowid'
+          : null;
+    const orderClause = orderExpression ? ` ORDER BY ${orderExpression} ${sortColumn ? sortDir : 'ASC'}` : '';
+
+    const cachedCount = rowCountCache.current.get(activeTable);
+    const needsCount = cachedCount === undefined || options.refreshCount;
+
+    if (!needsCount) {
+      setTotalRows(cachedCount);
+      setRowCounts((previous) => (
+        previous[activeTable] === cachedCount
+          ? previous
+          : { ...previous, [activeTable]: cachedCount }
+      ));
+    }
+
+    const countTask = needsCount
+      ? apiRequest<{ ok: boolean; rows: Array<{ cnt: number }> }>(`/databases/${dbId}/query`, {
           method: 'POST',
           body: JSON.stringify({ sql: `SELECT COUNT(*) AS cnt FROM "${activeTable}"` }),
-        });
-        count = Number(countResult.rows?.[0]?.cnt ?? 0);
-        rowCountCache.current.set(activeTable, count);
-      }
-      setTotalRows(count);
-      // Counts live in their own map. Mutating `tables` here changed the
-      // loadTableData dependency and triggered a second, identical query.
-      setRowCounts((previous) => (
-        previous[activeTable] === count
-          ? previous
-          : { ...previous, [activeTable]: count }
-      ));
+        })
+          .then((result) => Number(result.rows?.[0]?.cnt ?? 0))
+          .catch(() => undefined)
+      : Promise.resolve(cachedCount);
 
-      const tableSchema = tablesRef.current.find((schema) => schema.table === activeTable);
-      const primaryKey = tableSchema?.columns.find((column) => column.pk === 1)?.name;
-      const orderExpression = sortColumn
-        ? `"${sortColumn}"`
-        : primaryKey
-          ? `"${primaryKey}"`
-          : tableSchema?.kind === 'table'
-            ? 'rowid'
-            : null;
-      const orderClause = orderExpression ? ` ORDER BY ${orderExpression} ${sortColumn ? sortDir : 'ASC'}` : '';
-
+    try {
       const dataResult = await apiRequest<{ ok: boolean; rows: Record<string, unknown>[] }>(`/databases/${dbId}/query`, {
         method: 'POST',
         body: JSON.stringify({
           sql: `SELECT * FROM "${activeTable}"${orderClause} LIMIT ${PAGE_SIZE + 1} OFFSET ${page * PAGE_SIZE}`,
         }),
       });
+
+      // A newer table/page request owns the grid now.
+      if (requestId !== loadRequestRef.current) return;
       setRows((dataResult.rows || []).slice(0, PAGE_SIZE));
+      setGridLoading(false);
+
+      const count = await countTask;
+      if (requestId !== loadRequestRef.current) return;
+      if (count !== undefined && Number.isFinite(count)) {
+        rowCountCache.current.set(activeTable, count);
+        setTotalRows(count);
+        setRowCounts((previous) => (
+          previous[activeTable] === count
+            ? previous
+            : { ...previous, [activeTable]: count }
+        ));
+      }
     } catch (err: any) {
+      if (requestId !== loadRequestRef.current) return;
       setError(err.message);
       setRows([]);
-    } finally {
       setGridLoading(false);
     }
   }, [dbId, activeTable, page, sortColumn, sortDir]);
@@ -400,8 +424,9 @@ export default function StudioPage() {
         }),
       });
       setIsInsertOpen(false);
+      // Data-only writes do not change the schema; refresh rows and the
+      // affected table count without paying for a schema round trip.
       await loadTableData({ refreshCount: true });
-      loadSchema();
     } catch (err: any) {
       setInsertError(err.message);
     } finally {
@@ -454,7 +479,6 @@ export default function StudioPage() {
       setIsEditOpen(false);
       setEditRowIndex(null);
       await loadTableData({ refreshCount: true });
-      loadSchema();
     } catch (err: any) {
       setEditError(err.message);
     } finally {

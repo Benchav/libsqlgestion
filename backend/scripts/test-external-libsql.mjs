@@ -10,18 +10,29 @@ const url = positional[0];
 const token = positional[1];
 const embedded = flags.has('--embedded') || flags.has('--deep');
 const deep = flags.has('--deep');
+const bench = flags.has('--bench');
 const jsonOutput = flags.has('--json');
+const tableFlag = args.find((arg) => arg.startsWith('--table='));
+const iterationsFlag = args.find((arg) => arg.startsWith('--iterations='));
+const benchTable = tableFlag ? tableFlag.slice('--table='.length).trim() : '';
+const benchIterations = Math.max(
+  5,
+  Math.min(500, Number(iterationsFlag ? iterationsFlag.slice('--iterations='.length) : 20) || 20),
+);
 
 if (!url || !token || flags.has('--help')) {
   const printUsage = flags.has('--help') ? console.log : console.error;
   printUsage(
     'Usage: node scripts/test-external-libsql.mjs <libsql-or-https-url> <token> ' +
-    '[--embedded] [--deep] [--json]',
+    '[--embedded] [--deep] [--bench] [--table=NAME] [--iterations=N] [--json]',
   );
   printUsage('');
-  printUsage('  --embedded  Verify a fresh embedded replica can sync and query.');
-  printUsage('  --deep      Verify remote writes propagate to the replica and cleanup.');
-  printUsage('  --json      Print a machine-readable summary.');
+  printUsage('  --embedded       Verify a fresh embedded replica can sync and query.');
+  printUsage('  --deep           Verify remote writes propagate to the replica and cleanup.');
+  printUsage('  --bench          Measure p50/p95 latency for SELECT 1 and an optional table.');
+  printUsage('  --table=NAME     Table used for the page/count benchmark.');
+  printUsage('  --iterations=N   Samples per benchmark (default 20, max 500).');
+  printUsage('  --json           Print a machine-readable summary.');
   process.exit(flags.has('--help') ? 0 : 1);
 }
 
@@ -48,6 +59,58 @@ async function time(label, fn) {
   return { value, durationMs: roundMs(now() - startedAt) };
 }
 
+function sampleStats(samples) {
+  if (samples.length === 0) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const at = (percentile) => sorted[Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1),
+  )];
+  return {
+    samples: samples.length,
+    p50Ms: roundMs(at(50)),
+    p95Ms: roundMs(at(95)),
+    avgMs: roundMs(samples.reduce((sum, value) => sum + value, 0) / samples.length),
+    minMs: roundMs(sorted[0]),
+    maxMs: roundMs(sorted[sorted.length - 1]),
+  };
+}
+
+async function benchmarkClient(client, label, table, iterations) {
+  const quotedTable = table ? `"${table.replace(/"/g, '""')}"` : '';
+  const result = { label, iterations };
+
+  await client.execute('SELECT 1');
+  const pings = [];
+  for (let index = 0; index < iterations; index += 1) {
+    const startedAt = now();
+    await client.execute('SELECT 1 AS ok');
+    pings.push(now() - startedAt);
+  }
+  result.select1 = sampleStats(pings);
+
+  if (!table) return result;
+
+  const pages = [];
+  for (let index = 0; index < iterations; index += 1) {
+    const startedAt = now();
+    await client.execute(`SELECT * FROM ${quotedTable} LIMIT 50`);
+    pages.push(now() - startedAt);
+  }
+  result.page50 = sampleStats(pages);
+
+  const counts = [];
+  const countIterations = Math.min(5, iterations);
+  for (let index = 0; index < countIterations; index += 1) {
+    const startedAt = now();
+    await client.execute(`SELECT COUNT(*) AS cnt FROM ${quotedTable}`);
+    counts.push(now() - startedAt);
+  }
+  result.count = sampleStats(counts);
+
+  return result;
+}
+
 async function testRemote() {
   const client = createClient({ url, authToken: token });
   try {
@@ -61,6 +124,7 @@ async function testRemote() {
       pingMs: ping.durationMs,
       sqliteVersion: String(version.rows[0]?.version || 'unknown'),
       userTableCount: Number(tables.rows[0]?.count || 0),
+      bench: bench ? await benchmarkClient(client, 'remote', benchTable, benchIterations) : null,
     };
   } finally {
     client.close();
@@ -94,6 +158,7 @@ async function testEmbedded() {
       pingMs: ping.durationMs,
       userTableCount: Number(tables.rows[0]?.count || 0),
       replicaFile: filePath,
+      bench: bench ? await benchmarkClient(client, 'embedded-replica', benchTable, benchIterations) : null,
     };
   } finally {
     client.close();
@@ -157,6 +222,22 @@ async function testDeep() {
   }
 }
 
+function printBench(label, bench) {
+  if (!bench) return;
+  console.log(`Benchmark ${label} (${bench.iterations} iterations):`);
+  for (const [name, stats] of [
+    ['SELECT 1', bench.select1],
+    ['page LIMIT 50', bench.page50],
+    ['COUNT(*)', bench.count],
+  ]) {
+    if (!stats) continue;
+    console.log(
+      `  ${name}: p50 ${stats.p50Ms} ms, p95 ${stats.p95Ms} ms, ` +
+      `avg ${stats.avgMs} ms (min ${stats.minMs}, max ${stats.maxMs})`,
+    );
+  }
+}
+
 async function main() {
   summary.remote = await testRemote();
 
@@ -180,6 +261,8 @@ async function main() {
     if (summary.deep) {
       console.log(`Replica propagation OK (insert ${summary.deep.insertPropagationMs} ms, delete ${summary.deep.deletePropagationMs} ms)`);
     }
+    printBench('remote primary', summary.remote?.bench);
+    printBench('embedded replica', summary.embedded?.bench);
   }
 }
 

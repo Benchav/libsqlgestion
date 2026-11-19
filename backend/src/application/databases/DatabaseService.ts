@@ -17,6 +17,7 @@ import { getPublicDatabaseSettings } from '../settings/PlatformSettingsService';
 import { getMaxUploadBytes } from '../../config/uploads';
 import { getRuntimeConnectionUrl, isRemoteDatabaseUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
 import { runtimeIdentityMatches } from './runtime-health-guard';
+import { deriveDatabaseName } from '../shared/identifiers';
 
 type PrimaryMode = 'namespace' | 'runtime';
 type RequestedPrimaryMode = PrimaryMode | 'auto';
@@ -1723,14 +1724,6 @@ export class DatabaseService {
       }
     }
   }
-}
-
-function deriveDatabaseName(name?: string, sourceName?: string, sourcePath?: string) {
-  const explicitName = name?.trim();
-  if (explicitName) return explicitName;
-
-  const candidate = sourceName || (sourcePath ? path.basename(sourcePath) : '');
-  return candidate.replace(/\.[^.]+$/, '').trim() || 'imported-database';
 }
 
 function mergeRuntimeMetadata(existing: Record<string, unknown> | undefined, runtime: Record<string, unknown>) {

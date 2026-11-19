@@ -1,7 +1,9 @@
 import { In } from 'typeorm';
 import { AppDataSource } from '../../infrastructure/db/data-source';
+import { AuditLog } from '../../domain/entities/AuditLog';
 import { Database } from '../../domain/entities/Database';
 import { Project } from '../../domain/entities/Project';
+import { isUuidLike } from '../shared/identifiers';
 
 export type AnalyticsRange = 'today' | '7d' | '30d' | 'month';
 export type AnalyticsBucket = 'hour' | 'day';
@@ -96,6 +98,30 @@ function bucketSeries(
 function numberValue(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Audit rows store their payload as simple-json. Read the last human name from
+ * a rename/delete event; UUID-shaped values are internal identifiers, not names.
+ */
+function readAuditName(metadata: unknown): string {
+  if (!metadata) return '';
+
+  let parsed: unknown = metadata;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return '';
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
+  const name = (parsed as Record<string, unknown>).name;
+  if (typeof name !== 'string') return '';
+
+  const trimmed = name.trim();
+  return trimmed && !isUuidLike(trimmed) ? trimmed : '';
 }
 
 function timestampToEpoch(value: unknown): number | null {
@@ -422,17 +448,23 @@ export class AnalyticsService {
               COUNT(*) AS queries
        FROM query_metrics
        WHERE createdAt >= ? AND createdAt <= ?
+         AND databaseId IS NOT NULL
+         AND databaseId <> ''
        GROUP BY databaseId
        ORDER BY rowsRead DESC
        LIMIT 10`,
       [from, to],
     );
 
-    const ids = rows.map((row: any) => row.databaseId).filter(Boolean);
+    const ids: string[] = (rows as any[])
+      .map((row: any) => String(row.databaseId))
+      .filter((id: string) => Boolean(id));
     const databases = ids.length > 0
       ? await this.databaseRepo.find({ where: { id: In(ids) } })
       : [];
-    const nameMap = new Map(databases.map((database) => [database.id, database.name]));
+    const databaseMap = new Map(databases.map((database) => [database.id, database]));
+    const missingIds = ids.filter((id) => !databaseMap.has(id));
+    const historicalNames = await this.getHistoricalDatabaseNames(missingIds);
 
     const storage = ids.length > 0
       ? await AppDataSource.query(
@@ -447,14 +479,70 @@ export class AnalyticsService {
       : [];
     const storageMap = new Map(storage.map((row: any) => [row.databaseId, numberValue(row.sizeBytes)]));
 
-    return rows.map((row: any) => ({
-      id: row.databaseId,
-      name: nameMap.get(row.databaseId) || row.databaseId,
-      rowsRead: numberValue(row.rowsRead),
-      rowsWritten: numberValue(row.rowsWritten),
-      queries: numberValue(row.queries),
-      storageBytes: storageMap.get(row.databaseId) || 0,
-    }));
+    return rows.map((row: any) => {
+      const id = String(row.databaseId);
+      const database = databaseMap.get(id);
+      const storedName = database?.name?.trim() || '';
+      const subdomain = database?.subdomain?.trim() || '';
+      const historicalName = historicalNames.get(id) || '';
+      const storedNameIsUuid = isUuidLike(storedName);
+      const exists = Boolean(database);
+      const needsRename = exists && (!storedName || storedNameIsUuid);
+      const displayName = storedName && !storedNameIsUuid
+        ? storedName
+        : (subdomain || historicalName || (exists ? 'Unnamed database' : 'Deleted database'));
+
+      return {
+        id,
+        name: displayName,
+        displayName,
+        exists,
+        deleted: !exists,
+        needsRename,
+        subdomain: subdomain || null,
+        rowsRead: numberValue(row.rowsRead),
+        rowsWritten: numberValue(row.rowsWritten),
+        queries: numberValue(row.queries),
+        storageBytes: storageMap.get(id) || 0,
+      };
+    });
+  }
+
+  /**
+   * Deleted databases no longer exist in `databases`, but audit rows keep the
+   * name used at deletion/rename time. Top database analytics can therefore
+   * show "ERP Histórico" instead of a raw UUID. The action index bounds this
+   * query; a failure must never break the analytics overview.
+   */
+  private async getHistoricalDatabaseNames(ids: string[]) {
+    if (ids.length === 0) return new Map<string, string>();
+
+    try {
+      const rows = await AppDataSource.getRepository(AuditLog)
+        .createQueryBuilder('audit')
+        .select(['audit.resourceId', 'audit.metadata', 'audit.createdAt'])
+        .where('audit.resourceType = :resourceType', { resourceType: 'database' })
+        .andWhere('audit.action IN (:...actions)', {
+          actions: ['database.delete', 'database.update'],
+        })
+        .andWhere('audit.resourceId IN (:...ids)', { ids })
+        .orderBy('audit.createdAt', 'DESC')
+        .limit(500)
+        .getMany();
+
+      const names = new Map<string, string>();
+      for (const row of rows) {
+        if (!row.resourceId || names.has(row.resourceId)) continue;
+        const name = readAuditName(row.metadata);
+        if (name) names.set(row.resourceId, name);
+      }
+      return names;
+    } catch (error: any) {
+      console.warn(
+        `[analytics] could not resolve historical database names: ${error?.message || error}`,
+      );
+      return new Map<string, string>();
+    }
   }
 
   private async getTopProjects(window: AnalyticsWindow) {

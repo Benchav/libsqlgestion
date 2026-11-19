@@ -36,6 +36,11 @@ function formatDuration(seconds: number) {
 
 const CLIENT_COMPRESSION_MIN_BYTES = 1024 * 1024;
 const CLIENT_COMPRESSION_MAX_BYTES = 300 * 1024 * 1024;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function looksLikeUuid(value: string) {
+  return UUID_PATTERN.test(value.trim());
+}
 
 async function gzipForUpload(file: File): Promise<Blob> {
   const CompressionStreamCtor = (globalThis as any).CompressionStream;
@@ -332,6 +337,9 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   const publicDomainMissing = !publicDomain || /localhost|127\.0\.0\.1/.test(publicDomain);
   const maxUploadBytes = capabilities?.maxUploadBytes || 0;
   const fileTooLarge = Boolean(file && maxUploadBytes > 0 && file.size > maxUploadBytes);
+  const fileNameLooksLikeId = Boolean(
+    file && looksLikeUuid(file.name.replace(/\.[^.]+$/, '').trim()),
+  );
   const compressionSkippedForSize = Boolean(
     capabilities?.supportsUploadCompression && file && file.size > CLIENT_COMPRESSION_MAX_BYTES,
   );
@@ -349,7 +357,10 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
   })();
 
   function deriveNameFromFile(fileName: string) {
-    return fileName.replace(/\.[^.]+$/, '').trim();
+    const derived = fileName.replace(/\.[^.]+$/, '').trim();
+    // Imported files downloaded from the panel may be named with the internal
+    // database id. Never use that as the visible database name.
+    return looksLikeUuid(derived) ? '' : derived;
   }
 
   async function handleImport(e: FormEvent) {
@@ -478,6 +489,9 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
       const maxMb = Math.round(maxUploadBytes / (1024 * 1024));
       return `This file is larger than the ${maxMb} MB upload limit. Use Server path for larger databases.`;
     }
+    if (mode === 'file' && fileNameLooksLikeId && !name.trim()) {
+      return 'The file name looks like an internal database id. Enter a friendly name for the database.';
+    }
     if (storageMode === 'namespace' && namespaceUnavailable) {
       return capabilities.namespace.reason || 'Shared namespace is not available.';
     }
@@ -542,6 +556,11 @@ function ImportDatabaseModal({ projects, onClose, onSuccess }: { projects: Proje
               className="flex-1 bg-[#050505] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
+          {mode === 'file' && fileNameLooksLikeId && !name.trim() && (
+            <p className="-mt-2 ml-24 text-xs text-amber-400">
+              This file name is an internal id. Enter a friendly database name.
+            </p>
+          )}
 
           <div className="flex items-center gap-4">
             <label className="w-20 text-sm font-medium text-zinc-300">Subdomain</label>

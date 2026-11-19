@@ -78,6 +78,11 @@ type AnalyticsOverview = {
   topDatabases: Array<{
     id: string;
     name: string;
+    displayName?: string;
+    exists?: boolean;
+    deleted?: boolean;
+    needsRename?: boolean;
+    subdomain?: string | null;
     rowsRead: number;
     rowsWritten: number;
     queries: number;
@@ -537,19 +542,52 @@ export default function AnalyticsPage() {
                 empty={data.topDatabases.length === 0}
                 emptyMessage="No database activity yet."
               >
-                {data.topDatabases.map((database) => (
-                  <tr key={database.id} className="border-b border-zinc-800/40 text-sm last:border-0">
-                    <td className="px-6 py-3 font-medium text-zinc-200">
-                      <Link href={`/databases/${database.id}`} className="transition-colors hover:text-white">
-                        {database.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.rowsRead)}</td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.rowsWritten)}</td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.queries)}</td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatBytes(database.storageBytes)}</td>
-                  </tr>
-                ))}
+                {data.topDatabases.map((database) => {
+                  const label = database.displayName || database.name || 'Deleted database';
+                  const isDeleted = database.deleted === true || database.exists === false;
+                  const shortId = database.id.slice(0, 8);
+
+                  return (
+                    <tr key={database.id} className="border-b border-zinc-800/40 text-sm last:border-0">
+                      <td className="px-6 py-3 font-medium text-zinc-200" title={database.id}>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            {isDeleted ? (
+                              <span className="text-zinc-400">{label}</span>
+                            ) : (
+                              <Link
+                                href={`/databases/${database.id}`}
+                                className="transition-colors hover:text-white"
+                              >
+                                {label}
+                              </Link>
+                            )}
+                            {isDeleted && (
+                              <span className="rounded-full border border-zinc-700 px-1.5 py-0.5 text-[10px] font-normal text-zinc-500">
+                                Deleted
+                              </span>
+                            )}
+                          </div>
+                          {isDeleted && (
+                            <span className="font-mono text-[10px] font-normal text-zinc-600">{shortId}</span>
+                          )}
+                          {database.needsRename && !isDeleted && (
+                            <Link
+                              href={`/databases/${database.id}`}
+                              className="text-[11px] font-normal text-amber-400 transition-colors hover:text-amber-300"
+                            >
+                              Rename
+                            </Link>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.rowsRead)}</td>
+                      <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.rowsWritten)}</td>
+                      <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.queries)}</td>
+                      <td className="px-6 py-3 text-right text-zinc-400">{formatBytes(database.storageBytes)}</td>
+                    </tr>
+                  );
+                })}
               </DataTable>
 
               <DataTable

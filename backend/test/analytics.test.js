@@ -16,6 +16,7 @@ const { bootstrapSecurityCatalog } = require('../dist/application/auth/auth.boot
 const { buildServer } = require('../dist/server');
 const { Project } = require('../dist/domain/entities/Project');
 const { Database } = require('../dist/domain/entities/Database');
+const { AuditLog } = require('../dist/domain/entities/AuditLog');
 const { User } = require('../dist/domain/entities/User');
 const { StorageSample } = require('../dist/domain/entities/StorageSample');
 const { analyticsCollector } = require('../dist/application/analytics/AnalyticsCollector');
@@ -185,6 +186,87 @@ test.describe('Analytics', () => {
     assert.ok(Array.isArray(body.topQueriesByFrequency));
     assert.equal(body.topErrors[0].errorCode, 'SQLITE_ERROR');
     assert.ok(body.topErrors[0].lastSeenAt);
+  });
+
+  test('shows friendly names and labels deleted databases without raw UUIDs', async () => {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const uuid = '11111111-1111-4111-8111-111111111111';
+    const uuidDatabase = await databaseRepo.save(databaseRepo.create({
+      name: uuid,
+      type: 'sqlite',
+      status: 'active',
+      subdomain: 'friendly-subdomain',
+      project,
+    }));
+
+    const deletedDatabase = await databaseRepo.save(databaseRepo.create({
+      name: 'ERP Histórico',
+      type: 'libsql',
+      status: 'active',
+      project,
+    }));
+    const deletedDatabaseId = deletedDatabase.id;
+    const auditRepo = AppDataSource.getRepository(AuditLog);
+    await auditRepo.save(auditRepo.create({
+      action: 'database.delete',
+      resourceType: 'database',
+      resourceId: deletedDatabaseId,
+      metadata: { name: 'ERP Histórico', type: 'libsql' },
+    }));
+    await databaseRepo.remove(deletedDatabase);
+
+    const unknownDatabaseId = '22222222-2222-4222-8222-222222222222';
+    const createdAt = new Date(Date.now() - 30_000).toISOString().slice(0, 19).replace('T', ' ');
+    const metrics = [
+      [uuidDatabase.id, 700],
+      [deletedDatabaseId, 600],
+      [unknownDatabaseId, 500],
+    ];
+    for (const [databaseId, rowsRead] of metrics) {
+      await AppDataSource.query(
+        `INSERT INTO query_metrics
+           (databaseId, projectId, source, operation, sqlFingerprint, sqlPreview, durationMs, rowsRead, rowsWritten, success, createdAt)
+         VALUES (?, ?, 'api', 'select', ?, 'SELECT 1', 5, ?, 0, 1, ?)`,
+        [databaseId, project.id, `friendly-name-${databaseId}`, rowsRead, createdAt],
+      );
+    }
+
+    const from = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const to = new Date(Date.now() + 1000);
+    const params = new URLSearchParams({
+      range: 'today',
+      from: from.toISOString(),
+      to: to.toISOString(),
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = JSON.parse(response.payload);
+    const byId = new Map(body.topDatabases.map((row) => [row.id, row]));
+
+    const friendly = byId.get(uuidDatabase.id);
+    assert.ok(friendly);
+    assert.equal(friendly.displayName, 'friendly-subdomain');
+    assert.equal(friendly.name, 'friendly-subdomain');
+    assert.equal(friendly.exists, true);
+    assert.equal(friendly.deleted, false);
+    assert.equal(friendly.needsRename, true);
+
+    const deleted = byId.get(deletedDatabaseId);
+    assert.ok(deleted);
+    assert.equal(deleted.displayName, 'ERP Histórico');
+    assert.equal(deleted.name, 'ERP Histórico');
+    assert.equal(deleted.exists, false);
+    assert.equal(deleted.deleted, true);
+
+    const unknown = byId.get(unknownDatabaseId);
+    assert.ok(unknown);
+    assert.equal(unknown.displayName, 'Deleted database');
+    assert.equal(unknown.exists, false);
+    assert.equal(unknown.deleted, true);
   });
 
   test('zero-fills day buckets and carries storage forward', async () => {

@@ -159,6 +159,69 @@ system-resolver fallback.
 
 This is used by **Settings → Public Database Routing → Test wildcard DNS**.
 
+## Offsite snapshot backups (S3 / Cloudflare R2)
+
+Configured from **Settings → Offsite Backups**. Requires `settings.read` to view
+and `settings.write` to change. The secret access key is encrypted at rest and
+is never returned.
+
+### `GET /settings/offsite-backup`
+
+Returns the public settings (without the secret), `secretAccessKeyConfigured`,
+`secretSource` (`panel`, `env` or `none`) and upload status:
+
+```json
+{
+  "settings": {
+    "enabled": true,
+    "endpoint": "https://<account-id>.r2.cloudflarestorage.com",
+    "bucket": "libsqlite-backups",
+    "region": "auto",
+    "prefix": "prod",
+    "accessKeyId": "...",
+    "secretAccessKeyConfigured": true,
+    "secretSource": "panel",
+    "uploadMode": "daily",
+    "artifacts": "db",
+    "retentionDays": 30,
+    "required": false,
+    "timeoutMs": 300000
+  },
+  "status": {
+    "configured": true,
+    "uploaded": 12,
+    "pendingUploads": 0,
+    "failedUploads": 0,
+    "queued": 0,
+    "lastUploadAt": "2026-11-19T07:51:00.000Z",
+    "lastTestAt": "2026-11-19T07:45:00.000Z",
+    "lastTestOk": true
+  }
+}
+```
+
+### `PUT /settings/offsite-backup`
+
+Saves the configuration. If `secretAccessKey` is omitted or empty, the stored
+secret is preserved. `clearSecret: true` removes the panel secret.
+
+### `POST /settings/offsite-backup/test`
+
+Tests the saved configuration against the bucket. Returns `ok`, `latencyMs`,
+`bucket`, `endpoint` and `message`, or `502` with a sanitized error.
+
+### `POST /settings/offsite-backup/sync`
+
+Queues local snapshots for upload:
+
+```json
+{ "includeExisting": true, "limit": 25 }
+```
+
+- `includeExisting: false` only retries pending/failed snapshots.
+- `includeExisting: true` backfills snapshots without an offsite copy.
+- `snapshotId` queues one specific snapshot.
+
 ### `GET /databases/:id`
 
 Returns a single database record.
@@ -198,9 +261,10 @@ not continuous WAL point-in-time recovery.
 
 Snapshot records expose `format` (`sqlite`, `libsql-sql-dump` or
 `libsql-sqlite-export`), `verified`, `downloadFormats`, `sizeBytes` (primary
-artifact), `totalSizeBytes` (all retained artifacts) and an optional `warning`
-when the SQLite export could not be materialized and the validated SQL dump was
-kept instead.
+artifact), `totalSizeBytes` (all retained artifacts), an optional `warning` and
+`offsite` (`status`, `uploadedAt`, `attempts`, `lastError`). The list response
+also includes `offsiteConfigured` so the panel only offers the upload action
+when S3/R2 is configured.
 
 ### `GET /databases/:id/snapshots`
 
@@ -247,8 +311,15 @@ SQLite.
 
 ### `DELETE /databases/:id/snapshots/:snapshotId`
 
-Deletes every artifact that belongs to the snapshot (`.db`, retained `.sql` and
-sidecars). Returns `409` while a restore or download is using the snapshot.
+Deletes every local artifact that belongs to the snapshot (`.db`, retained
+`.sql` and sidecars). Returns `409` while a restore, download or offsite upload
+is using the snapshot. Offsite copies are **not** deleted by this endpoint.
+
+### `POST /databases/:id/snapshots/:snapshotId/offsite`
+
+Queues a snapshot for an offsite upload. Requires `databases.write` and a
+configured/enabled offsite bucket. Returns `202` with the updated snapshot.
+Returns `409` when offsite is disabled or the snapshot is not ready.
 
 ### `POST /databases/:id/snapshots/:snapshotId/restore`
 

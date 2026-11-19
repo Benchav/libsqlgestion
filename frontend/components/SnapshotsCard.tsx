@@ -5,12 +5,14 @@ import {
   Archive,
   CheckCircle2,
   Clock,
+  Cloud,
   Download,
   History,
   RefreshCw,
   RotateCcw,
   Settings2,
   Trash2,
+  UploadCloud,
   X,
   XCircle,
 } from 'lucide-react';
@@ -23,6 +25,7 @@ import {
   useSnapshotPolicy,
   useSnapshots,
   useUpdateSnapshotPolicy,
+  useUploadSnapshotOffsite,
 } from '../lib/hooks';
 
 type SnapshotsCardProps = {
@@ -205,6 +208,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
   const createSnapshot = useCreateSnapshot(database.id);
   const deleteSnapshot = useDeleteSnapshot(database.id);
   const restoreSnapshot = useRestoreSnapshot(database.id);
+  const uploadOffsite = useUploadSnapshotOffsite(database.id);
   const updatePolicy = useUpdateSnapshotPolicy(database.id);
 
   const [actionError, setActionError] = useState('');
@@ -222,6 +226,7 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
 
   const snapshots = snapshotsQuery.data?.snapshots || [];
   const readySnapshots = snapshots.filter((snapshot) => snapshot.status === 'ready');
+  const offsiteConfigured = Boolean(snapshotsQuery.data?.offsiteConfigured);
   const totalSizeBytes = snapshotsQuery.data?.totalSizeBytes || 0;
   const policy = policyQuery.data?.policy;
   const snapshotInProgress = createSnapshot.isPending
@@ -279,6 +284,15 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
       await deleteSnapshot.mutateAsync(snapshot.id);
     } catch (error: any) {
       setActionError(error?.message || 'Failed to delete snapshot');
+    }
+  }
+
+  async function handleUploadOffsite(snapshot: DatabaseSnapshot) {
+    setActionError('');
+    try {
+      await uploadOffsite.mutateAsync(snapshot.id);
+    } catch (error: any) {
+      setActionError(error?.message || 'Failed to queue offsite upload');
     }
   }
 
@@ -483,6 +497,28 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                         {snapshot.pinned && (
                           <span className="text-[10px] uppercase tracking-wider text-zinc-500">Pinned</span>
                         )}
+                        {snapshot.offsite && snapshot.offsite.status !== 'disabled' && (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                              snapshot.offsite.status === 'uploaded'
+                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                                : snapshot.offsite.status === 'failed'
+                                  ? 'border-red-500/20 bg-red-500/10 text-red-300'
+                                  : 'border-sky-500/20 bg-sky-500/10 text-sky-300'
+                            }`}
+                            title={snapshot.offsite.lastError
+                              || (snapshot.offsite.uploadedAt
+                                ? `Uploaded ${new Date(snapshot.offsite.uploadedAt).toLocaleString()}`
+                                : 'Offsite upload in progress')}
+                          >
+                            <Cloud size={10} />
+                            {snapshot.offsite.status === 'uploaded'
+                              ? 'Offsite'
+                              : snapshot.offsite.status === 'failed'
+                                ? 'Offsite failed'
+                                : 'Offsite pending'}
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1.5 truncate text-sm text-zinc-300" title={formatTimestamp(snapshot.takenAt)}>
                         {formatTimestamp(snapshot.takenAt)}
@@ -510,6 +546,23 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                       >
                         <RotateCcw size={12} /> Restore
                       </button>
+                      {offsiteConfigured
+                        && snapshot.status === 'ready'
+                        && snapshot.offsite?.status !== 'uploaded'
+                        && snapshot.offsite?.status !== 'pending'
+                        && snapshot.offsite?.status !== 'uploading' && (
+                          <button
+                            type="button"
+                            onClick={() => handleUploadOffsite(snapshot)}
+                            disabled={uploadOffsite.isPending}
+                            className="p-1.5 text-zinc-500 hover:text-sky-300 rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                            title={snapshot.offsite?.status === 'failed'
+                              ? 'Retry offsite upload'
+                              : 'Upload snapshot to offsite storage'}
+                          >
+                            <UploadCloud size={14} />
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => {

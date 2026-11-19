@@ -6,6 +6,8 @@ import {
   SnapshotService,
 } from '../../../application/snapshots/SnapshotService';
 import { SnapshotPolicyService } from '../../../application/snapshots/SnapshotPolicyService';
+import { getOffsiteBackupService } from '../../../application/offsite/OffsiteBackupService';
+import { isOffsiteConfigured } from '../../../application/settings/OffsiteBackupSettingsService';
 import { getMilestones } from '../../../application/snapshots/snapshot-schedule';
 import { DatabaseSnapshot } from '../../../domain/entities/DatabaseSnapshot';
 import { AuditService } from '../../../application/audit/AuditService';
@@ -23,6 +25,12 @@ import { resolveEffectiveDatabaseType } from '../../../application/databases/dat
 
 function presentSnapshot(snapshot: DatabaseSnapshot) {
   const artifacts = getSnapshotArtifacts(snapshot);
+  const offsite = snapshot.metadata?.offsite as {
+    status?: string;
+    uploadedAt?: string;
+    attempts?: number;
+    lastError?: string;
+  } | undefined;
   return {
     id: snapshot.id,
     databaseId: snapshot.databaseId,
@@ -35,6 +43,14 @@ function presentSnapshot(snapshot: DatabaseSnapshot) {
     totalSizeBytes: artifacts.totalBytes,
     downloadFormats: artifacts.downloadFormats,
     warning: artifacts.warning,
+    offsite: offsite
+      ? {
+        status: offsite.status || 'pending',
+        uploadedAt: offsite.uploadedAt,
+        attempts: offsite.attempts,
+        lastError: offsite.lastError,
+      }
+      : null,
     checksumSha256: snapshot.checksumSha256,
     milestones: getMilestones(snapshot),
     takenAt: snapshot.takenAt,
@@ -65,6 +81,7 @@ export default async function snapshotRoutes(app: FastifyInstance) {
       });
       return reply.send({
         ...result,
+        offsiteConfigured: isOffsiteConfigured(),
         snapshots: result.snapshots.map(presentSnapshot),
       });
     } catch (error) {
@@ -166,6 +183,35 @@ export default async function snapshotRoutes(app: FastifyInstance) {
       });
     } catch (error: any) {
       return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to restore snapshot' });
+    }
+  });
+
+  app.post('/databases/:id/snapshots/:snapshotId/offsite', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id, snapshotId } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    try {
+      const snapshot = await snapshotService.getSnapshot(id, snapshotId);
+      const result = await getOffsiteBackupService().enqueue(snapshot.id, {
+        force: true,
+        manual: true,
+      });
+      if (!result.queued) {
+        const reason = result.reason === 'disabled'
+          ? 'offsite backups are not configured'
+          : result.reason === 'not-ready'
+            ? 'snapshot is not ready'
+            : 'snapshot could not be queued for offsite upload';
+        return reply.status(409).send({ error: reason });
+      }
+      const current = await snapshotService.getSnapshot(id, snapshotId);
+      return reply.status(202).send({ snapshot: presentSnapshot(current), queued: true });
+    } catch (error: any) {
+      return reply.status(error?.statusCode || 500).send({
+        error: error?.message || 'failed to queue offsite upload',
+      });
     }
   });
 

@@ -96,6 +96,12 @@ export type DatabaseSnapshot = {
   totalSizeBytes?: number;
   downloadFormats?: Array<'db' | 'sql'>;
   warning?: string;
+  offsite?: {
+    status: 'disabled' | 'pending' | 'uploading' | 'uploaded' | 'failed';
+    uploadedAt?: string;
+    attempts?: number;
+    lastError?: string;
+  } | null;
   checksumSha256?: string;
   milestones?: Partial<Record<'daily' | 'weekly' | 'monthly', string>>;
   takenAt: string;
@@ -118,6 +124,7 @@ export type SnapshotListResponse = {
   snapshots: DatabaseSnapshot[];
   totalSizeBytes: number;
   hasMore: boolean;
+  offsiteConfigured?: boolean;
   policy: SnapshotEnginePolicy;
 };
 
@@ -320,6 +327,21 @@ export function useCreateSnapshot(databaseId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['snapshots', databaseId] });
       queryClient.invalidateQueries({ queryKey: ['metrics'] });
+    },
+  });
+}
+
+export function useUploadSnapshotOffsite(databaseId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (snapshotId: string) => {
+      return apiRequest<{ snapshot: DatabaseSnapshot; queued: boolean }>(
+        `/databases/${databaseId}/snapshots/${snapshotId}/offsite`,
+        { method: 'POST' },
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['snapshots', databaseId] });
     },
   });
 }

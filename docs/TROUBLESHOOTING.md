@@ -451,6 +451,30 @@ If a `.db` restore fails but the raw `.sql` is retained (`SNAPSHOT_LIBSQL_ARTIFA
 retry with `"artifactFormat": "sql"`. If neither exists, the snapshot cannot be
 restored. Restoring always creates a new database; the original is not modified.
 
+## Offsite upload fails
+
+Check **Settings → Offsite Backups**:
+
+- The toggle is enabled and the status says **Enabled**.
+- Endpoint is the R2 S3 endpoint, not the bucket URL:
+  `https://<account-id>.r2.cloudflarestorage.com`.
+- Bucket exists, is private, and the token is scoped to it with Object Read &
+  Write.
+- Region is `auto` for R2.
+- **Test connection** returns OK. A `403` usually means the token is missing
+  list/object permissions; `404` usually means the bucket name is wrong.
+- The backend can reach the endpoint over HTTPS (outbound 443). Private/loopback
+  endpoints are rejected unless `SNAPSHOT_OFFSITE_ALLOW_PRIVATE_ENDPOINT=true`.
+- Disk/local snapshot still exists. If it was pruned, the upload cannot proceed;
+  create a new snapshot.
+- The panel shows `lastError`; failed uploads retry with backoff up to 10 times.
+- A failed offsite upload does **not** invalidate the local snapshot. Restore
+  locally while the bucket issue is fixed.
+
+To backfill old snapshots use **Sync pending** with **Include existing snapshots**
+or `POST /settings/offsite-backup/sync` with
+`{ "includeExisting": true, "limit": 25 }`.
+
 ## libsql connection fails
 
 Check:

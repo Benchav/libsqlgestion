@@ -7,6 +7,8 @@ import { bootstrapSecurityCatalog } from './application/auth/auth.bootstrap';
 import { DiscoveryService } from './application/databases/DiscoveryService';
 import { DatabaseService } from './application/databases/DatabaseService';
 import { bootstrapPlatformSettings } from './application/settings/PlatformSettingsService';
+import { bootstrapOffsiteBackupSettings } from './application/settings/OffsiteBackupSettingsService';
+import { getOffsiteBackupService } from './application/offsite/OffsiteBackupService';
 import { ConnectionPool } from './infrastructure/db/ConnectionPool';
 import { LibsqlNamespaceService } from './infrastructure/libsql/LibsqlNamespaceService';
 import { SnapshotScheduler } from './application/snapshots/SnapshotScheduler';
@@ -19,6 +21,7 @@ const start = async () => {
   await AppDataSource.runMigrations();
   await bootstrapSecurityCatalog();
   await bootstrapPlatformSettings();
+  await bootstrapOffsiteBackupSettings();
 
   const namespaceService = new LibsqlNamespaceService();
   if (namespaceService.isEnabled()) {
@@ -71,6 +74,13 @@ const start = async () => {
     console.warn('[main] Could not start snapshot scheduler:', error?.message || error);
   }
 
+  const offsiteBackupService = getOffsiteBackupService();
+  try {
+    await offsiteBackupService.start();
+  } catch (error: any) {
+    console.warn('[main] Could not start offsite backup service:', error?.message || error);
+  }
+
   const runtimeHealthMonitor = new RuntimeHealthMonitor();
   try {
     await runtimeHealthMonitor.start();
@@ -88,6 +98,7 @@ const start = async () => {
     try {
       storageSampler.stop();
       await analyticsCollector.stop();
+      await offsiteBackupService.stop();
       await snapshotScheduler.stop();
       await runtimeHealthMonitor.stop();
       const pool = ConnectionPool.getInstance();

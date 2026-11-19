@@ -30,6 +30,74 @@ Existing `.sql` snapshots remain downloadable and restorable in every mode.
 Artifact names, checksums and sizes are stored in the existing snapshot
 `metadata` JSON column, so switching modes requires no database migration.
 
+### 1.1 Offsite copies (S3 / Cloudflare R2)
+
+Local snapshots live on the same VPS and are **not** disaster recovery. The
+panel can copy finished snapshots to an S3-compatible bucket:
+
+**Settings → Offsite Backups (S3 / Cloudflare R2)**
+
+Cloudflare R2 setup:
+
+1. Create a **private** bucket, for example `libsqlite-backups`.
+2. Create an R2 API token scoped to that bucket with Object Read & Write.
+3. Copy the Access Key ID, Secret Access Key and the S3 endpoint
+   `https://<account-id>.r2.cloudflarestorage.com`.
+4. In the panel set endpoint, bucket, region `auto`, a prefix such as `prod`,
+   the credentials, and **Save offsite settings**.
+5. Press **Test connection**.
+6. Upload one manual snapshot and validate the object and restore before
+   enabling automatic uploads.
+
+The access key is encrypted with `MASTER_KEY` before it is stored. It is never
+returned by the API, written to audit logs or exposed to the frontend. Keep
+`master.key`/`MASTER_KEY` in the same backup set as `control.db`; losing it makes
+the stored S3 secret unreadable and requires re-entering it in the panel.
+
+Upload policies:
+
+- `daily` (default for R2 free): daily milestone snapshots plus manual/pinned
+  snapshots. Keeps the free tier comfortable.
+- `all`: every ready snapshot. Roughly 4–5 GB for the current hourly tiering;
+  monitor growth.
+- `manual`: only snapshots explicitly queued from the panel.
+
+`SNAPSHOT_OFFSITE_REQUIRED=true` keeps local snapshots out of normal pruning
+until their offsite upload succeeds. Use it only when disk capacity is monitored;
+a persistent bucket failure can make the local snapshot set grow beyond its
+retention policy. The default is `false`, where failed uploads are visible but do
+not block local retention.
+
+Remote objects are written under:
+
+```text
+<prefix>/<projectId>/<databaseId>/<snapshotId>/<artifact>
+<prefix>/<projectId>/<databaseId>/<snapshotId>/manifest.json
+```
+
+The manifest is uploaded last and records checksums, sizes, format, pinned
+state and artifact list. Downloads and restores must verify that checksum before
+using the file. Remote retention removes unpinned groups older than
+`SNAPSHOT_OFFSITE_RETENTION_DAYS`; deleting or pruning a local snapshot does
+**not** delete the remote copy. Pinned/manual snapshots are protected from
+automatic remote retention.
+
+Operational rules:
+
+- The local snapshot remains the primary restore path.
+- An R2 outage never blocks snapshot creation; upload failures are shown in the
+  panel and retried with backoff.
+- The uploader holds the same snapshot lease as downloads/restores, so local
+  retention cannot unlink a file mid-upload.
+- Keep the bucket private. The backend talks to R2; the browser never does.
+- Configure an R2 lifecycle rule to abort incomplete multipart uploads after
+  one day; a killed backend cannot always abort its own multipart parts.
+- R2 free-tier limits (storage/operations) are not an SLA. Verify current
+  limits and monitor bucket growth.
+
+The optional `SNAPSHOT_OFFSITE_*` environment variables are bootstrap defaults
+for headless installs. Values saved in the panel take precedence.
+
 > **Image rollback caveat.** Rolling back to a backend release that predates
 > SQLite exports is only safe while snapshots keep a `.sql` artifact. An older
 > release treats a `.db` libSQL snapshot as a local SQLite file and copies it
@@ -117,6 +185,17 @@ synchronous while the artifact is imported/replayed and the new primary is
 provisioned. Allow enough proxy/request timeout for the largest database, or
 perform the restore from a maintenance window. The live primary is never
 overwritten.
+
+If the local VPS was lost, recover from the offsite bucket:
+
+1. Download the chosen object from R2 to the backend host (AWS CLI, rclone or
+   the S3 API).
+2. Download its `manifest.json` and compare the object SHA-256 with the manifest.
+3. Run `PRAGMA integrity_check` on the `.db` copy.
+4. Import/restore it through the same procedure used for a local snapshot.
+
+Never stream an object directly from R2 into the restore path without a local
+copy and checksum verification.
 
 For a production incident:
 
@@ -312,6 +391,17 @@ SNAPSHOT_LIBSQL_VERIFY_REPLAY=true
 SNAPSHOT_LIBSQL_ARTIFACT=auto
 SNAPSHOT_LIBSQL_MAX_BYTES=10737418240
 SNAPSHOT_LIBSQL_DUMP_TIMEOUT_MS=900000
+
+# Optional bootstrap defaults; the panel overrides them.
+SNAPSHOT_OFFSITE_ENABLED=false
+SNAPSHOT_OFFSITE_ENDPOINT=
+SNAPSHOT_OFFSITE_BUCKET=
+SNAPSHOT_OFFSITE_REGION=auto
+SNAPSHOT_OFFSITE_PREFIX=libsqlite
+SNAPSHOT_OFFSITE_UPLOAD_MODE=daily
+SNAPSHOT_OFFSITE_ARTIFACTS=db
+SNAPSHOT_OFFSITE_RETENTION_DAYS=30
+SNAPSHOT_OFFSITE_TIMEOUT_MS=300000
 
 SCHEMA_CACHE_TTL_MS=60000
 SCHEMA_CACHE_MAX_ENTRIES=200

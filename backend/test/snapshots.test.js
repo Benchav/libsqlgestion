@@ -33,6 +33,10 @@ const { DiscoveryService } = require('../dist/application/databases/DiscoverySer
 const { Project } = require('../dist/domain/entities/Project');
 const { Database } = require('../dist/domain/entities/Database');
 const { DatabaseSnapshot } = require('../dist/domain/entities/DatabaseSnapshot');
+const { PlatformSetting } = require('../dist/domain/entities/PlatformSetting');
+const { decrypt } = require('../dist/infrastructure/crypto');
+const { getOffsiteBackupService } = require('../dist/application/offsite/OffsiteBackupService');
+const { updateOffsiteBackupSettings } = require('../dist/application/settings/OffsiteBackupSettingsService');
 const { User } = require('../dist/domain/entities/User');
 const { SqliteClient } = require('../dist/infrastructure/sqlite/SqliteClient');
 const { buildServer } = require('../dist/server');
@@ -982,6 +986,241 @@ test.describe('Snapshots and restore points', () => {
       stubs.restore();
       if (previousArtifact === undefined) delete process.env.SNAPSHOT_LIBSQL_ARTIFACT;
       else process.env.SNAPSHOT_LIBSQL_ARTIFACT = previousArtifact;
+    }
+  });
+
+  test('stores offsite settings with an encrypted secret and never returns it', async () => {
+    const putRes = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/offsite-backup',
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+      payload: {
+        enabled: true,
+        endpoint: 'https://example.r2.cloudflarestorage.com',
+        bucket: 'snapshots-test',
+        region: 'auto',
+        prefix: 'prod',
+        accessKeyId: 'test-access-key',
+        secretAccessKey: 'test-secret-value',
+        uploadMode: 'daily',
+        artifacts: 'db',
+        retentionDays: 30,
+        timeoutMs: 300000,
+      },
+    });
+    assert.equal(putRes.statusCode, 200, putRes.payload);
+    const settings = JSON.parse(putRes.payload).settings;
+    assert.equal(settings.enabled, true);
+    assert.equal(settings.secretAccessKeyConfigured, true);
+    assert.equal(settings.secretSource, 'panel');
+    assert.equal(Object.prototype.hasOwnProperty.call(settings, 'secretAccessKey'), false);
+
+    const stored = await AppDataSource.getRepository(PlatformSetting)
+      .findOneBy({ key: 'SNAPSHOT_OFFSITE_SECRET_ACCESS_KEY_ENC' });
+    assert.ok(stored?.value);
+    assert.notEqual(stored.value, 'test-secret-value');
+    assert.equal(decrypt(stored.value), 'test-secret-value');
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/settings/offsite-backup',
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(getRes.statusCode, 200, getRes.payload);
+    const body = JSON.parse(getRes.payload);
+    assert.equal(body.settings.secretSource, 'panel');
+    assert.equal(Object.prototype.hasOwnProperty.call(body.settings, 'secretAccessKey'), false);
+    assert.equal(body.status.configured, true);
+
+    const originalTest = getOffsiteBackupService().testConnection;
+    getOffsiteBackupService().testConnection = async () => ({
+      ok: true,
+      latencyMs: 12,
+      bucket: 'snapshots-test',
+      endpoint: 'https://example.r2.cloudflarestorage.com',
+      message: 'stub connection OK',
+    });
+    try {
+      const testRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/settings/offsite-backup/test',
+        headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+        payload: {},
+      });
+      assert.equal(testRes.statusCode, 200, testRes.payload);
+      assert.equal(JSON.parse(testRes.payload).latencyMs, 12);
+    } finally {
+      getOffsiteBackupService().testConnection = originalTest;
+    }
+
+    const disableRes = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/offsite-backup',
+      headers: { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken },
+      payload: {
+        enabled: false,
+        clearSecret: true,
+      },
+    });
+    assert.equal(disableRes.statusCode, 200, disableRes.payload);
+    const disabled = JSON.parse(disableRes.payload).settings;
+    assert.equal(disabled.enabled, false);
+    assert.equal(disabled.secretAccessKeyConfigured, false);
+    assert.equal(disabled.secretSource, 'none');
+  });
+
+  test('uploads a finalized snapshot and writes a recoverable manifest', async () => {
+    const service = getOffsiteBackupService();
+    const originalFactory = service.storeFactory;
+    const uploads = [];
+    const deleted = [];
+    let manifest = null;
+    const fakeStore = {
+      testConnection: async () => ({ latencyMs: 1 }),
+      uploadFile: async (input) => {
+        uploads.push(input);
+      },
+      putJson: async (key, body) => {
+        manifest = { key, body };
+      },
+      getJson: async () => {
+        throw new Error('not used');
+      },
+      downloadToFile: async () => {
+        throw new Error('not used');
+      },
+      listObjects: async () => [],
+      deleteObject: async (key) => {
+        deleted.push(key);
+      },
+    };
+    service.storeFactory = () => fakeStore;
+    let snapshot = null;
+
+    try {
+      await updateOffsiteBackupSettings({
+        enabled: true,
+        endpoint: 'https://example.r2.cloudflarestorage.com',
+        bucket: 'snapshots-test',
+        region: 'auto',
+        prefix: 'prod',
+        accessKeyId: 'test-access-key',
+        secretAccessKey: 'test-secret-value',
+        uploadMode: 'all',
+        artifacts: 'db',
+        retentionDays: 30,
+        timeoutMs: 30000,
+      });
+      await service.start();
+
+      snapshot = await snapshotService.createSnapshot(sourceDatabase.id, {
+        reason: 'manual',
+        pinned: true,
+      });
+
+      const repo = AppDataSource.getRepository(DatabaseSnapshot);
+      const uploaded = await (async () => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 8000) {
+          const row = await repo.findOneBy({ id: snapshot.id });
+          if (row?.metadata?.offsite?.status === 'uploaded') return row;
+          if (row?.metadata?.offsite?.status === 'failed') {
+            throw new Error(`offsite upload failed: ${row.metadata.offsite.lastError}`);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error('timed out waiting for offsite upload');
+      })();
+
+      assert.equal(uploaded.metadata.offsite.status, 'uploaded');
+      assert.equal(uploads.length, 1);
+      assert.match(uploads[0].key, /^prod\/.+\/.+\/.+\/.+\.db$/);
+      assert.equal(uploads[0].metadata.sha256, snapshot.checksumSha256);
+      assert.ok(manifest);
+      assert.match(manifest.key, /\/manifest\.json$/);
+      assert.equal(manifest.body.snapshotId, snapshot.id);
+      assert.equal(manifest.body.pinned, true);
+      assert.equal(manifest.body.artifacts.length, 1);
+      assert.equal(manifest.body.artifacts[0].kind, 'db');
+      assert.equal(manifest.body.artifacts[0].sha256, snapshot.checksumSha256);
+
+      // The uploader releases its lease in a finally block after persisting the
+      // uploaded state. Poll briefly so the test does not race that final step.
+      let deletedLocally = false;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        try {
+          await snapshotService.deleteSnapshot(sourceDatabase.id, snapshot.id);
+          deletedLocally = true;
+          break;
+        } catch (error) {
+          if (error?.statusCode !== 409) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      assert.equal(deletedLocally, true);
+      assert.equal(deleted.length, 0, 'local deletion must not delete the offsite copy');
+    } finally {
+      await service.stop();
+      service.storeFactory = originalFactory;
+      await updateOffsiteBackupSettings({ enabled: false, clearSecret: true }).catch(() => undefined);
+      if (snapshot) {
+        await snapshotService.deleteSnapshot(sourceDatabase.id, snapshot.id).catch(() => undefined);
+      }
+    }
+  });
+
+  test('remote retention deletes old unpinned groups but keeps pinned ones', async () => {
+    const service = getOffsiteBackupService();
+    const originalFactory = service.storeFactory;
+    const deleted = [];
+    const oldManifest = 'prod/db-1/snap-1/manifest.json';
+    const pinnedManifest = 'prod/db-1/snap-2/manifest.json';
+    const fakeStore = {
+      testConnection: async () => ({ latencyMs: 1 }),
+      uploadFile: async () => undefined,
+      putJson: async () => undefined,
+      getJson: async (key) => ({
+        schemaVersion: 1,
+        pinned: key === pinnedManifest,
+        artifacts: [],
+      }),
+      downloadToFile: async () => undefined,
+      listObjects: async () => [
+        { key: oldManifest, lastModified: new Date('2025-01-01T00:00:00Z') },
+        { key: 'prod/db-1/snap-1/data.db', lastModified: new Date('2025-01-01T00:00:00Z') },
+        { key: pinnedManifest, lastModified: new Date('2025-01-01T00:00:00Z') },
+        { key: 'prod/db-1/snap-2/data.db', lastModified: new Date('2025-01-01T00:00:00Z') },
+        { key: 'prod/db-1/snap-3/manifest.json', lastModified: new Date() },
+      ],
+      deleteObject: async (key) => {
+        deleted.push(key);
+      },
+    };
+    service.storeFactory = () => fakeStore;
+
+    try {
+      await updateOffsiteBackupSettings({
+        enabled: true,
+        endpoint: 'https://example.r2.cloudflarestorage.com',
+        bucket: 'snapshots-test',
+        region: 'auto',
+        prefix: 'prod',
+        accessKeyId: 'test-access-key',
+        secretAccessKey: 'test-secret-value',
+        uploadMode: 'daily',
+        artifacts: 'db',
+        retentionDays: 30,
+        timeoutMs: 30000,
+      });
+      const result = await service.runRemoteRetention();
+      assert.equal(result.deleted, 1);
+      assert.ok(deleted.includes(oldManifest));
+      assert.ok(deleted.includes('prod/db-1/snap-1/data.db'));
+      assert.equal(deleted.includes(pinnedManifest), false);
+      assert.equal(deleted.includes('prod/db-1/snap-2/data.db'), false);
+    } finally {
+      service.storeFactory = originalFactory;
+      await updateOffsiteBackupSettings({ enabled: false, clearSecret: true }).catch(() => undefined);
     }
   });
 });

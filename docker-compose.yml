@@ -36,23 +36,16 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
-      # Namespace routing uses its own domain so it never captures the root
-      # domain used by the apps or by single-database libSQL containers.
-      - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${SQLD_PUBLIC_DOMAIN:-localhost}`)"
+      # Base router is localhost-only. Public namespace routing is enabled by
+      # an explicit Coolify domain/override with literal values; do not rely on
+      # ${VAR:-default} interpolation inside Traefik labels under Coolify.
+      - "traefik.http.routers.sqld.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.localhost`)"
       # Keep the shared wildcard below dedicated runtime/namespace routers.
       - "traefik.http.routers.sqld.priority=10"
       - "traefik.http.services.sqld.loadbalancer.server.port=8080"
-      # Exact namespace host used by embedded replicas. The first DNS label
-      # must match the namespace (for example erp-db.data.example.com).
-      # Traefik can issue a normal per-host Let's Encrypt certificate here.
-      # For multiple namespaces, add one router per host or use a wildcard
-      # certificate instead of this single exact router.
-      - "traefik.http.routers.sqld-namespace.rule=Host(`${LIBSQL_NAMESPACE_HOST:-localhost}`)"
-      - "traefik.http.routers.sqld-namespace.priority=200"
-      - "traefik.http.routers.sqld-namespace.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
-      - "traefik.http.routers.sqld-namespace.tls=true"
-      - "traefik.http.routers.sqld-namespace.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
-      - "traefik.http.routers.sqld-namespace.service=sqld"
+      # Exact namespace routing is configured explicitly in Coolify or in an
+      # override file with literal values. Do not put `${VAR:-default}` in a
+      # Traefik label: Coolify may pass it through literally.
 
   # Keep the auth bootstrap script inside the image. Bind-mounting it from the
   # repo can fail under Coolify because compose runs from /artifacts inside the

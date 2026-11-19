@@ -83,7 +83,7 @@ LIBSQL_NAMESPACE_HOST=
 
 # Traefik TLS for dedicated runtimes or the exact shared-namespace router
 TRAEFIK_CERT_RESOLVER=
-TRAEFIK_ENTRYPOINT=websecure
+TRAEFIK_ENTRYPOINT=https
 # Docker network shared by backend, Traefik and runtime containers
 LIBSQL_RUNTIME_NETWORK=coolify
 LIBSQL_BACKEND_CONTAINER_ID=

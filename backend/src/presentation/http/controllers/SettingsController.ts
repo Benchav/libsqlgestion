@@ -1,9 +1,9 @@
 import crypto from 'crypto';
-import dns from 'dns';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ensurePermission } from '../guards';
 import { getPublicDatabaseSettings, updatePublicDatabaseSettings } from '../../../application/settings/PlatformSettingsService';
 import { publicDatabaseSettingsSchema, parseAndValidate } from '../../../types/validations';
+import { resolvePublicHost } from '../../../infrastructure/network/public-dns';
 
 function normalizeDomain(value: unknown) {
   return String(value || '')
@@ -21,98 +21,6 @@ function isValidDomain(domain: string) {
     && !domain.includes('..')
     && !domain.startsWith('-')
     && !domain.endsWith('-');
-}
-
-async function queryDoh(probe: string, type: 'A' | 'AAAA'): Promise<string[] | null> {
-  const response = await fetch(
-    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(probe)}&type=${type}`,
-    { headers: { Accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000) },
-  );
-  if (!response.ok) {
-    throw new Error(`DoH request failed with ${response.status}`);
-  }
-
-  const payload = await response.json() as {
-    Status?: number;
-    Answer?: Array<{ type?: number; data?: string }>;
-  };
-
-  if (payload.Status === 3) {
-    return null;
-  }
-  if (payload.Status !== 0) {
-    throw new Error(`DoH returned status ${payload.Status}`);
-  }
-
-  const expectedType = type === 'A' ? 1 : 28;
-  return (payload.Answer || [])
-    .filter((entry) => entry.type === expectedType && typeof entry.data === 'string')
-    .map((entry) => entry.data as string);
-}
-
-async function resolvePublicProbe(probe: string) {
-  try {
-    const ipv4 = await queryDoh(probe, 'A');
-    if (ipv4 === null) {
-      return { addresses: [] as string[], resolver: 'doh' as const, notFound: true };
-    }
-    if (ipv4.length > 0) {
-      return { addresses: ipv4, resolver: 'doh' as const };
-    }
-
-    const ipv6 = await queryDoh(probe, 'AAAA');
-    if (ipv6 === null) {
-      return { addresses: [] as string[], resolver: 'doh' as const, notFound: true };
-    }
-    if (ipv6.length > 0) {
-      return { addresses: ipv6, resolver: 'doh' as const };
-    }
-
-    return { addresses: [] as string[], resolver: 'doh' as const, notFound: true };
-  } catch {
-    // Fall through to DNS resolvers if HTTPS/DoH is unavailable.
-  }
-
-  const publicResolver = new dns.promises.Resolver();
-  publicResolver.setServers(['1.1.1.1', '8.8.8.8']);
-
-  let publicError: any = null;
-  try {
-    const addresses = await publicResolver.resolve4(probe);
-    return { addresses, resolver: 'public' as const };
-  } catch (error: any) {
-    publicError = error;
-  }
-
-  try {
-    const addresses = await publicResolver.resolve6(probe);
-    return { addresses, resolver: 'public' as const };
-  } catch (error: any) {
-    publicError = error;
-  }
-
-  const publicCode = String(publicError?.code || '');
-  if (publicCode === 'ENOTFOUND' || publicCode === 'ENODATA') {
-    return { addresses: [] as string[], resolver: 'public' as const, notFound: true };
-  }
-
-  // The container may not be allowed to reach 1.1.1.1/8.8.8.8. Fall back to
-  // the system resolver, but mark the result as less authoritative.
-  try {
-    const result = await dns.promises.lookup(probe, { all: true });
-    return {
-      addresses: result.map((entry) => entry.address),
-      resolver: 'system' as const,
-      warning: 'The public DNS resolver was unreachable; this result came from the container resolver.',
-    };
-  } catch (systemError: any) {
-    return {
-      addresses: [] as string[],
-      resolver: 'system' as const,
-      notFound: ['ENOTFOUND', 'ENODATA'].includes(String(systemError?.code || '')),
-      error: publicError || systemError,
-    };
-  }
 }
 
 export default async function settingsRoutes(app: FastifyInstance) {
@@ -135,7 +43,7 @@ export default async function settingsRoutes(app: FastifyInstance) {
 
     const probe = `probe-${crypto.randomBytes(4).toString('hex')}.${domain}`;
     const record = `*.${domain}`;
-    const result = await resolvePublicProbe(probe);
+    const result = await resolvePublicHost(probe);
 
     if (result.notFound) {
       return reply.send({
@@ -155,7 +63,7 @@ export default async function settingsRoutes(app: FastifyInstance) {
         probe,
         record,
         resolver: result.resolver,
-        error: `Could not verify ${record}: ${result.error?.message || result.error || 'DNS lookup failed.'}`,
+        error: `Could not verify ${record}: ${(result.error as any)?.message || String(result.error || 'DNS lookup failed.')}`,
       });
     }
 

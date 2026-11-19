@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import dns from 'dns';
 import fs from 'fs';
 import http from 'http';
 import os from 'os';
@@ -7,6 +6,7 @@ import path from 'path';
 import { Database } from '../../domain/entities/Database';
 import { getPublicDatabaseSettings } from '../../application/settings/PlatformSettingsService';
 import { resolveEffectiveDatabaseType } from '../../application/databases/database-runtime';
+import { resolvePublicHost } from '../network/public-dns';
 
 type DockerJson = Record<string, any>;
 
@@ -524,10 +524,11 @@ export class LibsqlRuntimeService {
 
       let dnsError: string | undefined;
       if (publicHost) {
-        try {
-          await dns.promises.lookup(publicHost);
-        } catch (error: any) {
-          dnsError = `DNS does not resolve for ${publicHost}: ${error?.code || error?.message || 'NXDOMAIN'}`;
+        const dnsResult = await resolvePublicHost(publicHost);
+        if (dnsResult.notFound) {
+          dnsError = `DNS does not resolve for ${publicHost}: NXDOMAIN`;
+        } else if (dnsResult.addresses.length === 0 && dnsResult.error) {
+          dnsError = `DNS lookup failed for ${publicHost}: ${(dnsResult.error as any)?.message || dnsResult.error}`;
         }
       }
 

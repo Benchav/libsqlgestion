@@ -12,6 +12,10 @@
 #     *.data.example.com (HTTP-01 cannot issue wildcard certificates)
 #   - LIBSQL_NAMESPACE_PUBLIC_ENABLED=true in the backend
 #
+# Some Coolify versions pass ${VAR:-default} through literally inside Traefik
+# labels. If that happens, replace the variables below with literal values in
+# the Coolify service definition.
+#
 # Run:
 #   docker compose -f docker-compose.yml -f docker-compose.wildcard.yml up -d
 #
@@ -20,7 +24,7 @@
 services:
   sqld:
     labels:
-      - "traefik.http.routers.sqld.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.sqld.entrypoints=${TRAEFIK_ENTRYPOINT:-https}"
       - "traefik.http.routers.sqld.tls=true"
       - "traefik.http.routers.sqld.tls.certresolver=${TRAEFIK_WILDCARD_CERT_RESOLVER:-letsencrypt}"
       - "traefik.http.routers.sqld.tls.domains[0].main=${SQLD_PUBLIC_DOMAIN}"

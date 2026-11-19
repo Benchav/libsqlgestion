@@ -56,13 +56,14 @@ SQLD_PUBLIC_DOMAIN=
 # TLS labels applied to dynamically created dedicated runtimes.
 # Use the resolver name configured in your Traefik/Coolify instance.
 TRAEFIK_CERT_RESOLVER=letsencrypt
-TRAEFIK_ENTRYPOINT=websecure
+TRAEFIK_ENTRYPOINT=https
 ```
 
 - `DATABASE_PUBLIC_DOMAIN` is the parent used for the runtime URL (`erp-db.example.com`).
 - Keep `SQLD_PUBLIC_DOMAIN` empty when using per-database runtimes so the namespace wildcard does not capture other app subdomains.
 - `LIBSQL_PRIMARY_MODE=runtime` makes new databases and imports provision a dedicated `libsql-server`.
 - `LIBSQL_RUNTIME_NETWORK` must be the network shared by the backend and Traefik (usually `coolify`). Without it, the runtime cannot be reached by container name or routed publicly; the backend now fails provisioning instead of creating it on the default `bridge` network.
+- Coolify names its Traefik entrypoints `http` and `https`. Use `TRAEFIK_ENTRYPOINT=https`; `websecure` only matches a plain Traefik installation configured with that entrypoint name.
 - `LIBSQL_PROVISION_ASYNC=false` makes the import wait for the container and return the real runtime JWT. If you keep it `true`, use **Rotate Token** after the database becomes active.
 - Imports wait only for the internal/backend URL. The public route is checked in the background, so DNS/TLS propagation no longer blocks the JWT response.
 

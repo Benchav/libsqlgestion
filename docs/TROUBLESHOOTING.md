@@ -114,10 +114,13 @@ Fix:
 1. Set `LIBSQL_RUNTIME_NETWORK` to that network (usually `coolify`). Leave it
    empty only if automatic detection works; the backend prefers a network
    shared with the proxy and refuses to create runtimes on `bridge`.
-2. Redeploy the backend so the new code and variable are active.
-3. Rotate the runtime with **Create new token**. Existing containers keep their
+2. Set `TRAEFIK_CERT_RESOLVER=letsencrypt` and, on Coolify,
+   `TRAEFIK_ENTRYPOINT=https`. Coolify names its Traefik entrypoints `http` and
+   `https`; `websecure` is only for a plain Traefik using that name.
+3. Redeploy the backend so the new code and variable are active.
+4. Rotate the runtime with **Create new token**. Existing containers keep their
    old network and labels until they are recreated.
-4. Re-check `https://<subdomain>.<wildcard-domain>` and rerun the embedded
+5. Re-check `https://<subdomain>.<wildcard-domain>` and rerun the embedded
    replica test.
 
 If you do not want to rotate yet, you can attach the existing container

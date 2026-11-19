@@ -11,7 +11,7 @@ import { SqlRunner } from '../../../../components/studio/SqlRunner';
 import { ChevronRight, X, AlertTriangle, Pencil, Plus, Trash2, Edit3, Settings2 } from 'lucide-react';
 
 type ColumnMeta = { cid: number; name: string; type: string; notnull: number; pk: number };
-type TableSchema = { table: string; kind: 'table' | 'view'; rowCount: number; columns: ColumnMeta[]; foreignKeys: unknown[] };
+type TableSchema = { table: string; kind: 'table' | 'view'; rowCount: number | null; columns: ColumnMeta[]; foreignKeys: unknown[] };
 type DatabaseInfo = { id: string; name: string; type: string; status: string };
 type RowMode = 'insert' | 'edit';
 type MenuTarget =
@@ -133,10 +133,12 @@ export default function StudioPage() {
   }, [dbId]);
 
   // Load schema
-  const loadSchema = useCallback(async () => {
+  const loadSchema = useCallback(async (force = false) => {
     setSchemaLoading(true);
     try {
-      const result = await apiRequest<{ tables: TableSchema[]; views: TableSchema[] }>(`/databases/${dbId}/schema`);
+      const result = await apiRequest<{ tables: TableSchema[]; views: TableSchema[] }>(
+        `/databases/${dbId}/schema?counts=0${force ? '&refresh=1' : ''}`,
+      );
       const combined = [...(result.tables || []), ...(result.views || [])];
       setTables(combined);
       const initialGroup = combined.filter((schema) => schema.kind === activeKind);
@@ -169,6 +171,13 @@ export default function StudioPage() {
         rowCountCache.current.set(activeTable, count);
       }
       setTotalRows(count);
+      setTables((previous) => {
+        const target = previous.find((schema) => schema.table === activeTable);
+        if (!target || target.rowCount === count) return previous;
+        return previous.map((schema) => (
+          schema.table === activeTable ? { ...schema, rowCount: count } : schema
+        ));
+      });
 
       const tableSchema = tables.find((schema) => schema.table === activeTable);
       const primaryKey = tableSchema?.columns.find((column) => column.pk === 1)?.name;
@@ -763,7 +772,7 @@ export default function StudioPage() {
             onSelectTable={handleSelectTable}
             onSelectKind={handleSelectKind}
             onSelectTab={setActiveTab}
-            onRefresh={loadSchema}
+            onRefresh={() => loadSchema(true)}
             onTableMenu={(table, event) => openContextMenu(event.clientX, event.clientY, { type: 'table', table })}
             loading={schemaLoading}
           />

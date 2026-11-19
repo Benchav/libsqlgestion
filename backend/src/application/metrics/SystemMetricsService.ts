@@ -30,6 +30,8 @@ export type SystemMetrics = {
   totalRamBytes: number;
   maxRamBytes: number;
   cpuUsagePercent: number;
+  sampledAt: string;
+  cacheTtlMs: number;
   runtimeSummary: {
     publicRuntimeCount: number;
     healthyPublicRuntimeCount: number;
@@ -45,11 +47,64 @@ export type SystemMetrics = {
   databases: DatabaseMetric[];
 };
 
+type MetricsCacheEntry = {
+  at: number;
+  value: SystemMetrics;
+};
+
+let metricsCache: MetricsCacheEntry | null = null;
+let metricsInFlight: Promise<SystemMetrics> | null = null;
+
+function metricsCacheTtlMs() {
+  const parsed = Number(process.env.METRICS_CACHE_TTL_MS || 5000);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 5000;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const concurrency = Math.max(1, Math.min(limit, items.length || 1));
+
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  }));
+
+  return results;
+}
+
 export class SystemMetricsService {
   private databaseRepo = AppDataSource.getRepository(Database);
   private runtimeService = new LibsqlRuntimeService();
 
-  async getMetrics(): Promise<SystemMetrics> {
+  async getMetrics(force = false): Promise<SystemMetrics> {
+    const ttl = metricsCacheTtlMs();
+    if (!force && metricsCache && Date.now() - metricsCache.at < ttl) {
+      return metricsCache.value;
+    }
+    if (metricsInFlight) {
+      return metricsInFlight;
+    }
+
+    metricsInFlight = this.buildMetrics().then((value) => {
+      metricsCache = { at: Date.now(), value };
+      return value;
+    }).finally(() => {
+      metricsInFlight = null;
+    });
+
+    return metricsInFlight;
+  }
+
+  private async buildMetrics(): Promise<SystemMetrics> {
     const databases = await this.databaseRepo.find();
     const pool = ConnectionPool.getInstance();
 
@@ -58,6 +113,7 @@ export class SystemMetricsService {
     let totalRamBytes = process.memoryUsage().rss;
 
     const metrics: DatabaseMetric[] = [];
+    const statsTargets: Array<{ metric: DatabaseMetric; containerId: string }> = [];
     let publicRuntimeCount = 0;
     let healthyPublicRuntimeCount = 0;
     let unhealthyPublicRuntimeCount = 0;
@@ -118,18 +174,14 @@ export class SystemMetricsService {
           ramBytes = 0;
         }
       } else {
-        // LibSQL Docker container
+        // LibSQL Docker container stats are collected after the loop with a
+        // concurrency limit so one slow container cannot serialize the page.
         isRamEstimated = false;
-        if (runtimeMetadata?.containerId) {
-          const stats = await this.runtimeService.getContainerStats(runtimeMetadata.containerId);
-          ramBytes = stats.memoryBytes;
-          totalRamBytes += ramBytes; // Add container memory to total server memory
-        }
       }
 
       totalDiskBytes += diskBytes;
 
-      metrics.push({
+      const metric: DatabaseMetric = {
         id: db.id,
         name: db.name,
         type: db.type,
@@ -140,8 +192,20 @@ export class SystemMetricsService {
         isRamEstimated,
         runtimeProvider: typeof runtimeMetadata?.provider === 'string' ? runtimeMetadata.provider : undefined,
         runtimeHealth,
-      });
+      };
+      metrics.push(metric);
+
+      if (effectiveType === 'libsql' && typeof runtimeMetadata?.containerId === 'string') {
+        statsTargets.push({ metric, containerId: runtimeMetadata.containerId });
+      }
     }
+
+    await mapWithConcurrency(statsTargets, 4, async ({ metric, containerId }) => {
+      const stats = await this.runtimeService.getContainerStats(containerId);
+      metric.ramBytes = stats.memoryBytes;
+      totalRamBytes += stats.memoryBytes;
+      return null;
+    });
 
     // Sort by largest disk/ram
     metrics.sort((a, b) => b.ramBytes - a.ramBytes || b.diskBytes - a.diskBytes);
@@ -156,6 +220,8 @@ export class SystemMetricsService {
       totalRamBytes,
       maxRamBytes,
       cpuUsagePercent,
+      sampledAt: new Date().toISOString(),
+      cacheTtlMs: metricsCacheTtlMs(),
       runtimeSummary: {
         publicRuntimeCount,
         healthyPublicRuntimeCount,

@@ -197,8 +197,8 @@ function policySummary(policy?: DatabaseSnapshotPolicy) {
 }
 
 export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
-  const supported = (database.effectiveType || database.runtimeProvider) === 'sqlite'
-    || database.runtimeProvider === 'local-file';
+  const supported = ['sqlite', 'libsql'].includes(database.effectiveType || '')
+    || ['local-file', 'docker-libsql', 'sqld-namespace'].includes(database.runtimeProvider || '');
 
   const snapshotsQuery = useSnapshots(database.id, supported);
   const policyQuery = useSnapshotPolicy(database.id, supported);
@@ -461,6 +461,16 @@ export function SnapshotsCard({ database, onRestored }: SnapshotsCardProps) {
                         <span className="text-[10px] uppercase tracking-wider text-zinc-500">
                           {reasonLabel(snapshot.reason)}
                         </span>
+                        {snapshot.format === 'libsql-sql-dump' && (
+                          <span
+                            className="rounded border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-300"
+                            title={snapshot.verified
+                              ? 'Logical SQL dump created by the libSQL engine and replay-verified'
+                              : 'Logical SQL dump created by the libSQL engine; structural validation only'}
+                          >
+                            SQL dump{snapshot.verified ? ' · verified' : ''}
+                          </span>
+                        )}
                         {milestoneBadges(snapshot)}
                         {snapshot.pinned && (
                           <span className="text-[10px] uppercase tracking-wider text-zinc-500">Pinned</span>

@@ -125,16 +125,43 @@ export class LibsqlRuntimeService {
     if (!runtime) return null;
 
     const rotateStartedAt = Date.now();
-    // Resolve the network before removing the current runtime. If Docker
+    // Resolve the network before touching the current runtime. If Docker
     // inspection fails, the existing primary must stay online.
     const networkName = await this.resolveBackendNetworkName();
     const authBundle = this.generateAuthBundle();
-    await this.removeContainer(runtime.containerId);
-
     const paths = this.resolvePaths(database, runtime.databasePath);
+    const authPemPath = path.join(this.resolveDatabaseRootDir(runtime.databasePath), 'auth.pem');
+    const previousAuthPem = await fs.promises.readFile(authPemPath, 'utf8').catch(() => null);
+    const previousContainerName = `${runtime.containerName}-previous-${Date.now()}`;
+
     let createdContainerId: string | undefined;
+    let oldRenamed = false;
+    let oldDisconnected = false;
 
     try {
+      // Keep the previous primary recoverable until the replacement accepts
+      // authenticated queries. A failed rotation must not destroy the only
+      // working runtime.
+      await this.renameContainer(runtime.containerId, previousContainerName);
+      oldRenamed = true;
+      await this.stopContainer(runtime.containerId);
+
+      // Remove the stopped container from the routing network so Traefik does
+      // not keep it as a competing service while the replacement starts.
+      try {
+        await this.requestJson(
+          'POST',
+          `/networks/${encodeURIComponent(networkName)}/disconnect`,
+          { Container: runtime.containerId, Force: true },
+        );
+        oldDisconnected = true;
+      } catch (error: any) {
+        console.warn(
+          `[LibsqlRuntimeService] could not disconnect previous runtime from "${networkName}": ` +
+          `${error?.message || error}`,
+        );
+      }
+
       createdContainerId = await this.createAndStartContainer(paths, runtime.databasePath, authBundle.publicKeyPem, networkName);
       const publicPort = await this.waitForPublishedPort(createdContainerId, 8080);
       const internalUrl = this.buildInternalUrl(paths.containerName, publicPort);
@@ -144,6 +171,15 @@ export class LibsqlRuntimeService {
         internalUrl,
         backendUrl,
       }, authBundle.token);
+
+      // The replacement is ready. The old container is no longer needed.
+      await this.removeContainer(runtime.containerId).catch((error: any) => {
+        console.warn(
+          `[LibsqlRuntimeService] rotated runtime but could not remove the previous container ` +
+          `"${previousContainerName}": ${error?.message || error}`,
+        );
+      });
+
       console.log(
         `[LibsqlRuntimeService] rotated ${database.id} in ${Date.now() - rotateStartedAt}ms ` +
         `(network=${networkName}, internal=${readiness.routeHealth.internalOk}, ` +
@@ -168,13 +204,56 @@ export class LibsqlRuntimeService {
           routeHealth: readiness.routeHealth,
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       if (createdContainerId) {
         try { await this.removeContainer(createdContainerId); } catch { /* best-effort */ }
       } else {
         try { await this.requestVoid('DELETE', `/containers/${paths.containerName}?force=true&v=true`); } catch { /* best-effort */ }
       }
-      throw error;
+
+      // Restore the signing key before restarting the previous container.
+      // Otherwise its still-valid token would stop authenticating after a
+      // restart because the new public key had already replaced auth.pem.
+      try {
+        if (previousAuthPem !== null) {
+          await fs.promises.writeFile(authPemPath, previousAuthPem, 'utf8');
+        } else {
+          await fs.promises.rm(authPemPath, { force: true });
+        }
+      } catch (restoreError: any) {
+        console.error(
+          `[LibsqlRuntimeService] could not restore previous auth key after failed rotation: ` +
+          `${restoreError?.message || restoreError}`,
+        );
+      }
+
+      let rollbackOk = false;
+      if (oldRenamed) {
+        try {
+          if (oldDisconnected) {
+            await this.requestJson(
+              'POST',
+              `/networks/${encodeURIComponent(networkName)}/connect`,
+              { Container: runtime.containerId },
+            );
+          }
+          await this.renameContainer(runtime.containerId, runtime.containerName);
+          // start is idempotent: Docker returns 304 when it is already running.
+          await this.startContainer(runtime.containerId);
+          rollbackOk = true;
+        } catch (rollbackError: any) {
+          console.error(
+            `[LibsqlRuntimeService] rollback failed for ${database.id}; previous container ` +
+            `"${previousContainerName}" may need manual recovery: ${rollbackError?.message || rollbackError}`,
+          );
+        }
+      }
+
+      throw new Error(
+        `libSQL token rotation failed and the previous runtime ` +
+        `${rollbackOk ? 'was restored' : 'could not be restored automatically'}: ` +
+        `${error?.message || error}`,
+      );
     }
   }
 
@@ -469,6 +548,21 @@ export class LibsqlRuntimeService {
         throw error;
       }
     }
+  }
+
+  private async renameContainer(containerId: string, name: string) {
+    await this.requestVoid(
+      'POST',
+      `/containers/${containerId}/rename?name=${encodeURIComponent(name)}`,
+    );
+  }
+
+  private async stopContainer(containerId: string, timeoutSeconds = 10) {
+    await this.requestVoid('POST', `/containers/${containerId}/stop?t=${timeoutSeconds}`);
+  }
+
+  private async startContainer(containerId: string) {
+    await this.requestVoid('POST', `/containers/${containerId}/start`);
   }
 
   private async waitForPublishedPort(containerId: string, containerPort: number) {

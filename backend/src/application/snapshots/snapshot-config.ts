@@ -37,6 +37,10 @@ export function getSnapshotConfig() {
   const snapshotRoot = process.env.SNAPSHOT_STORAGE_ROOT || path.join(storageRoot, 'snapshots');
   return {
     enabled: booleanValue(process.env.SNAPSHOTS_ENABLED, true),
+    // libSQL logical dumps can be large; keep them enabled by default because
+    // they are the only durable backup path for managed primaries, but allow
+    // operators to pause scheduled dumps without disabling SQLite snapshots.
+    libsqlEnabled: booleanValue(process.env.SNAPSHOT_LIBSQL_ENABLED, true),
     snapshotRoot,
     intervalMinutes: getSnapshotPolicy().intervalMinutes,
     fullWindowHours: getSnapshotPolicy().fullWindowHours,

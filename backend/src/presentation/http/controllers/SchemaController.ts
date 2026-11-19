@@ -13,7 +13,11 @@ export default async function schemaRoutes(app: FastifyInstance) {
     if (!access) return;
 
     try {
-      return reply.send(await schemaService.getSchema(id));
+      const query = request.query as any;
+      const refresh = String(query?.refresh || '') === '1';
+      const counts = String(query?.counts ?? '').toLowerCase();
+      const includeRowCounts = !['0', 'false', 'no'].includes(counts);
+      return reply.send(await schemaService.getSchema(id, { refresh, includeRowCounts }));
     } catch (error: any) {
       request.log.error({ err: error, databaseId: id }, `[SchemaController] Failed to get schema: ${error?.message || error}`);
       if (error instanceof DatabaseError) {

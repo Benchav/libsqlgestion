@@ -187,6 +187,49 @@ test.describe('Import → Schema → Query End-to-End Integration', () => {
       assert.ok(vista, 'view clientes_activos debe existir');
       assert.equal(vista.kind, 'view');
     });
+
+    test('counts=0 skips full-table counts and schema cache refreshes after DDL', async () => {
+      const fastRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/databases/${apiDbId}/schema?counts=0`,
+        headers: { cookie: cookieHeader },
+      });
+      assert.equal(fastRes.statusCode, 200);
+      const fastBody = JSON.parse(fastRes.payload);
+      const fastClientes = fastBody.tables.find((table) => table.table === 'clientes');
+      assert.ok(fastClientes);
+      assert.equal(fastClientes.rowCount, null);
+
+      const headers = { cookie: cookieHeader, 'x-csrf-token-v2': csrfToken };
+      const createRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/databases/${apiDbId}/query`,
+        headers,
+        payload: { sql: 'CREATE TABLE cache_probe (id INTEGER PRIMARY KEY, value TEXT);' },
+      });
+      assert.equal(createRes.statusCode, 200);
+
+      try {
+        const refreshedRes = await app.inject({
+          method: 'GET',
+          url: `/api/v1/databases/${apiDbId}/schema?counts=0`,
+          headers: { cookie: cookieHeader },
+        });
+        assert.equal(refreshedRes.statusCode, 200);
+        const refreshedBody = JSON.parse(refreshedRes.payload);
+        assert.ok(
+          refreshedBody.tables.some((table) => table.table === 'cache_probe'),
+          'schema cache must invalidate after DDL',
+        );
+      } finally {
+        await app.inject({
+          method: 'POST',
+          url: `/api/v1/databases/${apiDbId}/query`,
+          headers,
+          payload: { sql: 'DROP TABLE IF EXISTS cache_probe;' },
+        });
+      }
+    });
   });
 
   // ──────────────────────────────────────────────────────────

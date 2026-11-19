@@ -32,6 +32,66 @@ If the error still appears:
 Automatic translation is not a substitute for localization. If the UI must be
 in Spanish, implement a real i18n layer instead of relying on the browser.
 
+## libSQL snapshot fails
+
+A managed libSQL snapshot uses the engine's authenticated `GET /dump` endpoint.
+Check, in order:
+
+1. The database has a current token (**Show current token** or **Create new
+   token**).
+2. The runtime is healthy on **Internal** and **Backend**.
+3. The backend can reach the runtime's internal URL.
+4. There is free space for the dump **and** the replay verification file.
+5. The backend log contains the HTTP status returned by `/dump`.
+
+Useful settings:
+
+```env
+SNAPSHOT_LIBSQL_ENABLED=true
+SNAPSHOT_LIBSQL_VERIFY_REPLAY=true
+SNAPSHOT_LIBSQL_MAX_BYTES=10737418240
+SNAPSHOT_LIBSQL_DUMP_TIMEOUT_MS=900000
+```
+
+`SNAPSHOT_LIBSQL_VERIFY_REPLAY=false` skips the replay check. Only use it when
+replay time is the blocker; the snapshot is still structurally validated, but it
+is no longer proven restorable at creation time.
+
+## Token rotation failed
+
+Rotation now keeps the previous runtime until the replacement accepts an
+authenticated query. If it fails, the backend attempts to restore the previous
+container, network and `auth.pem`, then returns an error saying whether rollback
+succeeded.
+
+If rollback also failed, inspect:
+
+```bash
+docker ps -a --filter name=libsqlite-<database-id>
+docker logs --tail 120 libsqlite-<database-id>
+```
+
+Do not delete the old container or its data directory until the current token is
+verified against a running runtime.
+
+## Studio takes too long to open
+
+The Studio requests schema metadata with `counts=0`; row counts load only for the
+selected table. Schema metadata is cached by `PRAGMA schema_version`. If it is
+still slow:
+
+- Check the number of tables and views.
+- Run `PRAGMA schema_version;` and confirm it is stable when idle.
+- Review `SCHEMA_CACHE_TTL_MS` and `SCHEMA_CACHE_MAX_ENTRIES`.
+- For libSQL, confirm metadata batch requests are not failing and falling back to
+  one request per table.
+
+## Metrics look outdated
+
+`GET /metrics` serves a short cache (`METRICS_CACHE_TTL_MS`, default 5000 ms) and
+samples Docker stats with limited concurrency. Use `?fresh=1` for an uncached
+read. Values are samples, not a billing meter.
+
 ## SQLite discovery finds nothing
 
 Check:

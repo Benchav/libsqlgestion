@@ -1397,7 +1397,7 @@ export class DatabaseService {
     return error;
   }
 
-  async refreshRuntimeHealth(id: string, options: { publicTimeoutMs?: number } = {}) {
+  async refreshRuntimeHealth(id: string, options: { publicTimeoutMs?: number; recordAudit?: boolean } = {}) {
     const database = await this.databaseRepo.findOne({
       where: { id },
       relations: ['project', 'project.owner'],
@@ -1438,6 +1438,13 @@ export class DatabaseService {
       throw error;
     }
 
+    const previousHealth = runtime.routeHealth as Record<string, unknown> | undefined;
+    const healthChanged = !previousHealth
+      || previousHealth.internalOk !== health.internalOk
+      || previousHealth.backendOk !== health.backendOk
+      || previousHealth.publicOk !== health.publicOk
+      || previousHealth.publicChecked !== health.publicChecked;
+
     database.metadata = {
       ...(database.metadata ?? {}),
       runtime: {
@@ -1447,17 +1454,22 @@ export class DatabaseService {
     };
     await this.databaseRepo.save(database);
 
-    await this.auditService.record({
-      action: 'database.health_check',
-      resourceType: 'database',
-      resourceId: database.id,
-      metadata: {
-        internalOk: health.internalOk,
-        backendOk: health.backendOk,
-        publicOk: health.publicOk,
-        publicChecked: health.publicChecked,
-      },
-    });
+    // The periodic monitor records only transitions, avoiding an audit row
+    // every few minutes for a healthy primary.
+    if (options.recordAudit !== false || healthChanged) {
+      await this.auditService.record({
+        action: 'database.health_check',
+        resourceType: 'database',
+        resourceId: database.id,
+        metadata: {
+          internalOk: health.internalOk,
+          backendOk: health.backendOk,
+          publicOk: health.publicOk,
+          publicChecked: health.publicChecked,
+          background: options.recordAudit === false,
+        },
+      });
+    }
 
     return database;
   }

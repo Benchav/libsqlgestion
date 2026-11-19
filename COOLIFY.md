@@ -58,8 +58,12 @@ LIBSQL_RUNTIME_PIDS_LIMIT=0
 MAX_UPLOAD_SIZE_BYTES=524288000
 IMPORT_STAGING_DIR=/app/data/tmp
 
-# Scheduled snapshots / restore points (LOCAL-FILE databases)
+# Scheduled snapshots / restore points (SQLite + managed libSQL primaries)
 SNAPSHOTS_ENABLED=true
+SNAPSHOT_LIBSQL_ENABLED=true
+SNAPSHOT_LIBSQL_VERIFY_REPLAY=true
+SNAPSHOT_LIBSQL_MAX_BYTES=10737418240
+SNAPSHOT_LIBSQL_DUMP_TIMEOUT_MS=900000
 SNAPSHOT_INTERVAL_MINUTES=60
 SNAPSHOT_FULL_WINDOW_HOURS=24
 SNAPSHOT_SIX_HOURLY_WINDOW_HOURS=72
@@ -69,6 +73,14 @@ SNAPSHOT_TIMEZONE=UTC
 SNAPSHOT_MIN_FREE_BYTES=1073741824
 SNAPSHOT_STALE_MINUTES=30
 SNAPSHOT_VERIFY_ON_RESTORE=true
+
+# Performance and persistent runtime health
+SCHEMA_CACHE_TTL_MS=60000
+SCHEMA_CACHE_MAX_ENTRIES=200
+METRICS_CACHE_TTL_MS=5000
+RUNTIME_HEALTH_INTERVAL_MINUTES=10
+RUNTIME_HEALTH_PUBLIC_TIMEOUT_MS=5000
+RUNTIME_HEALTH_STARTUP_DELAY_SECONDS=20
 
 # libSQL-first policy (new databases/imports are real libSQL primaries)
 LIBSQL_REQUIRE_PRIMARY=true
@@ -109,7 +121,7 @@ Notes:
 - `SQLITE_PERFORMANCE_PROFILE=performance` is the fastest starting point for local self-hosted ERP-style workloads.
 - `DB_CONNECTION_POOL_*` controls backend connection reuse and eviction.
 - `SQL_QUERY_TIMEOUT_MS` cancels long read queries; `QUERY_HARD_MAX_ROWS` caps API/Studio result sets.
-- `SNAPSHOT_*` controls scheduled restore points for `LOCAL-FILE` databases. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups.
+- `SNAPSHOT_*` controls scheduled restore points for SQLite files and managed libSQL primaries. libSQL uses the engine's `/dump` endpoint, verifies the dump by replaying it into SQLite, and stores a SHA-256 checksum. The scheduler ticks every 5 minutes and applies each database's editable restore-point/daily/weekly/monthly policy. Snapshots live under `/app/data/sqlite/snapshots` and are not offsite backups. See [docs/BACKUP_AND_MIGRATION.md](docs/BACKUP_AND_MIGRATION.md).
 - `LIBSQL_RUNTIME_*` lets you apply runtime CPU, memory and PID limits per managed database.
 - `MAX_UPLOAD_SIZE_BYTES` caps browser imports. The panel gzip-compresses in the browser when supported; the limit applies to the decompressed database. Larger databases should be placed on the server and imported through **Server path**.
 - `IMPORT_STAGING_DIR` must stay on the `/app/data` volume so uploads are not copied across filesystems. It defaults to `<data>/tmp`.

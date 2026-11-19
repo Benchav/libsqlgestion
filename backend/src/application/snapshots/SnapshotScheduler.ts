@@ -4,6 +4,7 @@ import { getSnapshotConfig } from './snapshot-config';
 import { SnapshotService } from './SnapshotService';
 import { SnapshotPolicyService } from './SnapshotPolicyService';
 import { getDueMilestones } from './snapshot-schedule';
+import { resolveEffectiveDatabaseType } from '../databases/database-runtime';
 
 type FailureState = {
   attempts: number;
@@ -66,6 +67,7 @@ export class SnapshotScheduler {
     for (const database of databases) {
       if (!['active', 'inactive'].includes(database.status)) continue;
       if (!this.service.supportsDatabase(database)) continue;
+      if (!config.libsqlEnabled && resolveEffectiveDatabaseType(database) === 'libsql') continue;
 
       scanned += 1;
 

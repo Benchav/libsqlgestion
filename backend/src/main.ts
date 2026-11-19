@@ -10,6 +10,7 @@ import { bootstrapPlatformSettings } from './application/settings/PlatformSettin
 import { ConnectionPool } from './infrastructure/db/ConnectionPool';
 import { LibsqlNamespaceService } from './infrastructure/libsql/LibsqlNamespaceService';
 import { SnapshotScheduler } from './application/snapshots/SnapshotScheduler';
+import { RuntimeHealthMonitor } from './application/databases/RuntimeHealthMonitor';
 import { analyticsCollector } from './application/analytics/AnalyticsCollector';
 import { StorageSampler } from './application/analytics/StorageSampler';
 
@@ -58,6 +59,13 @@ const start = async () => {
     console.warn('[main] Could not start snapshot scheduler:', error?.message || error);
   }
 
+  const runtimeHealthMonitor = new RuntimeHealthMonitor();
+  try {
+    await runtimeHealthMonitor.start();
+  } catch (error: any) {
+    console.warn('[main] Could not start runtime health monitor:', error?.message || error);
+  }
+
   analyticsCollector.start();
   const storageSampler = new StorageSampler();
   storageSampler.start();
@@ -69,6 +77,7 @@ const start = async () => {
       storageSampler.stop();
       await analyticsCollector.stop();
       await snapshotScheduler.stop();
+      await runtimeHealthMonitor.stop();
       const pool = ConnectionPool.getInstance();
       console.log(`Closing ${pool.size} pooled database connection(s)...`);
       await pool.shutdown();

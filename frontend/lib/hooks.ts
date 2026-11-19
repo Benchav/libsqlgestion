@@ -90,6 +90,8 @@ export type DatabaseSnapshot = {
   status: 'pending' | 'ready' | 'failed' | 'deleted';
   reason: 'scheduled' | 'manual' | 'pre_restore';
   fileName: string;
+  format?: 'sqlite' | 'libsql-sql-dump';
+  verified?: boolean;
   sizeBytes: number;
   checksumSha256?: string;
   milestones?: Partial<Record<'daily' | 'weekly' | 'monthly', string>>;
@@ -149,6 +151,8 @@ export type MetricInfo = {
   totalRamBytes?: number;
   maxRamBytes?: number;
   cpuUsagePercent?: number;
+  sampledAt?: string;
+  cacheTtlMs?: number;
   databases: Array<Record<string, unknown>>;
   system?: Record<string, unknown>;
 };

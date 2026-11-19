@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { SnapshotService } from '../../../application/snapshots/SnapshotService';
+import { getSnapshotFormat, SnapshotService } from '../../../application/snapshots/SnapshotService';
 import { SnapshotPolicyService } from '../../../application/snapshots/SnapshotPolicyService';
 import { getMilestones } from '../../../application/snapshots/snapshot-schedule';
 import { DatabaseSnapshot } from '../../../domain/entities/DatabaseSnapshot';
@@ -14,6 +14,7 @@ import {
   ValidationError,
 } from '../../../types/validations';
 import { presentDatabase } from '../database-presenter';
+import { resolveEffectiveDatabaseType } from '../../../application/databases/database-runtime';
 
 function presentSnapshot(snapshot: DatabaseSnapshot) {
   return {
@@ -22,6 +23,8 @@ function presentSnapshot(snapshot: DatabaseSnapshot) {
     status: snapshot.status,
     reason: snapshot.reason,
     fileName: snapshot.fileName,
+    format: getSnapshotFormat(snapshot),
+    verified: snapshot.metadata?.verified === true,
     sizeBytes: snapshot.sizeBytes,
     checksumSha256: snapshot.checksumSha256,
     milestones: getMilestones(snapshot),
@@ -104,13 +107,17 @@ export default async function snapshotRoutes(app: FastifyInstance) {
     if (!access) return;
 
     try {
+      // libSQL snapshots are logical dumps and can take longer than a proxy
+      // request timeout. Return the pending job and let the UI poll it.
+      const background = resolveEffectiveDatabaseType(access) === 'libsql';
       const snapshot = await snapshotService.createSnapshot(id, {
         reason: 'manual',
         pinned: true,
         actorId: (request as any).user?.sub,
         ipAddress: request.ip,
+        background,
       });
-      return reply.status(201).send({ snapshot: presentSnapshot(snapshot) });
+      return reply.status(background ? 202 : 201).send({ snapshot: presentSnapshot(snapshot) });
     } catch (error: any) {
       return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to create snapshot' });
     }
@@ -167,10 +174,15 @@ export default async function snapshotRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'snapshot file not found on disk' });
       }
 
+      const format = getSnapshotFormat(snapshot);
+      const extension = format === 'libsql-sql-dump' ? 'sql' : 'db';
       const timestamp = new Date(snapshot.takenAt).toISOString().replace(/[:.]/g, '-');
       const safeName = access.name.replace(/["\r\n]/g, '-');
-      reply.header('Content-Disposition', `attachment; filename="${safeName}-${timestamp}.db"`);
-      reply.header('Content-Type', 'application/x-sqlite3');
+      reply.header('Content-Disposition', `attachment; filename="${safeName}-${timestamp}.${extension}"`);
+      reply.header(
+        'Content-Type',
+        format === 'libsql-sql-dump' ? 'application/sql; charset=utf-8' : 'application/x-sqlite3',
+      );
       return reply.send(fs.createReadStream(snapshot.filePath));
     } catch (error: any) {
       return reply.status(error?.statusCode || 500).send({ error: error?.message || 'failed to download snapshot' });

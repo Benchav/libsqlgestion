@@ -6,7 +6,7 @@ import { Search, RotateCw, LayoutGrid, MoreVertical } from 'lucide-react';
 type TableInfo = {
   table: string;
   kind: 'table' | 'view';
-  rowCount: number;
+  rowCount: number | null;
   columns: Array<{ name: string; type: string; pk: number }>;
 };
 
@@ -50,7 +50,7 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
           <span className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Schema</span>
           <button 
             type="button" 
-            onClick={onRefresh} 
+            onClick={() => onRefresh()}
             className="text-zinc-500 hover:text-zinc-300 transition-colors p-1 rounded hover:bg-zinc-800"
             title="Refresh schema"
           >
@@ -142,8 +142,11 @@ export function TableSidebar({ tables, activeTable, activeKind, activeTab, onSel
                 <span className="font-medium truncate">{t.table}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                  {t.rowCount}
+                <span
+                  className={`text-[10px] font-mono ${activeTable === t.table ? 'text-zinc-400' : 'text-zinc-600'}`}
+                  title={t.rowCount === null ? 'Row count loads when you open the table' : undefined}
+                >
+                  {t.rowCount === null ? '—' : t.rowCount}
                 </span>
                 {onTableMenu && <MoreVertical size={12} className="text-zinc-600 opacity-0 group-hover:opacity-100" />}
               </div>

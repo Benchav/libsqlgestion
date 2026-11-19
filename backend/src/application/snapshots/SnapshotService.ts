@@ -8,13 +8,19 @@ import {
   DatabaseSnapshot,
   DatabaseSnapshotReason,
 } from '../../domain/entities/DatabaseSnapshot';
-import { encrypt } from '../../infrastructure/crypto';
+import { decrypt, encrypt } from '../../infrastructure/crypto';
 import { randomToken } from '../../infrastructure/security/tokens';
 import { ensureSubdomain } from '../../infrastructure/security/slug';
 import { SqliteClient } from '../../infrastructure/sqlite/SqliteClient';
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
 import { resolveEffectiveDatabaseType } from '../databases/database-runtime';
 import { resolveLocalDatabasePath } from '../databases/local-database-path';
+import {
+  fetchLibsqlDump,
+  isSqlDumpFile,
+  replaySqlDumpToSqlite,
+  validateLibsqlDump,
+} from './libsql-dump';
 import { getSnapshotConfig, getSnapshotPolicy } from './snapshot-config';
 import { SnapshotPolicyService, SnapshotPolicyView } from './SnapshotPolicyService';
 import { getMilestones, MilestoneDue } from './snapshot-schedule';
@@ -30,6 +36,9 @@ type CreateSnapshotOptions = {
   pinned?: boolean;
   actorId?: string;
   ipAddress?: string;
+  // Large libSQL dumps are returned as a pending job and completed in the
+  // background; the UI polls the snapshot list until it is ready.
+  background?: boolean;
 };
 
 type RestoreSnapshotInput = {
@@ -37,6 +46,16 @@ type RestoreSnapshotInput = {
   actorId?: string;
   ipAddress?: string;
 };
+
+export type SnapshotFormat = 'sqlite' | 'libsql-sql-dump';
+
+export function getSnapshotFormat(snapshot: Pick<DatabaseSnapshot, 'fileName' | 'metadata'>): SnapshotFormat {
+  const format = snapshot.metadata?.format;
+  if (format === 'libsql-sql-dump' || isSqlDumpFile(snapshot.fileName)) {
+    return 'libsql-sql-dump';
+  }
+  return 'sqlite';
+}
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -111,7 +130,8 @@ export class SnapshotService {
   }
 
   supportsDatabase(database: Pick<Database, 'type' | 'url' | 'metadata'>) {
-    return resolveEffectiveDatabaseType(database) === 'sqlite';
+    const effectiveType = resolveEffectiveDatabaseType(database);
+    return effectiveType === 'sqlite' || effectiveType === 'libsql';
   }
 
   async listSnapshots(databaseId: string, options: SnapshotListOptions = {}) {
@@ -190,11 +210,14 @@ export class SnapshotService {
     const database = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
     if (!database) throw httpError(404, 'database not found');
     if (!this.supportsDatabase(database)) {
-      throw httpError(409, 'snapshots are only supported for LOCAL-FILE SQLite databases');
+      throw httpError(409, 'snapshots are only supported for SQLite databases and managed libSQL primaries');
     }
 
-    const sourcePath = resolveLocalDatabasePath(database, { createIfMissing: false });
-    if (!sourcePath) {
+    const effectiveType = resolveEffectiveDatabaseType(database);
+    const sourcePath = effectiveType === 'sqlite'
+      ? resolveLocalDatabasePath(database, { createIfMissing: false })
+      : null;
+    if (effectiveType === 'sqlite' && !sourcePath) {
       throw httpError(404, 'database file not found on disk');
     }
 
@@ -206,7 +229,8 @@ export class SnapshotService {
     }
 
     const takenAt = new Date();
-    const fileName = `${formatTimestamp(takenAt)}-${crypto.randomUUID().slice(0, 8)}.db`;
+    const extension = effectiveType === 'libsql' ? 'sql' : 'db';
+    const fileName = `${formatTimestamp(takenAt)}-${crypto.randomUUID().slice(0, 8)}.${extension}`;
     const filePath = this.storageService.snapshotFilePath(database.project.id, database.id, fileName);
 
     let snapshot: DatabaseSnapshot;
@@ -230,116 +254,207 @@ export class SnapshotService {
       throw error;
     }
 
-    snapshotRuntimeState.activeSnapshotIds.add(snapshot.id);
-    const saved = await this.runExclusive(async () => {
-      const tempPath = path.join(path.dirname(filePath), `.tmp-${snapshot.id}.db`);
-      const startedAt = Date.now();
-      let finalized = false;
-      try {
-        await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-        await this.assertDiskSpace(sourcePath, path.dirname(filePath));
-        await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
-        await fs.promises.rm(`${tempPath}-wal`, { force: true }).catch(() => undefined);
-        await fs.promises.rm(`${tempPath}-shm`, { force: true }).catch(() => undefined);
-
-        const client = new SqliteClient(sourcePath);
+    const execute = async () => {
+      snapshotRuntimeState.activeSnapshotIds.add(snapshot.id);
+      const saved = await this.runExclusive(async () => {
+        const tempPath = path.join(path.dirname(filePath), `.tmp-${snapshot.id}.${extension}`);
+        const startedAt = Date.now();
         try {
-          await client.exec('PRAGMA busy_timeout = 30000;');
-          await client.exec(`VACUUM INTO '${quoteSqlite(tempPath)}';`);
-        } finally {
-          await client.close();
-        }
+          await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+          const artifact = effectiveType === 'libsql'
+            ? await this.createLibsqlSnapshotFile(database, tempPath, filePath)
+            : await this.createSqliteSnapshotFile(sourcePath as string, tempPath, filePath);
 
-        const verification = new SqliteClient(tempPath);
-        try {
-          const integrity = await verification.checkIntegrity();
-          if (!integrity.ok) {
-            throw new Error(`snapshot integrity check failed: ${integrity.details}`);
+          snapshot.status = 'ready';
+          snapshot.sizeBytes = artifact.sizeBytes;
+          snapshot.checksumSha256 = artifact.checksumSha256;
+          snapshot.errorMessage = undefined;
+          snapshot.metadata = {
+            ...(snapshot.metadata ?? {}),
+            ...artifact.metadata,
+            durationMs: Date.now() - startedAt,
+            sourceDatabaseId: database.id,
+          };
+          const saved = await this.snapshotRepo.save(snapshot);
+
+          if (saved.reason !== 'scheduled') {
+            await this.auditService.record({
+              action: 'database.snapshot.create',
+              resourceType: 'database',
+              resourceId: database.id,
+              actorId: options.actorId,
+              ipAddress: options.ipAddress,
+              metadata: {
+                snapshotId: saved.id,
+                reason: saved.reason,
+                sizeBytes: saved.sizeBytes,
+                pinned: saved.pinned,
+                format: artifact.metadata.format,
+              },
+            });
+          } else {
+            console.log(
+              `[snapshots] created ${saved.fileName} for ${database.name} (${saved.sizeBytes} bytes, ` +
+              `${artifact.metadata.format})`,
+            );
           }
-        } finally {
-          await verification.close();
-        }
 
-        await fs.promises.rm(`${tempPath}-wal`, { force: true }).catch(() => undefined);
-        await fs.promises.rm(`${tempPath}-shm`, { force: true }).catch(() => undefined);
+          return saved;
+        } catch (error: any) {
+          const failedPaths = [
+            tempPath,
+            filePath,
+            `${tempPath}.verify.db`,
+            `${filePath}.verify.db`,
+          ];
+          for (const failedPath of failedPaths) {
+            await fs.promises.rm(failedPath, { force: true }).catch(() => undefined);
+            await fs.promises.rm(`${failedPath}-wal`, { force: true }).catch(() => undefined);
+            await fs.promises.rm(`${failedPath}-shm`, { force: true }).catch(() => undefined);
+          }
 
-        await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
-        await fs.promises.rename(tempPath, filePath);
-        finalized = true;
+          snapshot.status = 'failed';
+          snapshot.errorMessage = error?.message || 'snapshot failed';
+          snapshot.metadata = {
+            ...(snapshot.metadata ?? {}),
+            durationMs: Date.now() - startedAt,
+          };
+          await this.snapshotRepo.save(snapshot).catch(() => undefined);
 
-        const stat = await fs.promises.stat(filePath);
-        const checksumSha256 = await fileSha256(filePath);
-
-        snapshot.status = 'ready';
-        snapshot.sizeBytes = stat.size;
-        snapshot.checksumSha256 = checksumSha256;
-        snapshot.errorMessage = undefined;
-        snapshot.metadata = {
-          ...(snapshot.metadata ?? {}),
-          durationMs: Date.now() - startedAt,
-          sourceDatabaseId: database.id,
-        };
-        const saved = await this.snapshotRepo.save(snapshot);
-
-        if (saved.reason !== 'scheduled') {
           await this.auditService.record({
-            action: 'database.snapshot.create',
+            action: 'database.snapshot.failed',
             resourceType: 'database',
             resourceId: database.id,
             actorId: options.actorId,
             ipAddress: options.ipAddress,
             metadata: {
-              snapshotId: saved.id,
-              reason: saved.reason,
-              sizeBytes: saved.sizeBytes,
-              pinned: saved.pinned,
+              snapshotId: snapshot.id,
+              reason: snapshot.reason,
+              error: snapshot.errorMessage,
             },
-          });
-        } else {
-          console.log(
-            `[snapshots] created ${saved.fileName} for ${database.name} (${saved.sizeBytes} bytes)`,
-          );
+          }).catch(() => undefined);
+
+          if (error?.statusCode) throw error;
+          throw httpError(500, `failed to create snapshot: ${snapshot.errorMessage}`);
         }
+      }).finally(() => {
+        snapshotRuntimeState.activeSnapshotIds.delete(snapshot.id);
+      });
 
-        return saved;
-      } catch (error: any) {
-        const failedPath = finalized ? filePath : tempPath;
-        await fs.promises.rm(failedPath, { force: true }).catch(() => undefined);
-        await fs.promises.rm(`${failedPath}-wal`, { force: true }).catch(() => undefined);
-        await fs.promises.rm(`${failedPath}-shm`, { force: true }).catch(() => undefined);
-        snapshot.status = 'failed';
-        snapshot.errorMessage = error?.message || 'snapshot failed';
-        snapshot.metadata = {
-          ...(snapshot.metadata ?? {}),
-          durationMs: Date.now() - startedAt,
-        };
-        await this.snapshotRepo.save(snapshot).catch(() => undefined);
+      await this.pruneSnapshots(databaseId).catch((error: any) => {
+        console.warn(`[snapshots] retention pruning failed for ${databaseId}:`, error?.message || error);
+      });
 
-        await this.auditService.record({
-          action: 'database.snapshot.failed',
-          resourceType: 'database',
-          resourceId: database.id,
-          actorId: options.actorId,
-          ipAddress: options.ipAddress,
-          metadata: {
-            snapshotId: snapshot.id,
-            reason: snapshot.reason,
-            error: snapshot.errorMessage,
-          },
-        }).catch(() => undefined);
+      return saved;
+    };
 
-        if (error?.statusCode) throw error;
-        throw httpError(500, `failed to create snapshot: ${snapshot.errorMessage}`);
+    if (options.background) {
+      void execute().catch((error: any) => {
+        console.warn(
+          `[snapshots] background snapshot failed for ${databaseId}: ${error?.message || error}`,
+        );
+      });
+      return snapshot;
+    }
+
+    return execute();
+  }
+
+  private async createSqliteSnapshotFile(sourcePath: string, tempPath: string, filePath: string) {
+    await this.assertDiskSpace(sourcePath, path.dirname(filePath));
+    await this.removeFileAndSidecars(tempPath);
+
+    const client = new SqliteClient(sourcePath);
+    try {
+      await client.exec('PRAGMA busy_timeout = 30000;');
+      await client.exec(`VACUUM INTO '${quoteSqlite(tempPath)}';`);
+    } finally {
+      await client.close();
+    }
+
+    const verification = new SqliteClient(tempPath);
+    try {
+      const integrity = await verification.checkIntegrity();
+      if (!integrity.ok) {
+        throw new Error(`snapshot integrity check failed: ${integrity.details}`);
       }
-    }).finally(() => {
-      snapshotRuntimeState.activeSnapshotIds.delete(snapshot.id);
-    });
+    } finally {
+      await verification.close();
+    }
 
-    await this.pruneSnapshots(databaseId).catch((error: any) => {
-      console.warn(`[snapshots] retention pruning failed for ${databaseId}:`, error?.message || error);
-    });
+    await this.removeSidecars(tempPath);
+    await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
+    await fs.promises.rename(tempPath, filePath);
 
-    return saved;
+    const stat = await fs.promises.stat(filePath);
+    return {
+      sizeBytes: stat.size,
+      checksumSha256: await fileSha256(filePath),
+      metadata: { format: 'sqlite' as const },
+    };
+  }
+
+  private async createLibsqlSnapshotFile(database: Database, tempPath: string, filePath: string) {
+    if (!database.encryptedToken) {
+      throw httpError(409, 'database has no token; rotate the token before creating a snapshot');
+    }
+
+    let token: string;
+    try {
+      token = decrypt(database.encryptedToken);
+    } catch (error: any) {
+      throw httpError(500, `failed to decrypt database token: ${error?.message || error}`);
+    }
+
+    await this.assertDiskSpace(undefined, path.dirname(filePath));
+    await this.removeFileAndSidecars(tempPath);
+
+    try {
+      await fetchLibsqlDump(database, token, tempPath);
+      const validation = await validateLibsqlDump(tempPath);
+      // The dump itself plus the reconstructed database need space. A full
+      // replay verifies the backup is restorable now, not only in an emergency.
+      await this.assertDiskSpace(undefined, path.dirname(filePath), validation.sizeBytes * 2);
+
+      const verifyReplay = !['0', 'false', 'no', 'off'].includes(
+        String(process.env.SNAPSHOT_LIBSQL_VERIFY_REPLAY || 'true').trim().toLowerCase(),
+      );
+      if (verifyReplay) {
+        const verifyPath = `${tempPath}.verify.db`;
+        try {
+          await replaySqlDumpToSqlite(tempPath, verifyPath);
+        } finally {
+          await this.removeFileAndSidecars(verifyPath);
+        }
+      }
+
+      await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
+      await fs.promises.rename(tempPath, filePath);
+      const stat = await fs.promises.stat(filePath);
+
+      return {
+        sizeBytes: stat.size,
+        checksumSha256: await fileSha256(filePath),
+        metadata: {
+          format: 'libsql-sql-dump' as const,
+          verified: verifyReplay,
+          preserveRowIds: true,
+        },
+      };
+    } catch (error) {
+      await this.removeFileAndSidecars(tempPath);
+      throw error;
+    }
+  }
+
+  private async removeFileAndSidecars(filePath: string) {
+    await fs.promises.rm(filePath, { force: true }).catch(() => undefined);
+    await this.removeSidecars(filePath);
+  }
+
+  private async removeSidecars(filePath: string) {
+    await fs.promises.rm(`${filePath}-wal`, { force: true }).catch(() => undefined);
+    await fs.promises.rm(`${filePath}-shm`, { force: true }).catch(() => undefined);
   }
 
   async deleteSnapshot(databaseId: string, snapshotId: string, actorId?: string, ipAddress?: string) {
@@ -368,7 +483,7 @@ export class SnapshotService {
     const sourceDatabase = await this.databaseRepo.findOne({ where: { id: databaseId }, relations: ['project'] });
     if (!sourceDatabase) throw httpError(404, 'database not found');
     if (!this.supportsDatabase(sourceDatabase)) {
-      throw httpError(409, 'snapshots are only supported for LOCAL-FILE SQLite databases');
+      throw httpError(409, 'snapshots are only supported for SQLite databases and managed libSQL primaries');
     }
 
     const snapshot = await this.getSnapshot(databaseId, snapshotId);
@@ -394,6 +509,12 @@ export class SnapshotService {
     }
 
     const subdomain = ensureSubdomain(name, randomToken());
+    const snapshotFormat = getSnapshotFormat(snapshot);
+
+    if (snapshotFormat === 'libsql-sql-dump') {
+      return this.restoreLibsqlSnapshot(sourceDatabase, snapshot, name, subdomain, input);
+    }
+
     const token = randomToken();
 
     const database = await this.databaseRepo.save(this.databaseRepo.create({
@@ -467,6 +588,69 @@ export class SnapshotService {
       await this.databaseRepo.remove(database).catch(() => undefined);
       if (error?.statusCode) throw error;
       throw httpError(500, `failed to restore snapshot: ${error?.message || error}`);
+    }
+  }
+
+  private async restoreLibsqlSnapshot(
+    sourceDatabase: Database,
+    snapshot: DatabaseSnapshot,
+    name: string,
+    subdomain: string,
+    input: RestoreSnapshotInput,
+  ) {
+    const tempPath = path.join(
+      path.dirname(snapshot.filePath),
+      `.restore-${snapshot.id}-${Date.now()}.db`,
+    );
+
+    try {
+      await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
+      await replaySqlDumpToSqlite(snapshot.filePath, tempPath);
+
+      // Importing through DatabaseService keeps the libSQL-first policy: the
+      // restored file becomes a fresh primary (or a local file only when the
+      // deployment explicitly allows that fallback).
+      const { DatabaseService } = await import('../databases/DatabaseService');
+      const databaseService = new DatabaseService();
+      const result = await databaseService.importExistingSqlite(sourceDatabase.project.id, {
+        name,
+        sourceName: snapshot.fileName,
+        sourcePath: tempPath,
+        subdomain,
+        sourceIsUpload: true,
+        metadata: {
+          restoredFrom: {
+            databaseId: sourceDatabase.id,
+            databaseName: sourceDatabase.name,
+            snapshotId: snapshot.id,
+            takenAt: snapshot.takenAt,
+          },
+          restoredAt: new Date().toISOString(),
+          snapshotFormat: 'libsql-sql-dump',
+        },
+      });
+
+      await this.auditService.record({
+        action: 'database.snapshot.restore',
+        resourceType: 'database',
+        resourceId: result.database.id,
+        actorId: input.actorId,
+        ipAddress: input.ipAddress,
+        metadata: {
+          sourceDatabaseId: sourceDatabase.id,
+          snapshotId: snapshot.id,
+          snapshotTakenAt: snapshot.takenAt,
+          targetDatabaseId: result.database.id,
+          snapshotFormat: 'libsql-sql-dump',
+        },
+      });
+
+      return result;
+    } catch (error: any) {
+      if (error?.statusCode) throw error;
+      throw httpError(500, `failed to restore libSQL snapshot: ${error?.message || error}`);
+    } finally {
+      await this.removeFileAndSidecars(tempPath);
     }
   }
 
@@ -593,10 +777,14 @@ export class SnapshotService {
     const pending = await this.snapshotRepo.find({ where: { status: 'pending' } });
     for (const snapshot of pending) {
       if (snapshotRuntimeState.activeSnapshotIds.has(snapshot.id)) continue;
-      const tempPath = path.join(path.dirname(snapshot.filePath), `.tmp-${snapshot.id}.db`);
-      await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
-      await fs.promises.rm(`${tempPath}-wal`, { force: true }).catch(() => undefined);
-      await fs.promises.rm(`${tempPath}-shm`, { force: true }).catch(() => undefined);
+      for (const extension of ['db', 'sql']) {
+        const tempPath = path.join(path.dirname(snapshot.filePath), `.tmp-${snapshot.id}.${extension}`);
+        for (const candidate of [tempPath, `${tempPath}.verify.db`]) {
+          await fs.promises.rm(candidate, { force: true }).catch(() => undefined);
+          await fs.promises.rm(`${candidate}-wal`, { force: true }).catch(() => undefined);
+          await fs.promises.rm(`${candidate}-shm`, { force: true }).catch(() => undefined);
+        }
+      }
       await fs.promises.rm(snapshot.filePath, { force: true }).catch(() => undefined);
       await fs.promises.rm(`${snapshot.filePath}-wal`, { force: true }).catch(() => undefined);
       await fs.promises.rm(`${snapshot.filePath}-shm`, { force: true }).catch(() => undefined);
@@ -627,7 +815,7 @@ export class SnapshotService {
           await walk(fullPath);
           continue;
         }
-        if (!entry.isFile() || !entry.name.startsWith('.tmp-')) continue;
+        if (!entry.isFile() || (!entry.name.startsWith('.tmp-') && !entry.name.startsWith('.restore-'))) continue;
         try {
           const stat = await fs.promises.stat(fullPath);
           if (stat.mtimeMs < threshold) {
@@ -648,7 +836,14 @@ export class SnapshotService {
     for (const snapshot of pending) {
       if (snapshotRuntimeState.activeSnapshotIds.has(snapshot.id)) continue;
       if (new Date(snapshot.takenAt).getTime() >= threshold) continue;
-      await fs.promises.rm(path.join(path.dirname(snapshot.filePath), `.tmp-${snapshot.id}.db`), { force: true }).catch(() => undefined);
+      for (const extension of ['db', 'sql']) {
+        const tempPath = path.join(path.dirname(snapshot.filePath), `.tmp-${snapshot.id}.${extension}`);
+        for (const candidate of [tempPath, `${tempPath}.verify.db`]) {
+          await fs.promises.rm(candidate, { force: true }).catch(() => undefined);
+          await fs.promises.rm(`${candidate}-wal`, { force: true }).catch(() => undefined);
+          await fs.promises.rm(`${candidate}-shm`, { force: true }).catch(() => undefined);
+        }
+      }
       await this.snapshotRepo.update(snapshot.id, {
         status: 'failed',
         errorMessage: 'snapshot was interrupted before it completed',
@@ -656,16 +851,18 @@ export class SnapshotService {
     }
   }
 
-  private async assertDiskSpace(sourcePath: string, targetDirectory: string) {
+  private async assertDiskSpace(sourcePath: string | undefined, targetDirectory: string, extraRequiredBytes = 0) {
     const config = getSnapshotConfig();
     let sourceSize = 0;
-    try {
-      sourceSize = (await fs.promises.stat(sourcePath)).size;
-    } catch {
-      sourceSize = 0;
+    if (sourcePath) {
+      try {
+        sourceSize = (await fs.promises.stat(sourcePath)).size;
+      } catch {
+        sourceSize = 0;
+      }
     }
 
-    const required = Math.max(sourceSize * 2, config.minFreeBytes);
+    const required = Math.max(sourceSize * 2 + Math.max(0, extraRequiredBytes), config.minFreeBytes);
     try {
       const stats = await fs.promises.statfs(targetDirectory);
       const freeBytes = Number(stats.bavail) * Number(stats.bsize);

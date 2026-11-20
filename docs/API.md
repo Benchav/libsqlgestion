@@ -224,7 +224,65 @@ Queues local snapshots for upload:
 
 ### `GET /databases/:id`
 
-Returns a single database record.
+Returns a single database record. The response includes `blockReads`,
+`blockWrites` and `deleteProtection` (all `false` by default). The encrypted
+credential is never included.
+
+### `PATCH /databases/:id/protection`
+
+Updates one or more data-plane protection flags. Requires `databases.write` and
+project access. At least one flag must be present:
+
+```json
+{
+  "blockReads": true,
+  "blockWrites": false,
+  "deleteProtection": true
+}
+```
+
+Behaviour:
+
+- `blockReads` rejects statements that return rows (`SELECT`, read `PRAGMA`,
+  `EXPLAIN`, and DML with `RETURNING`) and blocks the Studio, schema reads and
+  database downloads. Automatic snapshots, restores and snapshot downloads
+  remain available as administrative recovery operations, and health checks
+  continue so recovery is still possible.
+- `blockWrites` rejects DML, DDL, mutating PRAGMAs, `ATTACH`/`DETACH`,
+  `VACUUM`, `ANALYZE` and `REINDEX`. Transaction control statements are allowed
+  so an open transaction can be committed or rolled back.
+- `deleteProtection` rejects `DELETE /databases/:id` and project deletion while
+  any database in the project is protected.
+- A blocked operation returns `403` with `DATABASE_READS_BLOCKED` or
+  `DATABASE_WRITES_BLOCKED`. A blocked deletion returns `409` with
+  `DATABASE_DELETE_PROTECTED`.
+- Batches and sequences are preflighted as a whole: one forbidden statement
+  rejects the request before any statement runs.
+- These controls are enforced by the panel and its HTTP pipeline. For
+  `sqld-namespace` and `docker-libsql`, clients connected directly to the public
+  libSQL URL bypass the backend and are not covered.
+
+Every change is recorded as `database.protection.update` with the previous and
+new state.
+
+### `POST /databases/:id/invalidate-tokens`
+
+Rotates the database credential and returns the new token once. Requires
+`databases.write` and project access. The response includes `scope`:
+
+- `all` for `local-file` and `docker-libsql`. The previous token is rejected.
+  Rotating a dedicated runtime recreates its container, so expect a short
+  interruption.
+- `panel-only` for `sqld-namespace`. The token used by the panel is rotated, but
+  JWTs already issued directly against the shared sqld URL can remain valid
+  until they expire. The response includes a `warning`.
+- Externally managed and `remote` databases return `409` with
+  `DATABASE_TOKEN_REVOCATION_UNSUPPORTED`.
+
+The pipeline accepts only the token currently stored for the database; an old
+token is rejected even if it was signed by the shared sqld key. After upgrading
+from a build that accepted any namespace JWT, verify that every client using the
+panel pipeline has the current token before relying on this behaviour.
 
 ### `POST /databases/:id/health-check`
 
@@ -234,7 +292,11 @@ is used by the **Re-check** button in the database detail page.
 
 ### `PATCH /databases/:id/rotate-token`
 
-Rotates the stored token. The previous token is invalidated immediately; update every client that uses it.
+Rotates the stored token. The previous token is invalidated immediately for the
+panel and its HTTP pipeline; update every client that uses it. For shared
+`sqld-namespace` databases, tokens used directly against the sqld URL may remain
+valid until they expire. Use `POST /databases/:id/invalidate-tokens` for the
+provider-aware action and warnings.
 
 ### `POST /databases/:id/reveal-token`
 

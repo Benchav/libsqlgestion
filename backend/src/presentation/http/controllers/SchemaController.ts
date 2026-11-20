@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { SchemaService } from '../../../application/databases/SchemaService';
 import { ensurePermission, ensureDatabaseAccess } from '../guards';
 import { DatabaseError } from '../../../infrastructure/sqlite/SqliteClient';
+import { DatabaseProtectionError } from '../../../application/databases/database-protection';
 
 export default async function schemaRoutes(app: FastifyInstance) {
   const schemaService = new SchemaService();
@@ -20,6 +21,14 @@ export default async function schemaRoutes(app: FastifyInstance) {
       return reply.send(await schemaService.getSchema(id, { refresh, includeRowCounts }));
     } catch (error: any) {
       request.log.error({ err: error, databaseId: id }, `[SchemaController] Failed to get schema: ${error?.message || error}`);
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          error: error.message,
+          code: error.code,
+          tables: [],
+          views: [],
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.recoverable ? 503 : 500).send({
           error: error.message,

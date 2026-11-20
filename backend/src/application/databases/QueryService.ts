@@ -4,8 +4,9 @@ import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteC
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
 import { splitSqlStatements } from './sqlScript';
+import { classifySqlStatement } from './sql-guard';
+import { assertDatabaseSqlAllowed } from './database-protection';
 
-const READ_ONLY_REGEX = /^\s*(select|pragma|with|explain)\b/i;
 const WRAPPABLE_REGEX = /^\s*(select|with)\b/i;
 
 type StatementExecutionResult = {
@@ -141,9 +142,18 @@ export class QueryService {
       err.name = 'EntityNotFoundError';
       throw err;
     }
+
+    assertDatabaseSqlAllowed(database, sql);
+
     const statements = splitSqlStatements(sql);
     const isScript = statements.length > 1;
-    const isRead = READ_ONLY_REGEX.test(sql);
+    const classifications = statements.map(classifySqlStatement);
+    const isRead = !isScript && classifications.length === 1 && classifications[0].operation === 'read';
+    // A script made only of reads must not start a write transaction on a
+    // query_only connection when Block Writes is active.
+    const scriptHasWrite = classifications.some(
+      (classification) => classification.operation !== 'read' && classification.operation !== 'neutral',
+    );
     const offset = Math.max(0, Math.floor(options.offset ?? 0));
     const requestedLimit = options.limit === undefined ? undefined : normaliseLimit(options.limit);
     const limit = requestedLimit ?? getHardMaxRows();
@@ -164,11 +174,15 @@ export class QueryService {
       const startedAt = Date.now();
       try {
         if (isScript) {
-          await client.execAtomic(sql);
+          if (scriptHasWrite) {
+            await client.execAtomic(sql);
+          } else {
+            await client.exec(sql);
+          }
           const statementResults: StatementExecutionResult[] = statements.map((statement, index) => ({
             index: index + 1,
             sql: statement,
-            kind: READ_ONLY_REGEX.test(statement) ? 'read' : 'write',
+            kind: classifySqlStatement(statement).operation === 'read' ? 'read' : 'write',
           }));
           return { ok: true, statementsExecuted: statements.length, statementResults, durationMs: Date.now() - startedAt };
         }
@@ -240,11 +254,11 @@ export class QueryService {
     try {
       if (isScript) {
         const batchArgs = statements.map((stmt) => ({ sql: stmt, args: [] }));
-        const results = await libClient.batch(batchArgs, 'write');
+        const results = await libClient.batch(batchArgs, scriptHasWrite ? 'write' : 'read');
 
         const statementResults: StatementExecutionResult[] = results.map((result, index) => {
           const statement = statements[index];
-          const isReadStatement = READ_ONLY_REGEX.test(statement);
+          const isReadStatement = classifySqlStatement(statement).operation === 'read';
           return {
             index: index + 1,
             sql: statement,

@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { MigrationService } from '../../../application/databases/MigrationService';
 import { ensurePermission, ensureDatabaseAccess } from '../guards';
 import { DatabaseError } from '../../../infrastructure/sqlite/SqliteClient';
+import { DatabaseProtectionError } from '../../../application/databases/database-protection';
 
 export default async function migrationRoutes(app: FastifyInstance) {
   const migrationService = new MigrationService();
@@ -34,6 +35,12 @@ export default async function migrationRoutes(app: FastifyInstance) {
       const migration = await migrationService.apply(id, body);
       return reply.status(201).send({ migration });
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(422).send({
           error: error.message,

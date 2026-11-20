@@ -7,7 +7,7 @@ import { pipeline } from 'stream/promises';
 import { createGunzip } from 'zlib';
 import { DatabaseService } from '../../../application/databases/DatabaseService';
 import { ensurePermission, ensureDatabaseAccess, ensureProjectAccess } from '../guards';
-import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, backupDatabaseSchema, pageQuerySchema, convertToRuntimeSchema, storageModeSchema } from '../../../types/validations';
+import { parseAndValidate, createDatabaseSchema, importSqliteSchema, updateDatabaseSchema, updateDatabaseProtectionSchema, backupDatabaseSchema, pageQuerySchema, convertToRuntimeSchema, storageModeSchema } from '../../../types/validations';
 import { ValidationError } from '../../../types/validations';
 import { AppDataSource } from '../../../infrastructure/db/data-source';
 import { Database } from '../../../domain/entities/Database';
@@ -19,6 +19,11 @@ import { presentDatabase } from '../database-presenter';
 import { analyticsCollector } from '../../../application/analytics/AnalyticsCollector';
 import { resolveImportStagingRoot, sanitizeUploadFileName, cleanupStaleUploadDirs } from '../upload-utils';
 import { getMaxUploadBytes } from '../../../config/uploads';
+import {
+  assertDatabaseReadsAllowed,
+  assertDatabaseSqlAllowed,
+  DatabaseProtectionError,
+} from '../../../application/databases/database-protection';
 
 let lastStagingCleanupAt = 0;
 const STAGING_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
@@ -249,6 +254,29 @@ export default async function databaseRoutes(app: FastifyInstance) {
     }
   });
 
+  app.patch('/databases/:id/protection', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+
+    const body = parseAndValidate(updateDatabaseProtectionSchema, request.body || {}, 'database protection');
+    try {
+      const database = await databaseService.updateProtection(
+        id,
+        body,
+        (request as any).user?.sub,
+        request.ip,
+      );
+      return reply.send({ database: presentDatabase(database) });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({
+        error: err?.message || 'failed to update database protection',
+        code: err?.code,
+      });
+    }
+  });
+
   app.delete('/databases/:id', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await ensurePermission(request, reply, 'databases.write'))) return;
     const { id } = request.params as any;
@@ -258,7 +286,33 @@ export default async function databaseRoutes(app: FastifyInstance) {
       const result = await databaseService.deleteDatabase(id);
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(404).send({ error: err.message });
+      return reply.status(err?.statusCode || 404).send({
+        error: err.message,
+        code: err?.code,
+      });
+    }
+  });
+
+  app.post('/databases/:id/invalidate-tokens', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'databases.write'))) return;
+    const { id } = request.params as any;
+    const access = await ensureDatabaseAccess(request, reply, id);
+    if (!access) return;
+    try {
+      const result = await databaseService.invalidateTokens(
+        id,
+        (request as any).user?.sub,
+        request.ip,
+      );
+      return reply.send({
+        ...result,
+        database: presentDatabase(result.database),
+      });
+    } catch (err: any) {
+      return reply.status(err?.statusCode || 500).send({
+        error: err?.message || 'failed to invalidate database tokens',
+        code: err?.code,
+      });
     }
   });
 
@@ -312,6 +366,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
     try {
       const database = await databaseService.getDatabase(id);
       if (!database) return reply.status(404).send({ error: 'database not found' });
+
+      assertDatabaseReadsAllowed(database);
       
       const filePath = await databaseService.getDatabaseFilePath(id);
       if (!fs.existsSync(filePath)) {
@@ -325,7 +381,10 @@ export default async function databaseRoutes(app: FastifyInstance) {
       const stream = fs.createReadStream(filePath);
       return reply.send(stream);
     } catch (err: any) {
-      return reply.status(500).send({ error: err?.message || 'failed to download database file' });
+      return reply.status(err?.statusCode || 500).send({
+        error: err?.message || 'failed to download database file',
+        code: err?.code,
+      });
     }
   });
 
@@ -625,16 +684,9 @@ export default async function databaseRoutes(app: FastifyInstance) {
       } catch {}
     }
 
-    if (!tokenValid && database.subdomain) {
-      try {
-        const namespaceService = new LibsqlNamespaceService();
-        const payload = namespaceService.verifyToken(token);
-        if (payload && payload.ns === database.subdomain) {
-          tokenValid = true;
-        }
-      } catch {}
-    }
-
+    // Only the credential currently stored for this database is accepted.
+    // Previously any namespace JWT signed by the shared sqld key was accepted
+    // here, which meant rotating the panel token did not revoke old tokens.
     if (!tokenValid) {
       return reply.code(401).send({ error: 'unauthorized: invalid database token' });
     }
@@ -656,6 +708,28 @@ export default async function databaseRoutes(app: FastifyInstance) {
       if (reqItem.type === 'store_sql' && reqItem.sql_id != null && reqItem.sql) {
         requestSqlMap.set(reqItem.sql_id, reqItem.sql);
       }
+    }
+
+    // Preflight every statement before opening a dedicated baton or executing
+    // the first statement. A mixed batch must be rejected as a whole, never
+    // partially applied.
+    const preflightSqlMap = batonState
+      ? new Map<number, string>([...batonState.sqlMap, ...requestSqlMap])
+      : requestSqlMap;
+    try {
+      for (const reqItem of requests) {
+        for (const sql of getRequestSql(reqItem, preflightSqlMap)) {
+          assertDatabaseSqlAllowed(database, sql);
+        }
+      }
+    } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.code(error.statusCode).send({
+          error: error.message,
+          code: error.code,
+        });
+      }
+      throw error;
     }
 
     let client: any = ConnectionPool.getInstance().getClient(database);

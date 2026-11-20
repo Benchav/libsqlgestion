@@ -3,6 +3,7 @@ import { Database } from '../../domain/entities/Database';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
+import { assertDatabaseReadsAllowed } from './database-protection';
 
 type SchemaEntry = {
   table: string;
@@ -213,6 +214,10 @@ export class SchemaService {
       err.name = 'EntityNotFoundError';
       throw err;
     }
+
+    // Check before the schema cache: Block Reads must not be bypassed by
+    // serving a previously cached schema payload.
+    assertDatabaseReadsAllowed(database);
 
     const includeRowCounts = options.includeRowCounts !== false;
     // PRAGMA schema_version changes on DDL only, not on INSERT/DELETE. Caching

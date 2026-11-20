@@ -20,6 +20,7 @@ import { PlatformSettings1710000001000 } from '../../migrations/1710000001000-Pl
 import { DatabaseSnapshots1710000002000 } from '../../migrations/1710000002000-DatabaseSnapshots';
 import { DatabaseSnapshotPolicies1710000003000 } from '../../migrations/1710000003000-DatabaseSnapshotPolicies';
 import { Analytics1710000004000 } from '../../migrations/1710000004000-Analytics';
+import { DatabaseProtection1710000005000 } from '../../migrations/1710000005000-DatabaseProtection';
 
 const databaseFile = process.env.DATABASE_FILE || './data/control.db';
 
@@ -30,5 +31,5 @@ export const AppDataSource = new DataSource({
   migrationsRun: false,
   logging: false,
   entities: [User, Project, Database, Role, Permission, UserRole, AuditLog, Session, ProjectMember, DatabaseMigration, PlatformSetting, DatabaseSnapshot, DatabaseSnapshotPolicy, QueryMetric, TrafficMetric, StorageSample],
-  migrations: [InitialControlPlane1710000000000, PlatformSettings1710000001000, DatabaseSnapshots1710000002000, DatabaseSnapshotPolicies1710000003000, Analytics1710000004000],
+  migrations: [InitialControlPlane1710000000000, PlatformSettings1710000001000, DatabaseSnapshots1710000002000, DatabaseSnapshotPolicies1710000003000, Analytics1710000004000, DatabaseProtection1710000005000],
 });

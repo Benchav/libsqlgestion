@@ -5,7 +5,7 @@ import { User } from '../../../domain/entities/User';
 import { ensurePermission, ensureProjectAccess } from '../guards';
 import { AuditService } from '../../../application/audit/AuditService';
 import { createProjectSchema, parseAndValidate } from '../../../types/validations';
-import { presentDatabase } from '../database-presenter';
+import { presentDatabase, presentSafeProject } from '../database-presenter';
 
 function presentProject(project: any) {
   const databaseCount = typeof project?.databaseCount === 'number'
@@ -15,7 +15,7 @@ function presentProject(project: any) {
       : 0;
 
   return {
-    ...project,
+    ...presentSafeProject(project),
     databaseCount,
     databases: Array.isArray(project?.databases) ? project.databases.map((database: any) => presentDatabase(database)) : project?.databases,
   };
@@ -67,7 +67,10 @@ export default async function projectRoutes(app: FastifyInstance) {
       await auditService.record({ action: 'project.delete', resourceType: 'project', resourceId: id, actorId: userId });
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(404).send({ error: err.message });
+      return reply.status(err?.statusCode || 404).send({
+        error: err.message,
+        code: err?.code,
+      });
     }
   });
 }

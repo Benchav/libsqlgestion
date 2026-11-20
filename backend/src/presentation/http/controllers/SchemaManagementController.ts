@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ensurePermission, ensureDatabaseAccess } from '../guards';
 import { SchemaManagementService } from '../../../application/databases/SchemaManagementService';
 import { DatabaseError } from '../../../infrastructure/sqlite/SqliteClient';
+import { DatabaseProtectionError } from '../../../application/databases/database-protection';
 
 export default async function schemaManagementRoutes(app: FastifyInstance) {
   const schemaService = new SchemaManagementService();
@@ -17,6 +18,13 @@ export default async function schemaManagementRoutes(app: FastifyInstance) {
       const result = await schemaService.deleteTable(id, table, (request as any).user?.sub);
       return reply.send(result);
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.code === 'SQLITE_BUSY' ? 503 : 422).send({
           ok: false,
@@ -46,6 +54,13 @@ export default async function schemaManagementRoutes(app: FastifyInstance) {
       const result = await schemaService.renameTable(id, table, body.name.trim(), (request as any).user?.sub);
       return reply.send(result);
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.code === 'SQLITE_BUSY' ? 503 : 422).send({
           ok: false,
@@ -71,6 +86,13 @@ export default async function schemaManagementRoutes(app: FastifyInstance) {
       const result = await schemaService.addColumn(id, table, body, (request as any).user?.sub);
       return reply.status(201).send(result);
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.code === 'SQLITE_BUSY' ? 503 : 422).send({
           ok: false,
@@ -100,6 +122,13 @@ export default async function schemaManagementRoutes(app: FastifyInstance) {
       const result = await schemaService.renameColumn(id, table, column, body.name.trim(), (request as any).user?.sub);
       return reply.send(result);
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.code === 'SQLITE_BUSY' ? 503 : 422).send({
           ok: false,
@@ -129,6 +158,13 @@ export default async function schemaManagementRoutes(app: FastifyInstance) {
       const result = await schemaService.changeColumnType(id, table, column, body.type.trim(), (request as any).user?.sub);
       return reply.send(result);
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.code === 'SQLITE_BUSY' ? 503 : 422).send({
           ok: false,
@@ -153,6 +189,13 @@ export default async function schemaManagementRoutes(app: FastifyInstance) {
       const result = await schemaService.deleteColumn(id, table, column, (request as any).user?.sub);
       return reply.send(result);
     } catch (error: any) {
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         return reply.status(error.code === 'SQLITE_BUSY' ? 503 : 422).send({
           ok: false,

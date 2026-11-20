@@ -6,9 +6,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '../../../components/AppShell';
 import { TokenReveal } from '../../../components/TokenReveal';
 import { SnapshotsCard } from '../../../components/SnapshotsCard';
+import { DatabaseProtectionCard } from '../../../components/DatabaseProtectionCard';
+import { DatabaseDangerZone } from '../../../components/DatabaseDangerZone';
 import { apiRequest } from '../../../lib/api';
 import { clearEphemeralDatabaseToken, consumeEphemeralDatabaseToken, setEphemeralDatabaseToken } from '../../../lib/token-cache';
-import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, Trash2, X, Copy, Check, Zap, Download, Eye } from 'lucide-react';
+import { Database, Table2, Terminal, RefreshCw, Key, ChevronRight, HardDrive, CheckCircle2, XCircle, Pencil, X, Copy, Check, Zap, Eye } from 'lucide-react';
 
 type DatabaseDetail = {
   id: string;
@@ -18,6 +20,9 @@ type DatabaseDetail = {
   runtimeProvider?: string;
   status: string;
   subdomain?: string;
+  blockReads?: boolean;
+  blockWrites?: boolean;
+  deleteProtection?: boolean;
   url?: string;
   connectionUrl?: string;
   publicConnectionUrl?: string;
@@ -83,7 +88,6 @@ export default function DatabaseDetailPage() {
   const [healthStatus, setHealthStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [healthMessage, setHealthMessage] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [downloadState, setDownloadState] = useState<'idle' | 'working' | 'success'>('idle');
   const downloadResetTimer = useRef<number | null>(null);
   const [copiedKey, setCopiedKey] = useState('');
@@ -186,7 +190,10 @@ export default function DatabaseDetailPage() {
   }
 
   async function handleRotateToken() {
-    if (!confirm('Create a new token? The current token will stop working immediately.')) return;
+    const message = database?.runtimeProvider === 'sqld-namespace'
+      ? 'Create a new token? The panel token will stop working immediately. Tokens issued directly against the sqld URL may remain valid until they expire.'
+      : 'Create a new token? The current token will stop working immediately.';
+    if (!confirm(message)) return;
     setTokenStatus('loading');
     setTokenMessage('Creating a new token...');
     try {
@@ -202,24 +209,23 @@ export default function DatabaseDetailPage() {
     }
   }
 
-  async function handleDeleteDatabase() {
-    if (!confirm('Delete this database? This cannot be undone.')) return;
+  async function handleDatabaseDeleted() {
+    queryClient.setQueryData(['databases'], (old: any) =>
+      Array.isArray(old) ? old.filter((d: any) => d.id !== id) : old
+    );
+    await queryClient.invalidateQueries({ queryKey: ['databases'] });
+    queryClient.removeQueries({ queryKey: ['database', id] });
+    await queryClient.invalidateQueries({ queryKey: ['metrics'] });
+    router.replace('/databases');
+  }
 
-    setIsDeleting(true);
-    try {
-      await apiRequest(`/databases/${id}`, { method: 'DELETE' });
-      queryClient.setQueryData(['databases'], (old: any) => 
-        Array.isArray(old) ? old.filter((d: any) => d.id !== id) : old
-      );
-      await queryClient.invalidateQueries({ queryKey: ['databases'] });
-      queryClient.removeQueries({ queryKey: ['database', id] });
-      await queryClient.invalidateQueries({ queryKey: ['metrics'] });
-      router.replace('/databases');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsDeleting(false);
-    }
+  function handleTokenInvalidated(token: string, updated: DatabaseDetail) {
+    setDatabase(updated);
+    setEphemeralDatabaseToken(updated.id, token, updated.name);
+    setRevealedToken(token);
+    setTokenStatus('success');
+    setTokenMessage('New token generated. Copy it now; the previous panel token is no longer valid.');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function handleDownloadDatabase() {
@@ -370,6 +376,21 @@ export default function DatabaseDetailPage() {
                   }`}>
                     {database?.status}
                   </span>
+                  {database?.blockReads && (
+                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
+                      READS BLOCKED
+                    </span>
+                  )}
+                  {database?.blockWrites && (
+                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
+                      WRITES BLOCKED
+                    </span>
+                  )}
+                  {database?.deleteProtection && (
+                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
+                      PROTECTED
+                    </span>
+                  )}
                 </h1>
                 <div className="text-sm text-zinc-400 mt-1 flex items-center gap-2">
                   <span className="uppercase tracking-wider font-semibold text-[11px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded">
@@ -416,13 +437,6 @@ export default function DatabaseDetailPage() {
               >
                 <RefreshCw size={16} className={downloadState === 'working' ? 'animate-spin' : ''} />
                 {downloadState === 'working' ? 'Downloading...' : 'Download'}
-              </button>
-              <button
-                onClick={handleDeleteDatabase}
-                disabled={isDeleting}
-                className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/20 disabled:opacity-60"
-              >
-                <Trash2 size={16} /> {isDeleting ? 'Deleting...' : 'Delete'}
               </button>
               <button 
                 onClick={() => router.push(`/databases/${id}/studio`)}
@@ -892,6 +906,15 @@ await client.execute(\`
 
         {database && (
           <div className="mt-6">
+            <DatabaseProtectionCard
+              database={database}
+              onUpdated={(updated) => setDatabase(updated)}
+            />
+          </div>
+        )}
+
+        {database && (
+          <div className="mt-6">
             <SnapshotsCard
               database={database}
               onRestored={(newDatabaseId, newToken, newDatabaseName) => {
@@ -902,6 +925,16 @@ await client.execute(\`
                 );
                 router.push(`/databases/${newDatabaseId}`);
               }}
+            />
+          </div>
+        )}
+
+        {database && (
+          <div className="mt-6">
+            <DatabaseDangerZone
+              database={database}
+              onTokenInvalidated={handleTokenInvalidated}
+              onDeleted={handleDatabaseDeleted}
             />
           </div>
         )}

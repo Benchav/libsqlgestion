@@ -99,7 +99,9 @@ export class ConnectionPool {
         .catch(() => undefined)
         .then(async () => {
           if (activePool.clients.length >= this.readPoolSize) return;
-          const client = new SqliteClient(this.resolveSqliteFilePath(database));
+          const client = new SqliteClient(this.resolveSqliteFilePath(database), {
+            queryOnly: Boolean(database.blockWrites),
+          });
           // This SELECT is queued after the constructor's PRAGMA sequence on
           // the same connection, so WAL/busy_timeout are applied before the
           // connection joins the pool.
@@ -140,6 +142,35 @@ export class ConnectionPool {
     currentPool.next += 1;
     currentPool.lastUsed = Date.now();
     return client;
+  }
+
+  /**
+   * Applies the write-block flag to connections that are already open.
+   *
+   * This is a defence-in-depth layer behind the SQL classifier. A statement
+   * already executing may finish; every following statement on the connection
+   * is rejected by SQLite itself.
+   */
+  async setQueryOnly(databaseId: string, enabled: boolean): Promise<void> {
+    const work: Array<Promise<void>> = [];
+    const entry = this.pool.get(databaseId);
+    if (entry?.type === 'sqlite') {
+      work.push((entry.client as SqliteClient).setQueryOnly(enabled));
+    }
+
+    const readPool = this.readPool.get(databaseId);
+    if (readPool) {
+      for (const client of readPool.clients) {
+        work.push(client.setQueryOnly(enabled));
+      }
+    }
+
+    if (work.length === 0) return;
+    const results = await Promise.allSettled(work);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure && failure.status === 'rejected') {
+      throw failure.reason;
+    }
   }
 
   evict(databaseId: string): void {
@@ -196,14 +227,18 @@ export class ConnectionPool {
   // ---------------------------------------------------------------------------
 
   createDedicatedSqliteClient(database: Database): SqliteClient {
-    return new SqliteClient(this.resolveSqliteFilePath(database));
+    return new SqliteClient(this.resolveSqliteFilePath(database), {
+      queryOnly: Boolean(database.blockWrites),
+    });
   }
 
   private createClient(database: Database): PooledClient {
     const effectiveType = resolveEffectiveDatabaseType(database);
 
     if (effectiveType === 'sqlite') {
-      const client = new SqliteClient(this.resolveSqliteFilePath(database));
+      const client = new SqliteClient(this.resolveSqliteFilePath(database), {
+        queryOnly: Boolean(database.blockWrites),
+      });
       return { client, type: 'sqlite', lastUsed: Date.now() };
     }
 

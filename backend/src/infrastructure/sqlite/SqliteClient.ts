@@ -123,7 +123,7 @@ export class SqliteClient {
   public exec: (sql: string) => Promise<void>;
   public execAtomic: (sql: string) => Promise<void>;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, options: { queryOnly?: boolean } = {}) {
     // Pre-validate the file path before opening
     if (!filePath) {
       throw new DatabaseError('SQLITE_CANTOPEN', 'No database file path provided.', false);
@@ -140,14 +140,21 @@ export class SqliteClient {
 
     this.db = new sqlite3.Database(filePath);
     const config = getSqlitePerformanceConfig();
-    // Apply SQLite performance and concurrency tuning immediately after opening
+    // Apply SQLite performance and concurrency tuning immediately after opening.
+    // In query-only mode we must not switch the persistent journal mode: doing
+    // so would be a write on a database whose writes the operator has blocked.
     this.db.serialize(() => {
-      this.db.run('PRAGMA journal_mode = WAL;');
+      if (!options.queryOnly) {
+        this.db.run('PRAGMA journal_mode = WAL;');
+      }
       this.db.run(`PRAGMA busy_timeout = ${Math.max(0, config.busyTimeoutMs)};`);
       this.db.run(`PRAGMA synchronous = ${config.synchronous};`);
       this.db.run(`PRAGMA cache_size = ${config.cacheSize};`);
       this.db.run(`PRAGMA temp_store = ${config.tempStore};`);
       this.db.run(`PRAGMA mmap_size = ${Math.max(0, config.mmapSize)};`);
+      if (options.queryOnly) {
+        this.db.run('PRAGMA query_only = ON;');
+      }
     });
     this.all = (sql: string, params: SqliteParams = []) =>
       new Promise((resolve, reject) => {
@@ -233,6 +240,15 @@ export class SqliteClient {
     } catch (error: any) {
       return { ok: false, details: DatabaseError.from(error).message };
     }
+  }
+
+  setQueryOnly(enabled: boolean): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.run(`PRAGMA query_only = ${enabled ? 'ON' : 'OFF'};`, (error: Error | null) => {
+        if (error) reject(DatabaseError.from(error));
+        else resolve();
+      });
+    });
   }
 
   interrupt(): void {

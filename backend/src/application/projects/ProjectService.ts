@@ -6,6 +6,7 @@ import { User } from '../../domain/entities/User';
 import { ProjectMember } from '../../domain/entities/ProjectMember';
 import { Database } from '../../domain/entities/Database';
 import { SqliteStorageService } from '../../infrastructure/storage/SqliteStorageService';
+import { DatabaseService } from '../databases/DatabaseService';
 
 export class ProjectService {
   private projectRepo = AppDataSource.getRepository(Project);
@@ -57,6 +58,32 @@ export class ProjectService {
 
   async deleteProject(id: string) {
     const project = await this.projectRepo.findOneByOrFail({ id });
+
+    // The databases FK uses ON DELETE CASCADE. Without this preflight, deleting
+    // a project would silently remove protected database rows and leave their
+    // runtimes/files orphaned.
+    const protectedDatabases = await this.databaseRepo.find({
+      where: { project: { id }, deleteProtection: true },
+    });
+    if (protectedDatabases.length > 0) {
+      const names = protectedDatabases.map((database) => database.name).join(', ');
+      const error: any = new Error(
+        `Delete Protection is enabled for: ${names}. Disable it before deleting this project.`,
+      );
+      error.statusCode = 409;
+      error.code = 'DATABASE_DELETE_PROTECTED';
+      throw error;
+    }
+
+    // Delete each database through the normal service so runtimes, namespace
+    // files, local files and snapshots are cleaned up. The previous cascade
+    // removed only the control-plane rows and left those resources orphaned.
+    const databases = await this.databaseRepo.find({ where: { project: { id } } });
+    const databaseService = new DatabaseService();
+    for (const database of databases) {
+      await databaseService.deleteDatabase(database.id);
+    }
+
     await this.projectRepo.remove(project);
 
     const storageService = new SqliteStorageService();

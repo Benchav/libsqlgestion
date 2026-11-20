@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { QueryService } from '../../../application/databases/QueryService';
 import { ensurePermission, ensureDatabaseAccess } from '../guards';
 import { DatabaseError } from '../../../infrastructure/sqlite/SqliteClient';
+import { DatabaseProtectionError } from '../../../application/databases/database-protection';
 import { executeQuerySchema, parseAndValidate } from '../../../types/validations';
 import { analyticsCollector } from '../../../application/analytics/AnalyticsCollector';
 
@@ -46,6 +47,13 @@ export default async function queryRoutes(app: FastifyInstance) {
         errorCode: error?.code || 'QUERY_ERROR',
       });
 
+      if (error instanceof DatabaseProtectionError) {
+        return reply.status(error.statusCode).send({
+          ok: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
       if (error instanceof DatabaseError) {
         const statusCode = error.code === 'SQLITE_SYNTAX' || error.code === 'SQLITE_CONSTRAINT' || error.code === 'SQLITE_NO_TABLE' || error.code === 'SQLITE_NO_COLUMN'
           ? 422

@@ -11,6 +11,32 @@ type DatabaseLike = {
   metadata?: Record<string, unknown> | null;
 };
 
+/**
+ * Removes credential material from a project relation before it is serialized
+ * into a database or project response. The frontend only needs the owner email.
+ */
+export function presentSafeProject(project: any) {
+  if (!project || typeof project !== 'object') return project;
+  const safeUser = (user: any) => user && typeof user === 'object'
+    ? {
+      id: user.id,
+      email: user.email,
+      active: user.active,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    }
+    : user;
+  const owner = safeUser(project.owner);
+  const members = Array.isArray(project.members)
+    ? project.members.map((member: any) => (
+      member && typeof member === 'object'
+        ? { ...member, user: safeUser(member.user) }
+        : member
+    ))
+    : project.members;
+  return { ...project, owner, members };
+}
+
 export function presentDatabase<T extends DatabaseLike>(database: T) {
   const urls = buildDatabaseConnectionUrls(database);
   const runtimeProvider = getRuntimeProvider(database);
@@ -18,8 +44,16 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
   const runtimeStatus = typeof database.status === 'string' ? database.status : 'inactive';
   const embeddedReplicaSupported = runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace';
 
+  // Never expose the encrypted credential through the API. The plaintext token
+  // is only returned by the explicit reveal/rotate/invalidate endpoints.
+  const safeDatabase = { ...database } as Record<string, unknown>;
+  delete safeDatabase.encryptedToken;
+  if (safeDatabase.project) {
+    safeDatabase.project = presentSafeProject(safeDatabase.project);
+  }
+
   return {
-    ...database,
+    ...safeDatabase,
     effectiveType,
     runtimeProvider: runtimeProvider || (effectiveType === 'sqlite' ? 'local-file' : ''),
     connectionUrl: urls.publicHttpsUrl || urls.publicLibsqlUrl || urls.backendUrl,

@@ -25,6 +25,17 @@ export class Database {
   @Column({ default: 'inactive' })
   status!: 'draft' | 'inactive' | 'provisioning' | 'active' | 'error' | 'disabled';
 
+  // Data-plane protections. Defaults are intentionally false so deploying the
+  // migration never changes the behaviour of an existing database.
+  @Column({ default: false })
+  blockReads!: boolean;
+
+  @Column({ default: false })
+  blockWrites!: boolean;
+
+  @Column({ default: false })
+  deleteProtection!: boolean;
+
   @Column({ type: 'simple-json', nullable: true })
   metadata?: Record<string, unknown>;
 

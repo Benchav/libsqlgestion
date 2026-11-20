@@ -34,6 +34,15 @@ export const updateDatabaseSchema = z.object({
   status: z.enum(['active', 'inactive', 'error']).optional(),
 });
 
+export const updateDatabaseProtectionSchema = z.object({
+  blockReads: z.boolean().optional(),
+  blockWrites: z.boolean().optional(),
+  deleteProtection: z.boolean().optional(),
+}).refine(
+  (value) => Object.values(value).some((entry) => typeof entry === 'boolean'),
+  { message: 'at least one protection flag is required' },
+);
+
 export const convertToRuntimeSchema = z.object({
   subdomain: optionalString,
 });

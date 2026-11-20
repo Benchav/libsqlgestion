@@ -7,6 +7,7 @@ import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteC
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import { AuditService } from '../audit/AuditService';
 import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
+import { assertDatabaseWritesAllowed } from './database-protection';
 
 export class MigrationService {
   private databaseRepo = AppDataSource.getRepository(Database);
@@ -19,6 +20,7 @@ export class MigrationService {
 
   async apply(databaseId: string, input: { name: string; sql?: string; statements?: string[]; source?: string }) {
     const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    assertDatabaseWritesAllowed(database);
 
     // Validate migration name
     if (!input.name || input.name.trim().length === 0) {

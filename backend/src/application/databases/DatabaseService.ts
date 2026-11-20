@@ -18,6 +18,12 @@ import { getMaxUploadBytes } from '../../config/uploads';
 import { getRuntimeConnectionUrl, isRemoteDatabaseUrl, normalizeLegacyLocalDatabase, resolveEffectiveDatabaseType, shouldReconcileLegacyLocalDatabase } from './database-runtime';
 import { runtimeIdentityMatches } from './runtime-health-guard';
 import { deriveDatabaseName } from '../shared/identifiers';
+import {
+  assertDatabaseDeleteAllowed,
+  DatabaseProtectionFlags,
+  databaseRuntimeProvider,
+  tokenInvalidationScope,
+} from './database-protection';
 
 type PrimaryMode = 'namespace' | 'runtime';
 type RequestedPrimaryMode = PrimaryMode | 'auto';
@@ -973,7 +979,7 @@ export class DatabaseService {
 
       let client: SqliteClient;
       try {
-        client = new SqliteClient(url);
+        client = new SqliteClient(url, { queryOnly: Boolean(database.blockWrites) });
       } catch (error: any) {
         return { ok: false, details: error.message || 'failed to open database', code: error.code || 'SQLITE_CANTOPEN' };
       }
@@ -1007,6 +1013,10 @@ export class DatabaseService {
   async deleteDatabase(id: string) {
     const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
     if (!database) throw new Error('database not found');
+
+    // Defence in depth: the controller checks this too, but service callers
+    // (scripts, project cleanup, tests) must never bypass Delete Protection.
+    assertDatabaseDeleteAllowed(database);
 
     ConnectionPool.getInstance().evict(id);
 
@@ -1069,6 +1079,181 @@ export class DatabaseService {
       metadata: input,
     });
     return database;
+  }
+
+  async updateProtection(
+    id: string,
+    input: DatabaseProtectionFlags,
+    actorId?: string,
+    ipAddress?: string,
+  ) {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) {
+      const error: any = new Error('database not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const before = {
+      blockReads: Boolean(database.blockReads),
+      blockWrites: Boolean(database.blockWrites),
+      deleteProtection: Boolean(database.deleteProtection),
+    };
+    const blockWritesTouched = typeof input.blockWrites === 'boolean';
+
+    // Update only the supplied columns. Saving the whole entity would let two
+    // concurrent administrators overwrite each other's unrelated switch.
+    const patch: {
+      blockReads?: boolean;
+      blockWrites?: boolean;
+      deleteProtection?: boolean;
+    } = {};
+    if (typeof input.blockReads === 'boolean') patch.blockReads = input.blockReads;
+    if (typeof input.blockWrites === 'boolean') patch.blockWrites = input.blockWrites;
+    if (typeof input.deleteProtection === 'boolean') patch.deleteProtection = input.deleteProtection;
+    if (Object.keys(patch).length === 0) return database;
+    await this.databaseRepo.update(id, patch);
+
+    const saved = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!saved) {
+      const error: any = new Error('database not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // Apply the write block to already-open local SQLite connections. The SQL
+    // classifier remains the primary control; this is a second, engine-level
+    // barrier in case a statement ever slips through classification.
+    if (blockWritesTouched) {
+      const pool = ConnectionPool.getInstance();
+      const applyToConnections = pool.setQueryOnly(id, Boolean(saved.blockWrites));
+
+      if (saved.blockWrites) {
+        // Enabling: the SQL guard already blocks new statements as soon as the
+        // row is saved. Do not keep the admin request open behind a
+        // long-running query just to apply the engine-level barrier.
+        await Promise.race([
+          applyToConnections.catch((error: any) => {
+            console.warn(
+              `[DatabaseService] could not apply query_only=ON to local connections for ${id}: ` +
+              `${error?.message || error}`,
+            );
+          }),
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 2_000);
+            timer.unref?.();
+          }),
+        ]);
+      } else {
+        // Disabling: wait for query_only=OFF before reporting success so the
+        // next write does not hit a connection that is still read-only. If a
+        // connection cannot be updated, discard it and let the pool reopen it
+        // without the write block.
+        try {
+          await Promise.race([
+            applyToConnections,
+            new Promise<never>((_, reject) => {
+              const timer = setTimeout(
+                () => reject(new Error('timed out applying query_only=OFF')),
+                5_000,
+              );
+              timer.unref?.();
+            }),
+          ]);
+        } catch (error: any) {
+          console.warn(
+            `[DatabaseService] could not clear query_only for ${id}; evicting pooled connections: ` +
+            `${error?.message || error}`,
+          );
+          pool.evict(id);
+        }
+      }
+    }
+
+    await this.auditService.record({
+      action: 'database.protection.update',
+      resourceType: 'database',
+      resourceId: id,
+      actorId,
+      ipAddress,
+      metadata: {
+        before,
+        after: {
+          blockReads: Boolean(saved.blockReads),
+          blockWrites: Boolean(saved.blockWrites),
+          deleteProtection: Boolean(saved.deleteProtection),
+        },
+      },
+    }).catch((error: any) => {
+      // The flags are already persisted. Do not report a failed update solely
+      // because the audit insert failed.
+      console.warn(`[DatabaseService] protection audit failed for ${id}: ${error?.message || error}`);
+    });
+
+    return saved;
+  }
+
+  async invalidateTokens(id: string, actorId?: string, ipAddress?: string) {
+    const database = await this.databaseRepo.findOne({ where: { id }, relations: ['project'] });
+    if (!database) {
+      const error: any = new Error('database not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (database.status === 'provisioning') {
+      const error: any = new Error('Cannot invalidate tokens while the database is provisioning.');
+      error.statusCode = 409;
+      error.code = 'DATABASE_PROVISIONING';
+      throw error;
+    }
+
+    const scope = tokenInvalidationScope(database);
+    if (scope === 'unsupported') {
+      const error: any = new Error(
+        'Token invalidation is not supported for this database. Its credentials are managed outside this panel.',
+      );
+      error.statusCode = 409;
+      error.code = 'DATABASE_TOKEN_REVOCATION_UNSUPPORTED';
+      throw error;
+    }
+
+    // Reuse the hardened rotation path. It evicts pooled clients, preserves
+    // the previous runtime until the replacement is ready and writes an audit
+    // trail for the credential change.
+    const rotated = await this.rotateToken(id);
+    const provider = databaseRuntimeProvider(database);
+
+    const warning = provider === 'docker-libsql'
+      ? 'The dedicated libSQL runtime is recreated, so clients may see a short interruption.'
+      : provider === 'sqld-namespace'
+        ? 'This rotates the token used by the panel. Tokens already issued for the direct sqld URL remain valid until they expire.'
+        : undefined;
+
+    await this.auditService.record({
+      action: 'database.invalidate-tokens',
+      resourceType: 'database',
+      resourceId: id,
+      actorId,
+      ipAddress,
+      metadata: {
+        provider,
+        scope,
+        warning: warning || null,
+      },
+    }).catch((error: any) => {
+      // The credential has already been rotated. A failed audit insert must not
+      // turn a successful security action into a 500 for the operator.
+      console.warn(`[DatabaseService] token invalidation audit failed for ${id}: ${error?.message || error}`);
+    });
+
+    return {
+      database: rotated.database,
+      token: rotated.token,
+      scope,
+      provider,
+      warning,
+    };
   }
 
   async backupDatabase(sourceId: string, input: { name: string }) {

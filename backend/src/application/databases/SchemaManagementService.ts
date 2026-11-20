@@ -4,6 +4,7 @@ import { AuditService } from '../audit/AuditService';
 import { SqliteClient, DatabaseError } from '../../infrastructure/sqlite/SqliteClient';
 import { ConnectionPool } from '../../infrastructure/db/ConnectionPool';
 import type { LibsqlClient } from '../../infrastructure/libsql/LibsqlClient';
+import { assertDatabaseWritesAllowed } from './database-protection';
 
 function quoteIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -203,7 +204,7 @@ export class SchemaManagementService {
   private auditService = new AuditService();
 
   async deleteTable(databaseId: string, tableName: string, actorId?: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.getDatabaseForWrite(databaseId);
     const safeTableName = validateTableName(tableName);
     const pool = ConnectionPool.getInstance();
     const client = pool.getClient(database);
@@ -240,7 +241,7 @@ export class SchemaManagementService {
   }
 
   async renameTable(databaseId: string, tableName: string, nextTableName: string, actorId?: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.getDatabaseForWrite(databaseId);
     const safeTableName = validateTableName(tableName);
     const safeNextTableName = validateTableName(nextTableName);
 
@@ -284,7 +285,7 @@ export class SchemaManagementService {
   }
 
   async addColumn(databaseId: string, tableName: string, input: { name: string; type: string; notnull?: boolean; defaultValue?: string; unique?: boolean }, actorId?: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.getDatabaseForWrite(databaseId);
     const safeTableName = validateTableName(tableName);
     const safeColumnName = validateColumnName(input.name);
     const safeColumnType = validateColumnType(input.type);
@@ -334,7 +335,7 @@ export class SchemaManagementService {
   }
 
   async renameColumn(databaseId: string, tableName: string, columnName: string, nextColumnName: string, actorId?: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.getDatabaseForWrite(databaseId);
     const safeTableName = validateTableName(tableName);
     const safeColumnName = validateColumnName(columnName);
     const safeNextColumnName = validateColumnName(nextColumnName);
@@ -379,7 +380,7 @@ export class SchemaManagementService {
   }
 
   async deleteColumn(databaseId: string, tableName: string, columnName: string, actorId?: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.getDatabaseForWrite(databaseId);
     const safeTableName = validateTableName(tableName);
     const safeColumnName = validateColumnName(columnName);
     const pool = ConnectionPool.getInstance();
@@ -420,7 +421,7 @@ export class SchemaManagementService {
   }
 
   async changeColumnType(databaseId: string, tableName: string, columnName: string, nextType: string, actorId?: string) {
-    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    const database = await this.getDatabaseForWrite(databaseId);
     const safeTableName = validateTableName(tableName);
     const safeColumnName = validateColumnName(columnName);
     const safeNextType = validateColumnType(nextType);
@@ -569,6 +570,12 @@ export class SchemaManagementService {
       tableConstraints: parts.tableConstraints,
       indexSqls: parts.indexes.map((index) => index.sql),
     };
+  }
+
+  private async getDatabaseForWrite(databaseId: string) {
+    const database = await this.databaseRepo.findOneByOrFail({ id: databaseId });
+    assertDatabaseWritesAllowed(database);
+    return database;
   }
 
   private parseCreateTableSql(createSql: string) {

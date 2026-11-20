@@ -20,6 +20,9 @@ export type DatabaseInfo = {
   runtimeProvider?: string;
   status: string;
   subdomain?: string;
+  blockReads?: boolean;
+  blockWrites?: boolean;
+  deleteProtection?: boolean;
   createdAt: string;
   project?: { id: string; name: string };
 };
@@ -32,6 +35,9 @@ export type DatabaseDetail = {
   runtimeProvider?: string;
   status: string;
   subdomain?: string;
+  blockReads?: boolean;
+  blockWrites?: boolean;
+  deleteProtection?: boolean;
   url?: string;
   connectionUrl?: string;
   publicConnectionUrl?: string;
@@ -405,6 +411,46 @@ export function useRotateToken(id: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['database', id] });
+    },
+  });
+}
+
+export function useUpdateDatabaseProtection(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      blockReads?: boolean;
+      blockWrites?: boolean;
+      deleteProtection?: boolean;
+    }) => {
+      const result = await apiRequest<{ database: DatabaseDetail }>(`/databases/${id}/protection`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['database', id] });
+      queryClient.invalidateQueries({ queryKey: ['databases'] });
+    },
+  });
+}
+
+export function useInvalidateDatabaseTokens(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      return apiRequest<{
+        database: DatabaseDetail;
+        token: string;
+        scope: 'all' | 'panel-only';
+        provider: string;
+        warning?: string;
+      }>(`/databases/${id}/invalidate-tokens`, { method: 'POST' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['database', id] });
+      queryClient.invalidateQueries({ queryKey: ['databases'] });
     },
   });
 }

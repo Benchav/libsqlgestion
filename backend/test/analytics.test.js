@@ -295,6 +295,90 @@ test.describe('Analytics', () => {
     assert.equal(body.summary.queries, 4);
   });
 
+  test('lists all existing databases including zero-usage databases', async () => {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const emptyDatabase = await databaseRepo.save(databaseRepo.create({
+      name: 'empty-usage-db',
+      type: 'sqlite',
+      status: 'active',
+      metadata: { runtime: { provider: 'docker-libsql' } },
+      project,
+    }));
+
+    const from = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const to = new Date(Date.now() + 1000);
+    const params = new URLSearchParams({
+      range: 'today',
+      from: from.toISOString(),
+      to: to.toISOString(),
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = JSON.parse(response.payload);
+
+    const empty = body.databaseUsage.find((item) => item.id === emptyDatabase.id);
+    assert.ok(empty, 'zero-usage database must be present');
+    assert.equal(empty.hasActivity, false);
+    assert.equal(empty.queries, 0);
+    assert.equal(empty.readQueries, 0);
+    assert.equal(empty.writeQueries, 0);
+    assert.equal(empty.lastSource, null);
+    assert.equal(empty.lastSeenAt, null);
+    assert.equal(empty.p95DurationMs, 0);
+    assert.equal(empty.storageBytes, 0);
+    assert.equal(empty.runtimeProvider, 'docker-libsql');
+
+    const active = body.databaseUsage.find((item) => item.id === database.id);
+    assert.ok(active);
+    assert.equal(active.hasActivity, true);
+    assert.equal(active.lastSource, 'pipeline');
+    assert.equal(body.databaseUsage.length >= 2, true);
+  });
+
+  test('filters every aggregate by databaseId', async () => {
+    const from = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const to = new Date(Date.now() + 1000);
+    const params = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      databaseId: database.id,
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = JSON.parse(response.payload);
+
+    assert.equal(body.databaseId, database.id);
+    assert.equal(body.database.id, database.id);
+    assert.equal(body.summary.queries, 3);
+    assert.equal(body.summary.activeDatabases, 1);
+    assert.equal(body.summary.totalDatabases, 1);
+    assert.equal(body.series.queries.reduce((total, value) => total + value, 0), 3);
+    assert.equal(body.topProjects.length, 1);
+    assert.equal(body.topProjects[0].id, project.id);
+    assert.equal(body.databaseUsage.some((item) => item.id === database.id), true);
+  });
+
+  test('rejects an unknown database filter', async () => {
+    const params = new URLSearchParams({
+      databaseId: '11111111-1111-4111-8111-111111111111',
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 422);
+    assert.match(response.payload, /database not found/i);
+  });
+
   test('zero-fills day buckets and carries storage forward', async () => {
     const databaseRepo = AppDataSource.getRepository(Database);
     const otherDatabase = await databaseRepo.save(databaseRepo.create({
@@ -452,6 +536,7 @@ test.describe('Analytics', () => {
     assert.equal(row.rowsWritten, 1);
     assert.equal(row.readQueries, 1);
     assert.equal(row.writeQueries, 1);
+    assert.equal(row.lastSource, 'gateway');
     assert.equal(body.sources.some((source) => source.source === 'gateway'), true);
     assert.equal(body.topDatabases.some((item) => item.id === unknownId), false);
   });
@@ -468,10 +553,13 @@ test.describe('Analytics', () => {
     assert.ok(body.summary);
     assert.ok(body.series);
     assert.ok(Array.isArray(body.operations));
+    assert.ok(Array.isArray(body.databaseUsage));
     assert.ok(Array.isArray(body.topDatabases));
     assert.equal(body.topQueries, undefined);
     assert.equal(body.topErrors, undefined);
     assert.ok(body.summary.readQueries >= 1);
     assert.ok(body.summary.writeQueries >= 1);
+    assert.equal(body.databaseUsage.some((item) => item.id === database.id), true);
+    assert.equal(body.databaseUsage.length >= 2, true);
   });
 });

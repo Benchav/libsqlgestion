@@ -162,6 +162,7 @@ export const analyticsQuerySchema = z.object({
   range: z.enum(['today', '7d', '30d', 'month']).optional(),
   from: optionalString,
   to: optionalString,
+  databaseId: z.string().uuid().optional(),
 });
 
 export const scanDirectorySchema = z.object({

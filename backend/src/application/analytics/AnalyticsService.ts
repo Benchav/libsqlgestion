@@ -1,10 +1,18 @@
 import { AppDataSource } from '../../infrastructure/db/data-source';
 import { Database } from '../../domain/entities/Database';
+import { getRuntimeProvider, resolveEffectiveDatabaseType } from '../databases/database-runtime';
 import { isUuidLike } from '../shared/identifiers';
 
 export type AnalyticsRange = 'today' | '7d' | '30d' | 'month';
 export type AnalyticsBucket = 'hour' | 'day';
 type QueryRank = 'duration' | 'rowsRead' | 'rowsWritten' | 'queries';
+
+export type AnalyticsInput = {
+  range?: AnalyticsRange;
+  from?: string;
+  to?: string;
+  databaseId?: string;
+};
 
 type AnalyticsWindow = {
   from: Date;
@@ -16,6 +24,34 @@ type BucketPlan = {
   labels: string[];
   fromMs: number;
   stepMs: number;
+};
+
+type DatabaseUsageRow = {
+  id: string;
+  name: string;
+  displayName: string;
+  needsRename: boolean;
+  subdomain: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  type: string;
+  status: string;
+  runtimeProvider: string;
+  rowsRead: number;
+  rowsWritten: number;
+  queries: number;
+  readQueries: number;
+  writeQueries: number;
+  otherQueries: number;
+  errors: number;
+  errorRate: number;
+  avgDurationMs: number;
+  p95DurationMs: number;
+  maxDurationMs: number;
+  lastSeenAt: string | null;
+  lastSource: string | null;
+  hasActivity: boolean;
+  storageBytes: number;
 };
 
 const HOUR_MS = 3_600_000;
@@ -116,6 +152,20 @@ function timestampToIso(value: unknown): string | null {
   return epoch === null ? null : new Date(epoch).toISOString();
 }
 
+function parseMetadata(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === 'object') return value as Record<string, unknown>;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildStorageSeries(labels: string[], fromMs: number, stepMs: number, baseline: any[], samples: any[]) {
   const latestByDatabase = new Map<string, number>();
   let total = 0;
@@ -157,47 +207,56 @@ function buildStorageSeries(labels: string[], fromMs: number, stepMs: number, ba
 export class AnalyticsService {
   private databaseRepo = AppDataSource.getRepository(Database);
 
-  async getOverview(input: { range?: AnalyticsRange; from?: string; to?: string } = {}) {
+  async getOverview(input: AnalyticsInput = {}) {
     const window = resolveWindow(input.range, input.from, input.to);
     const plan = buildBucketPlan(window);
+    const databaseId = input.databaseId?.trim() || undefined;
     const [
       summary,
       series,
       sources,
       statusCodes,
       operations,
-      topDatabases,
+      databaseUsage,
       topProjects,
       topQueries,
       topQueriesByRowsRead,
       topQueriesByRowsWritten,
       topQueriesByFrequency,
       topErrors,
+      selectedDatabase,
     ] = await Promise.all([
-      this.getSummary(window),
-      this.getSeries(window, plan),
-      this.getSources(window),
-      this.getStatusCodes(window),
-      this.getOperations(window),
-      this.getTopDatabases(window),
-      this.getTopProjects(window),
-      this.getTopQueries(window, 'duration'),
-      this.getTopQueries(window, 'rowsRead'),
-      this.getTopQueries(window, 'rowsWritten'),
-      this.getTopQueries(window, 'queries'),
-      this.getTopErrors(window),
+      this.getSummary(window, databaseId),
+      this.getSeries(window, plan, databaseId),
+      this.getSources(window, databaseId),
+      this.getStatusCodes(window, databaseId),
+      this.getOperations(window, databaseId),
+      this.getDatabaseUsage(window),
+      this.getTopProjects(window, databaseId),
+      this.getTopQueries(window, 'duration', databaseId),
+      this.getTopQueries(window, 'rowsRead', databaseId),
+      this.getTopQueries(window, 'rowsWritten', databaseId),
+      this.getTopQueries(window, 'queries', databaseId),
+      this.getTopErrors(window, databaseId),
+      this.getSelectedDatabase(databaseId),
     ]);
 
     return {
       from: window.from.toISOString(),
       to: window.to.toISOString(),
       bucket: window.bucket,
+      databaseId: databaseId || null,
+      database: selectedDatabase,
       summary,
       series,
       sources,
       statusCodes,
       operations,
-      topDatabases,
+      databaseUsage,
+      // Kept for backwards compatibility; the UI uses the full inventory.
+      topDatabases: databaseUsage
+        .filter((database) => database.queries > 0 && (!databaseId || database.id === databaseId))
+        .slice(0, 10),
       topProjects,
       topQueries,
       topQueriesByRowsRead,
@@ -211,30 +270,45 @@ export class AnalyticsService {
    * Compact payload for the dashboard. It intentionally omits the expensive
    * top-query and error breakdowns that only the full Analytics page needs.
    */
-  async getDashboard(input: { range?: AnalyticsRange; from?: string; to?: string } = {}) {
+  async getDashboard(input: AnalyticsInput = {}) {
     const window = resolveWindow(input.range, input.from, input.to);
     const plan = buildBucketPlan(window);
-    const [summary, series, operations, topDatabases] = await Promise.all([
-      this.getSummary(window),
-      this.getSeries(window, plan),
-      this.getOperations(window),
-      this.getTopDatabases(window, 5),
+    const databaseId = input.databaseId?.trim() || undefined;
+    const [summary, series, operations, databaseUsage, selectedDatabase] = await Promise.all([
+      this.getSummary(window, databaseId),
+      this.getSeries(window, plan, databaseId),
+      this.getOperations(window, databaseId),
+      this.getDatabaseUsage(window),
+      this.getSelectedDatabase(databaseId),
     ]);
 
     return {
       from: window.from.toISOString(),
       to: window.to.toISOString(),
       bucket: window.bucket,
+      databaseId: databaseId || null,
+      database: selectedDatabase,
       summary,
       series,
       operations,
-      topDatabases,
+      databaseUsage,
+      topDatabases: databaseUsage
+        .filter((database) => database.queries > 0 && (!databaseId || database.id === databaseId))
+        .slice(0, 5),
     };
   }
 
-  private async getSummary(window: AnalyticsWindow) {
+  private async getSummary(window: AnalyticsWindow, databaseId?: string) {
     const from = sqlDate(window.from);
     const to = sqlDate(window.to);
+    const databaseFilter = databaseId ? ' AND q.databaseId = ?' : '';
+    const queryParams = databaseId ? [from, to, databaseId] : [from, to];
+    const trafficFilter = databaseId
+      ? ' AND t.databaseId = ?'
+      : " AND (t.databaseId IS NULL OR t.databaseId = '' OR d.id IS NOT NULL)";
+    const trafficParams = databaseId ? [from, to, databaseId] : [from, to];
+    const storageFilter = databaseId ? ' AND s.databaseId = ?' : '';
+    const storageParams = databaseId ? [databaseId] : [];
 
     const [queryRows, trafficRows, storageRows, totalDatabases] = await Promise.all([
       AppDataSource.query(
@@ -249,8 +323,8 @@ export class AnalyticsService {
                 COUNT(DISTINCT q.databaseId) AS activeDatabases
          FROM query_metrics q
          JOIN databases d ON d.id = q.databaseId
-         WHERE q.createdAt >= ? AND q.createdAt <= ?`,
-        [from, to],
+         WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseFilter}`,
+        queryParams,
       ),
       AppDataSource.query(
         `SELECT COUNT(*) AS requests,
@@ -258,9 +332,8 @@ export class AnalyticsService {
                 COALESCE(SUM(t.responseBytes), 0) AS outbound
          FROM traffic_metrics t
          LEFT JOIN databases d ON d.id = t.databaseId
-         WHERE t.createdAt >= ? AND t.createdAt <= ?
-           AND (t.databaseId IS NULL OR t.databaseId = '' OR d.id IS NOT NULL)`,
-        [from, to],
+         WHERE t.createdAt >= ? AND t.createdAt <= ?${trafficFilter}`,
+        trafficParams,
       ),
       AppDataSource.query(
         `SELECT COALESCE(SUM(s.sizeBytes), 0) AS storage
@@ -268,9 +341,12 @@ export class AnalyticsService {
          JOIN databases d ON d.id = s.databaseId
          WHERE s.sampledAt = (
            SELECT MAX(s2.sampledAt) FROM storage_samples s2 WHERE s2.databaseId = s.databaseId
-         )`,
+         )${storageFilter}`,
+        storageParams,
       ),
-      this.databaseRepo.count(),
+      databaseId
+        ? this.databaseRepo.count({ where: { id: databaseId } })
+        : this.databaseRepo.count(),
     ]);
 
     const row = queryRows[0] || {};
@@ -288,9 +364,9 @@ export class AnalyticsService {
         `SELECT q.durationMs
          FROM query_metrics q
          JOIN databases d ON d.id = q.databaseId
-         WHERE q.createdAt >= ? AND q.createdAt <= ?
+         WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseFilter}
          ORDER BY q.durationMs ASC LIMIT 1 OFFSET ?`,
-        [from, to, offset],
+        [...queryParams, offset],
       );
       p95DurationMs = numberValue(percentile[0]?.durationMs);
     }
@@ -324,12 +400,22 @@ export class AnalyticsService {
     };
   }
 
-  private async getSeries(window: AnalyticsWindow, plan: BucketPlan) {
+  private async getSeries(window: AnalyticsWindow, plan: BucketPlan, databaseId?: string) {
     const from = sqlDate(window.from);
     const to = sqlDate(window.to);
     const queryBucketSql = bucketExpression('q.createdAt');
     const trafficBucketSql = bucketExpression('t.createdAt');
-    const bucketParams = [plan.fromMs, plan.stepMs, from, to];
+    const databaseFilter = databaseId ? ' AND q.databaseId = ?' : '';
+    const trafficFilter = databaseId
+      ? ' AND t.databaseId = ?'
+      : " AND (t.databaseId IS NULL OR t.databaseId = '' OR d.id IS NOT NULL)";
+    const bucketParams = [
+      plan.fromMs,
+      plan.stepMs,
+      from,
+      to,
+      ...(databaseId ? [databaseId] : []),
+    ];
 
     const [queryRows, p95Rows, trafficRows, baselineStorage, windowStorage] = await Promise.all([
       AppDataSource.query(
@@ -344,7 +430,7 @@ export class AnalyticsService {
                 COALESCE(MAX(q.durationMs), 0) AS maxDuration
          FROM query_metrics q
          JOIN databases d ON d.id = q.databaseId
-         WHERE q.createdAt >= ? AND q.createdAt <= ?
+         WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseFilter}
          GROUP BY bucket ORDER BY bucket ASC`,
         bucketParams,
       ),
@@ -353,7 +439,7 @@ export class AnalyticsService {
            SELECT ${queryBucketSql} AS bucket, q.durationMs
            FROM query_metrics q
            JOIN databases d ON d.id = q.databaseId
-           WHERE q.createdAt >= ? AND q.createdAt <= ?
+           WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseFilter}
          ),
          ranked AS (
            SELECT bucket,
@@ -374,8 +460,7 @@ export class AnalyticsService {
                 COALESCE(SUM(t.responseBytes), 0) AS outbound
          FROM traffic_metrics t
          LEFT JOIN databases d ON d.id = t.databaseId
-         WHERE t.createdAt >= ? AND t.createdAt <= ?
-           AND (t.databaseId IS NULL OR t.databaseId = '' OR d.id IS NOT NULL)
+         WHERE t.createdAt >= ? AND t.createdAt <= ?${trafficFilter}
          GROUP BY bucket ORDER BY bucket ASC`,
         bucketParams,
       ),
@@ -390,16 +475,17 @@ export class AnalyticsService {
            GROUP BY databaseId
          ) latest
            ON latest.databaseId = s.databaseId AND latest.sampledAt = s.sampledAt
+         ${databaseId ? 'WHERE s.databaseId = ?' : ''}
          GROUP BY s.databaseId`,
-        [from],
+        [from, ...(databaseId ? [databaseId] : [])],
       ),
       AppDataSource.query(
         `SELECT s.databaseId, s.sampledAt, s.sizeBytes
          FROM storage_samples s
          JOIN databases d ON d.id = s.databaseId
-         WHERE s.sampledAt > ? AND s.sampledAt <= ?
+         WHERE s.sampledAt > ? AND s.sampledAt <= ?${databaseId ? ' AND s.databaseId = ?' : ''}
          ORDER BY s.sampledAt ASC`,
-        [from, to],
+        [from, to, ...(databaseId ? [databaseId] : [])],
       ),
     ]);
 
@@ -435,7 +521,7 @@ export class AnalyticsService {
     };
   }
 
-  private async getSources(window: AnalyticsWindow) {
+  private async getSources(window: AnalyticsWindow, databaseId?: string) {
     const rows = await AppDataSource.query(
       `SELECT q.source,
               COUNT(*) AS queries,
@@ -443,10 +529,10 @@ export class AnalyticsService {
               COALESCE(AVG(q.durationMs), 0) AS avgDuration
        FROM query_metrics q
        JOIN databases d ON d.id = q.databaseId
-       WHERE q.createdAt >= ? AND q.createdAt <= ?
+       WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseId ? ' AND q.databaseId = ?' : ''}
        GROUP BY q.source
        ORDER BY queries DESC`,
-      [sqlDate(window.from), sqlDate(window.to)],
+      [sqlDate(window.from), sqlDate(window.to), ...(databaseId ? [databaseId] : [])],
     );
 
     return rows.map((row: any) => ({
@@ -457,7 +543,7 @@ export class AnalyticsService {
     }));
   }
 
-  private async getStatusCodes(window: AnalyticsWindow) {
+  private async getStatusCodes(window: AnalyticsWindow, databaseId?: string) {
     const rows = await AppDataSource.query(
       `SELECT t.statusCode,
               COUNT(*) AS requests,
@@ -466,11 +552,13 @@ export class AnalyticsService {
        LEFT JOIN databases d ON d.id = t.databaseId
        WHERE t.createdAt >= ? AND t.createdAt <= ?
          AND t.statusCode > 0
-         AND (t.databaseId IS NULL OR t.databaseId = '' OR d.id IS NOT NULL)
+         ${databaseId
+           ? 'AND t.databaseId = ?'
+           : "AND (t.databaseId IS NULL OR t.databaseId = '' OR d.id IS NOT NULL)"}
        GROUP BY t.statusCode
        ORDER BY requests DESC
        LIMIT 10`,
-      [sqlDate(window.from), sqlDate(window.to)],
+      [sqlDate(window.from), sqlDate(window.to), ...(databaseId ? [databaseId] : [])],
     );
 
     return rows.map((row: any) => ({
@@ -480,7 +568,7 @@ export class AnalyticsService {
     }));
   }
 
-  private async getOperations(window: AnalyticsWindow) {
+  private async getOperations(window: AnalyticsWindow, databaseId?: string) {
     const rows = await AppDataSource.query(
       `SELECT q.operation,
               COUNT(*) AS queries,
@@ -489,10 +577,10 @@ export class AnalyticsService {
               COALESCE(SUM(CASE WHEN q.success = 0 THEN 1 ELSE 0 END), 0) AS errors
        FROM query_metrics q
        JOIN databases d ON d.id = q.databaseId
-       WHERE q.createdAt >= ? AND q.createdAt <= ?
+       WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseId ? ' AND q.databaseId = ?' : ''}
        GROUP BY q.operation
        ORDER BY queries DESC`,
-      [sqlDate(window.from), sqlDate(window.to)],
+      [sqlDate(window.from), sqlDate(window.to), ...(databaseId ? [databaseId] : [])],
     );
 
     return rows.map((row: any) => ({
@@ -504,18 +592,24 @@ export class AnalyticsService {
     }));
   }
 
-  private async getTopDatabases(window: AnalyticsWindow, limit = 10) {
+  /**
+   * Full inventory of existing databases. Unlike a top-N query, it starts from
+   * `databases` and LEFT JOINs metrics, so a real database with zero captured
+   * traffic still appears with zeros. Deleted databases are naturally absent.
+   */
+  private async getDatabaseUsage(window: AnalyticsWindow): Promise<DatabaseUsageRow[]> {
     const from = sqlDate(window.from);
     const to = sqlDate(window.to);
     const rows = await AppDataSource.query(
-      `SELECT q.databaseId,
+      `SELECT d.id AS databaseId,
               d.name AS databaseName,
               d.subdomain,
               d.type,
               d.status,
+              d.metadata,
               d.projectId,
               p.name AS projectName,
-              COUNT(*) AS queries,
+              COUNT(q.id) AS queries,
               COALESCE(SUM(CASE WHEN ${READ_OPERATION_SQL} THEN 1 ELSE 0 END), 0) AS readQueries,
               COALESCE(SUM(CASE WHEN ${WRITE_OPERATION_SQL} THEN 1 ELSE 0 END), 0) AS writeQueries,
               COALESCE(SUM(q.rowsRead), 0) AS rowsRead,
@@ -524,39 +618,47 @@ export class AnalyticsService {
               COALESCE(AVG(q.durationMs), 0) AS avgDuration,
               COALESCE(MAX(q.durationMs), 0) AS maxDuration,
               MAX(q.createdAt) AS lastSeenAt
-       FROM query_metrics q
-       JOIN databases d ON d.id = q.databaseId
+       FROM databases d
+       LEFT JOIN query_metrics q
+         ON q.databaseId = d.id
+        AND q.createdAt >= ? AND q.createdAt <= ?
        LEFT JOIN projects p ON p.id = d.projectId
-       WHERE q.createdAt >= ? AND q.createdAt <= ?
-       GROUP BY q.databaseId
-       ORDER BY (SUM(q.rowsRead) + SUM(q.rowsWritten)) DESC
-       LIMIT ?`,
-      [from, to, Math.max(1, Math.min(50, Math.floor(limit)))],
+       GROUP BY d.id
+       ORDER BY (COALESCE(SUM(q.rowsRead), 0) + COALESCE(SUM(q.rowsWritten), 0)) DESC,
+                COUNT(q.id) DESC,
+                d.name ASC`,
+      [from, to],
     );
 
     const ids: string[] = (rows as any[])
-      .map((row: any) => String(row.databaseId))
+      .map((row: any) => String(row.databaseId || ''))
       .filter((id: string) => Boolean(id));
     if (ids.length === 0) return [];
 
+    const activeIds = (rows as any[])
+      .filter((row: any) => numberValue(row.queries) > 0)
+      .map((row: any) => String(row.databaseId));
     const placeholders = ids.map(() => '?').join(',');
-    const [p95Rows, storage] = await Promise.all([
-      AppDataSource.query(
-        `WITH ranked AS (
-           SELECT q.databaseId,
-                  q.durationMs,
-                  ROW_NUMBER() OVER (PARTITION BY q.databaseId ORDER BY q.durationMs ASC) AS rn,
-                  COUNT(*) OVER (PARTITION BY q.databaseId) AS cnt
-           FROM query_metrics q
-           JOIN databases d ON d.id = q.databaseId
-           WHERE q.createdAt >= ? AND q.createdAt <= ?
-             AND q.databaseId IN (${placeholders})
-         )
-         SELECT databaseId, durationMs AS p95
-         FROM ranked
-         WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)`,
-        [from, to, ...ids],
-      ),
+    const activePlaceholders = activeIds.map(() => '?').join(',');
+
+    const [p95Rows, storage, lastSourceRows] = await Promise.all([
+      activeIds.length > 0
+        ? AppDataSource.query(
+          `WITH ranked AS (
+             SELECT q.databaseId,
+                    q.durationMs,
+                    ROW_NUMBER() OVER (PARTITION BY q.databaseId ORDER BY q.durationMs ASC) AS rn,
+                    COUNT(*) OVER (PARTITION BY q.databaseId) AS cnt
+             FROM query_metrics q
+             WHERE q.createdAt >= ? AND q.createdAt <= ?
+               AND q.databaseId IN (${activePlaceholders})
+           )
+           SELECT databaseId, durationMs AS p95
+           FROM ranked
+           WHERE rn = CAST((cnt * 95 + 99) / 100 AS INTEGER)`,
+          [from, to, ...activeIds],
+        )
+        : Promise.resolve([]),
       AppDataSource.query(
         `SELECT s.databaseId, s.sizeBytes
          FROM storage_samples s
@@ -566,6 +668,22 @@ export class AnalyticsService {
          AND s.databaseId IN (${placeholders})`,
         ids,
       ),
+      activeIds.length > 0
+        ? AppDataSource.query(
+          `WITH ranked AS (
+             SELECT q.databaseId,
+                    q.source,
+                    ROW_NUMBER() OVER (PARTITION BY q.databaseId ORDER BY q.createdAt DESC) AS rn
+             FROM query_metrics q
+             WHERE q.createdAt >= ? AND q.createdAt <= ?
+               AND q.databaseId IN (${activePlaceholders})
+           )
+           SELECT databaseId, source
+           FROM ranked
+           WHERE rn = 1`,
+          [from, to, ...activeIds],
+        )
+        : Promise.resolve([]),
     ]);
 
     const p95Map = new Map<string, number>(
@@ -573,6 +691,9 @@ export class AnalyticsService {
     );
     const storageMap = new Map<string, number>(
       storage.map((row: any) => [String(row.databaseId), numberValue(row.sizeBytes)]),
+    );
+    const lastSourceMap = new Map<string, string>(
+      lastSourceRows.map((row: any) => [String(row.databaseId), String(row.source || '')]),
     );
 
     return rows.map((row: any) => {
@@ -587,6 +708,10 @@ export class AnalyticsService {
       const errors = numberValue(row.errors);
       const readQueries = numberValue(row.readQueries);
       const writeQueries = numberValue(row.writeQueries);
+      const metadata = parseMetadata(row.metadata);
+      const runtimeProvider = metadata
+        ? getRuntimeProvider({ metadata })
+        : '';
 
       return {
         id,
@@ -598,6 +723,7 @@ export class AnalyticsService {
         projectName: row.projectName ? String(row.projectName) : null,
         type: String(row.type || ''),
         status: String(row.status || ''),
+        runtimeProvider,
         rowsRead: numberValue(row.rowsRead),
         rowsWritten: numberValue(row.rowsWritten),
         queries,
@@ -610,12 +736,45 @@ export class AnalyticsService {
         p95DurationMs: Math.round(p95Map.get(id) || 0),
         maxDurationMs: numberValue(row.maxDuration),
         lastSeenAt: timestampToIso(row.lastSeenAt),
+        lastSource: lastSourceMap.get(id) || null,
+        hasActivity: queries > 0,
         storageBytes: storageMap.get(id) || 0,
       };
     });
   }
 
-  private async getTopProjects(window: AnalyticsWindow) {
+  private async getSelectedDatabase(databaseId?: string) {
+    if (!databaseId) return null;
+
+    const database = await this.databaseRepo.findOne({
+      where: { id: databaseId },
+      relations: ['project'],
+    });
+    if (!database) throw new Error('database not found');
+
+    const storedName = database.name?.trim() || '';
+    const subdomain = database.subdomain?.trim() || '';
+    const storedNameIsUuid = isUuidLike(storedName);
+    const displayName = storedName && !storedNameIsUuid
+      ? storedName
+      : (subdomain || 'Unnamed database');
+    const runtimeProvider = getRuntimeProvider(database)
+      || (resolveEffectiveDatabaseType(database) === 'sqlite' ? 'local-file' : '');
+
+    return {
+      id: database.id,
+      name: displayName,
+      displayName,
+      needsRename: !storedName || storedNameIsUuid,
+      projectId: database.project?.id || null,
+      projectName: database.project?.name || null,
+      status: database.status,
+      type: database.type,
+      runtimeProvider,
+    };
+  }
+
+  private async getTopProjects(window: AnalyticsWindow, databaseId?: string) {
     const rows = await AppDataSource.query(
       `SELECT d.projectId AS projectId,
               p.name AS projectName,
@@ -628,11 +787,11 @@ export class AnalyticsService {
        FROM query_metrics q
        JOIN databases d ON d.id = q.databaseId
        JOIN projects p ON p.id = d.projectId
-       WHERE q.createdAt >= ? AND q.createdAt <= ?
+       WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseId ? ' AND q.databaseId = ?' : ''}
        GROUP BY d.projectId
        ORDER BY (SUM(q.rowsRead) + SUM(q.rowsWritten)) DESC
        LIMIT 10`,
-      [sqlDate(window.from), sqlDate(window.to)],
+      [sqlDate(window.from), sqlDate(window.to), ...(databaseId ? [databaseId] : [])],
     );
 
     return rows.map((row: any) => {
@@ -652,7 +811,7 @@ export class AnalyticsService {
     });
   }
 
-  private async getTopQueries(window: AnalyticsWindow, rank: QueryRank = 'duration') {
+  private async getTopQueries(window: AnalyticsWindow, rank: QueryRank = 'duration', databaseId?: string) {
     const from = sqlDate(window.from);
     const to = sqlDate(window.to);
     const orderBy = rank === 'rowsRead'
@@ -674,11 +833,12 @@ export class AnalyticsService {
               COALESCE(MAX(q.durationMs), 0) AS maxDuration
        FROM query_metrics q
        JOIN databases d ON d.id = q.databaseId
-       WHERE q.createdAt >= ? AND q.createdAt <= ? AND q.success = 1
+       WHERE q.createdAt >= ? AND q.createdAt <= ?${databaseId ? ' AND q.databaseId = ?' : ''}
+         AND q.success = 1
        GROUP BY q.sqlFingerprint
        ORDER BY ${orderBy}
        LIMIT 10`,
-      [from, to],
+      [from, to, ...(databaseId ? [databaseId] : [])],
     );
 
     return rows.map((row: any) => ({
@@ -693,7 +853,7 @@ export class AnalyticsService {
     }));
   }
 
-  private async getTopErrors(window: AnalyticsWindow) {
+  private async getTopErrors(window: AnalyticsWindow, databaseId?: string) {
     const rows = await AppDataSource.query(
       `SELECT COALESCE(q.errorCode, 'UNKNOWN') AS errorCode,
               COUNT(*) AS queries,
@@ -701,18 +861,18 @@ export class AnalyticsService {
               MAX(q.createdAt) AS lastSeenAt
        FROM query_metrics q
        JOIN databases d ON d.id = q.databaseId
-       WHERE q.success = 0 AND q.createdAt >= ? AND q.createdAt <= ?
+       WHERE q.success = 0 AND q.createdAt >= ? AND q.createdAt <= ?${databaseId ? ' AND q.databaseId = ?' : ''}
        GROUP BY COALESCE(q.errorCode, 'UNKNOWN')
        ORDER BY queries DESC
        LIMIT 5`,
-      [sqlDate(window.from), sqlDate(window.to)],
+      [sqlDate(window.from), sqlDate(window.to), ...(databaseId ? [databaseId] : [])],
     );
 
     return rows.map((row: any) => ({
       errorCode: String(row.errorCode || 'UNKNOWN'),
       queries: numberValue(row.queries),
-      sqlPreview: String(row.sqlPreview || ''),
       lastSeenAt: timestampToIso(row.lastSeenAt),
+      sqlPreview: String(row.sqlPreview || ''),
     }));
   }
 }

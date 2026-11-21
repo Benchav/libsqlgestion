@@ -15,7 +15,9 @@ export default async function analyticsRoutes(app: FastifyInstance) {
         range: query.range,
         from: query.from,
         to: query.to,
+        databaseId: query.databaseId,
       });
+      reply.header('Cache-Control', 'no-store');
       return reply.send(overview);
     } catch (error: any) {
       return reply.status(422).send({ error: error?.message || 'failed to load analytics' });
@@ -31,7 +33,9 @@ export default async function analyticsRoutes(app: FastifyInstance) {
         range: query.range,
         from: query.from,
         to: query.to,
+        databaseId: query.databaseId,
       });
+      reply.header('Cache-Control', 'no-store');
       return reply.send(overview);
     } catch (error: any) {
       return reply.status(422).send({ error: error?.message || 'failed to load dashboard analytics' });

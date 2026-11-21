@@ -562,10 +562,13 @@ Query parameters:
 range=today|7d|30d|month
 from=<ISO timestamp>
 to=<ISO timestamp>
+databaseId=<database UUID>   # optional
 ```
 
 The response includes:
 
+- `databaseId` and `database`: the selected database metadata, or `null` when
+  the response aggregates every database,
 - summary totals: queries, errors, error rate, read/write query counts,
   read/write row counts, read/write ratio, rows per query/write, active/total
   databases, average/p95/max latency, storage, traffic bytes and request count,
@@ -573,17 +576,24 @@ The response includes:
   average/p95/max latency, traffic and storage,
 - operation mix (`select`, `insert`, `update`, `delete`, `replace`, `pragma`, `other`),
 - query source and HTTP status breakdowns,
-- top existing databases with project, status, read/write queries, rows, errors,
-  p95 latency, storage and last activity,
+- `databaseUsage`: every existing database, including databases with zero
+  captured traffic. Each row includes project, status, type, runtime provider,
+  read/write queries, rows, errors, p95, storage, last activity, `lastSource`
+  and `hasActivity`,
+- `topDatabases`: backwards-compatible active-only subset of `databaseUsage`,
 - top existing projects with read/write usage,
 - top normalized queries ranked by latency, rows read, rows written and
   frequency,
 - top error codes with redacted SQL previews.
 
+When `databaseId` is provided, every aggregate and timeseries is filtered to
+that database, while `databaseUsage` still describes all existing databases so
+the UI can keep its selector populated. An unknown database ID returns `422`.
+
 Deleted databases are excluded from every aggregate, including summaries,
-timeseries, top databases, top projects, top queries and errors. Their raw rows
-remain in the analytics tables until retention removes them, but they are never
-returned by the API.
+timeseries, `databaseUsage`, top databases, top projects, top queries and
+errors. Their raw rows remain in the analytics tables until retention removes
+them, but they are never returned by the API.
 
 When `from` and `to` are supplied, the window and its buckets use those exact
 instants. The dashboard sends local-time boundaries so "Today" and "This month"
@@ -592,9 +602,10 @@ match the browser timezone. Without them, the server falls back to UTC.
 ### `GET /analytics/dashboard`
 
 Compact payload for the dashboard. Requires `analytics.read` and accepts the
-same query parameters as `GET /analytics`. It returns only the summary,
-timeseries, operation mix and top five databases; it does not compute the
-expensive top-query/error breakdowns.
+same query parameters as `GET /analytics`, including `databaseId`. It returns
+the summary, timeseries, operation mix, the full `databaseUsage` inventory and
+the top five active databases. It does not compute the expensive top-query or
+error breakdowns.
 
 ### `POST /internal/gateway/analytics`
 

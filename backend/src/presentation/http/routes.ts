@@ -15,6 +15,7 @@ import schemaManagementRoutes from './controllers/SchemaManagementController';
 import metricsRoutes from './controllers/MetricsController';
 import snapshotRoutes from './controllers/SnapshotController';
 import analyticsRoutes from './controllers/AnalyticsController';
+import gatewayRoutes from './controllers/GatewayController';
 
 export default async function routes(app: FastifyInstance) {
   app.register(healthRoutes);
@@ -33,4 +34,5 @@ export default async function routes(app: FastifyInstance) {
   app.register(metricsRoutes);
   app.register(snapshotRoutes);
   app.register(analyticsRoutes);
+  app.register(gatewayRoutes);
 }

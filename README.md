@@ -45,7 +45,7 @@ Instead of paying for managed cloud services or struggling with monolithic setup
 - **Snapshots & Restore Points**: Scheduled, consistent SQLite snapshots and replay-verified libSQL logical backups, with point-in-time selection, selectable daily/weekly/monthly backups, tiered retention, optional offsite copies to Cloudflare R2/S3, and one-click restore into a new primary. See [Backup & Migration](docs/BACKUP_AND_MIGRATION.md).
 - **Usage Analytics**: Query latency, rows read/written, traffic, storage history, error and source breakdowns, top databases/projects, and normalized query leaderboards, with no external analytics service.
 - **Enterprise-Grade Security**: Full RBAC, encrypted token storage via ED25519 JWT keys, comprehensive audit logging, and `HttpOnly` session hardening.
-- **Database Protection Controls**: Per-database Block Reads, Block Writes and Delete Protection, plus provider-aware token invalidation from the database page.
+- **Database Protection Controls**: Per-database Block Reads, Block Writes and Delete Protection, plus provider-aware token invalidation from the database page. Direct libSQL clients can use the opt-in [Policy Gateway](docs/POLICY_GATEWAY.md) to enforce the same switches outside the panel.
 - **Deploy Anywhere**: First-class support for local servers, VPS, and zero-config deployment on **Coolify**.
 
 <br>

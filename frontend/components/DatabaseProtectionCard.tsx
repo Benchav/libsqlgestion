@@ -12,6 +12,9 @@ type ProtectionDatabase = {
   deleteProtection?: boolean;
   runtimeProvider?: string;
   effectiveType?: string;
+  gatewayEnabled?: boolean;
+  gatewayHttpsUrl?: string;
+  gatewayLibsqlUrl?: string;
 };
 
 type Props = {
@@ -148,10 +151,24 @@ export function DatabaseProtectionCard({ database, onUpdated }: Props) {
         )}
 
         {directClientWarning && (
-          <div className="mb-4 rounded-lg border border-zinc-700/70 bg-zinc-900/40 px-3 py-2.5 text-xs leading-relaxed text-zinc-400">
-            These switches are enforced by the panel and its HTTP pipeline. If a client connects
-            directly to the public libSQL URL, that connection is outside this backend and is not
-            covered by these switches.
+          <div className={`mb-4 rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${
+            database.gatewayEnabled
+              ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
+              : 'border-zinc-700/70 bg-zinc-900/40 text-zinc-400'
+          }`}>
+            {database.gatewayEnabled ? (
+              <>
+                A Gateway URL is configured for this database. Use the Gateway URL in the ERP to
+                enforce these switches. The direct public libSQL URL still bypasses them until the
+                runtime is internalized.
+              </>
+            ) : (
+              <>
+                These switches are enforced by the panel and its HTTP pipeline. If a client connects
+                directly to the public libSQL URL, that connection is outside this backend and is not
+                covered by these switches.
+              </>
+            )}
           </div>
         )}
 

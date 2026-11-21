@@ -23,6 +23,9 @@ type DatabaseDetail = {
   blockReads?: boolean;
   blockWrites?: boolean;
   deleteProtection?: boolean;
+  gatewayEnabled?: boolean;
+  gatewayHttpsUrl?: string;
+  gatewayLibsqlUrl?: string;
   url?: string;
   connectionUrl?: string;
   publicConnectionUrl?: string;
@@ -280,6 +283,14 @@ export default function DatabaseDetailPage() {
     window.setTimeout(() => setCopiedKey(''), 1500);
   }
 
+  const directClientProvider = database?.runtimeProvider === 'docker-libsql'
+    || database?.runtimeProvider === 'sqld-namespace';
+  const readsProtectionBadge = directClientProvider
+    ? (database?.gatewayEnabled ? 'GATEWAY READS BLOCKED' : 'PANEL READS BLOCKED')
+    : 'READS BLOCKED';
+  const writesProtectionBadge = directClientProvider
+    ? (database?.gatewayEnabled ? 'GATEWAY WRITES BLOCKED' : 'PANEL WRITES BLOCKED')
+    : 'WRITES BLOCKED';
   const publicUrl = database?.publicHttpsUrl || database?.publicConnectionUrl || '';
   const publicLibsqlUrl = database?.publicLibsqlUrl || '';
   const syncUrl = database?.syncUrl || '';
@@ -288,9 +299,10 @@ export default function DatabaseDetailPage() {
   const runtimeInternalFailed = database?.runtimeHealth?.internalOk === false;
   const runtimePublicFailed = Boolean(database?.runtimeHealth?.publicChecked && database.runtimeHealth.publicOk === false);
   const serverUrl = publicLibsqlUrl || publicUrl || backendUrl;
+  const preferredServerUrl = database?.gatewayLibsqlUrl || serverUrl;
   const runtimeLabel = getRuntimeLabel(database?.metadata);
-  const envSnippet = serverUrl && revealedToken
-    ? `# Preferred libSQL connection\nDATABASE_URL=${serverUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${serverUrl}\nTURSO_AUTH_TOKEN=${revealedToken}${publicUrl ? `\n\n# HTTPS fallback\nDATABASE_HTTPS_URL=${publicUrl}` : ''}`
+  const envSnippet = preferredServerUrl && revealedToken
+    ? `# Preferred libSQL connection${database?.gatewayEnabled ? ' (policy gateway)' : ''}\nDATABASE_URL=${preferredServerUrl}\nDATABASE_AUTH_TOKEN=${revealedToken}\n\n# Turso-compatible aliases\nTURSO_DATABASE_URL=${preferredServerUrl}\nTURSO_AUTH_TOKEN=${revealedToken}${publicUrl ? `\n\n# HTTPS fallback\nDATABASE_HTTPS_URL=${database?.gatewayHttpsUrl || publicUrl}` : ''}`
     : '';
   const localReplicaName = (database?.name || 'database')
     .toLowerCase()
@@ -378,17 +390,22 @@ export default function DatabaseDetailPage() {
                   </span>
                   {database?.blockReads && (
                     <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
-                      READS BLOCKED
+                      {readsProtectionBadge}
                     </span>
                   )}
                   {database?.blockWrites && (
                     <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
-                      WRITES BLOCKED
+                      {writesProtectionBadge}
                     </span>
                   )}
                   {database?.deleteProtection && (
                     <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
                       PROTECTED
+                    </span>
+                  )}
+                  {database?.gatewayEnabled && (
+                    <span className="rounded border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-300">
+                      GATEWAY
                     </span>
                   )}
                 </h1>
@@ -467,6 +484,24 @@ export default function DatabaseDetailPage() {
         {error && (
           <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {directClientProvider && (database?.blockReads || database?.blockWrites) && (
+          <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            {database?.gatewayEnabled ? (
+              <>
+                <strong>Enforcement scope:</strong> these switches protect the panel and the
+                <strong> Gateway URL</strong>. The direct public URL still bypasses them. If the
+                ERP still uses the direct URL, it will continue reading/writing normally.
+              </>
+            ) : (
+              <>
+                <strong>Enforcement scope:</strong> these switches only protect the panel and its
+                HTTP pipeline. Clients connected directly to the public libSQL URL are not
+                affected.
+              </>
+            )}
           </div>
         )}
 
@@ -572,6 +607,40 @@ export default function DatabaseDetailPage() {
                         {copiedKey === 'public-libsql-url' ? 'Copied' : 'Copy'}
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {database?.gatewayEnabled && (database.gatewayLibsqlUrl || database.gatewayHttpsUrl) && (
+                  <div>
+                    <label className="block text-xs font-medium text-emerald-400 uppercase tracking-wider mb-2">
+                      Gateway URL · full enforcement
+                    </label>
+                    <div className="flex items-center gap-3 border border-emerald-500/30 bg-emerald-500/5 rounded-lg p-3 font-mono text-xs text-zinc-200 overflow-x-auto custom-scrollbar">
+                      <code className="flex-1 break-all whitespace-normal">
+                        {database.gatewayLibsqlUrl || database.gatewayHttpsUrl}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => copyText(
+                          database.gatewayLibsqlUrl || database.gatewayHttpsUrl || '',
+                          'gateway-url',
+                        )}
+                        className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-medium transition-colors"
+                      >
+                        {copiedKey === 'gateway-url' ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedKey === 'gateway-url' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    {database.gatewayHttpsUrl && database.gatewayLibsqlUrl && (
+                      <p className="mt-2 text-xs text-zinc-500 font-mono break-all">
+                        HTTPS fallback: {database.gatewayHttpsUrl}
+                      </p>
+                    )}
+                    <p className="mt-2 text-xs text-amber-300">
+                      Use this URL in the ERP to enforce Block Reads/Writes. If the ERP also has a
+                      TURSO_SYNC_URL, update it too. The direct public URL still bypasses these
+                      switches until the runtime is internalized.
+                    </p>
                   </div>
                 )}
 
@@ -789,6 +858,12 @@ export default function DatabaseDetailPage() {
                     <p className="mt-2 text-xs text-zinc-500">
                       This keeps a local file in the ERP and syncs against this self-hosted libSQL primary. Reveal the token to fill in the JWT.
                     </p>
+                    {database?.gatewayEnabled && (
+                      <p className="mt-2 text-xs text-amber-300">
+                        The policy gateway does not cover embedded replica sync. Use the direct
+                        remote client if Block Reads/Writes must apply to the ERP.
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -814,7 +889,7 @@ export default function DatabaseDetailPage() {
 {`import { createClient } from '@libsql/client';
 
 const client = createClient({
-  url: "${serverUrl || 'YOUR_CONNECTION_URL'}",
+  url: "${preferredServerUrl || 'YOUR_CONNECTION_URL'}",
   authToken: "${revealedToken || 'YOUR_AUTH_TOKEN'}",
 });
 
@@ -862,7 +937,7 @@ console.log(rs.rows);`}
 {`import { createClient } from '@libsql/client';
 
 const client = createClient({
-  url: "${serverUrl || 'YOUR_CONNECTION_URL'}",
+  url: "${preferredServerUrl || 'YOUR_CONNECTION_URL'}",
   authToken: "${revealedToken || 'YOUR_AUTH_TOKEN'}",
 });
 

@@ -76,6 +76,18 @@ SNAPSHOT_MIN_FREE_BYTES=1073741824
 SNAPSHOT_STALE_MINUTES=30
 SNAPSHOT_VERIFY_ON_RESTORE=true
 
+# Optional policy gateway for direct libSQL clients. Keep disabled until the
+# gateway service and the /gateway Traefik route are deployed.
+DATABASE_GATEWAY_ENABLED=false
+DATABASE_GATEWAY_PATH=/gateway/
+GATEWAY_INTERNAL_TOKEN=
+GATEWAY_BACKEND_INTERNAL_URL=http://backend:5000
+GATEWAY_BODY_LIMIT_BYTES=33554432
+GATEWAY_POLICY_TTL_MS=1000
+GATEWAY_POLICY_MAX_STALE_MS=5000
+GATEWAY_UPSTREAM_TIMEOUT_MS=120000
+GATEWAY_LOG_REQUESTS=false
+
 # Optional: offsite S3/R2 bootstrap defaults. Prefer Settings -> Offsite
 # Backups in the panel; panel values override these variables.
 SNAPSHOT_OFFSITE_ENABLED=false
@@ -227,7 +239,39 @@ This works for:
 - local SQLite files managed by the backend
 - libsql remote databases registered with URL + token
 
-## 8. Recommended production flow
+## 8. Policy gateway for direct libSQL clients
+
+If the ERP connects directly to `libsql://`, the panel switches only cover the
+panel unless you enable the policy gateway.
+
+1. Set a long random `GATEWAY_INTERNAL_TOKEN` in the environment. Use the same
+   value for the backend and the gateway service.
+2. Set `DATABASE_GATEWAY_ENABLED=true` on the backend.
+3. Add a gateway service that runs the backend image with:
+
+   ```text
+   node dist/gateway/main.js
+   ```
+
+   and expose port `8081` internally.
+4. Route `/gateway` on the database hosts to that service. The provided
+   `docker-compose.yml` already contains a `gateway` service and a
+   `PathPrefix('/gateway')` Traefik router.
+5. Open the database detail page and copy the **Gateway URL**.
+6. In the ERP, use:
+
+   ```env
+   TURSO_DATABASE_URL=libsql://<database-host>/gateway/
+   TURSO_AUTH_TOKEN=<same token>
+   ```
+
+   Update `TURSO_SYNC_URL` too if it is configured.
+
+The original direct URL remains a bypass in this phase. See
+[POLICY_GATEWAY.md](docs/POLICY_GATEWAY.md) for the complete rollout and the
+maintenance step required to internalize the runtime later.
+
+## 9. Recommended production flow
 
 1. Deploy backend in Coolify.
 2. Attach a persistent volume.
@@ -245,7 +289,7 @@ DATABASE_URL=https://mi-db.db.example.com
 DATABASE_AUTH_TOKEN=xxxxx
 ```
 
-## 9. What Coolify gives you here
+## 10. What Coolify gives you here
 
 - Docker deployment with restart policies.
 - Environment variable management.
@@ -253,7 +297,7 @@ DATABASE_AUTH_TOKEN=xxxxx
 - Reverse proxy and TLS.
 - Optional wildcard subdomain routing.
 
-## 10. Important limitation
+## 11. Important limitation
 
 The backend can only manage databases it can access or that you explicitly register/import.
 It does not safely scan arbitrary remote machines for credentials or database locations.

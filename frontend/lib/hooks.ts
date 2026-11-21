@@ -38,6 +38,9 @@ export type DatabaseDetail = {
   blockReads?: boolean;
   blockWrites?: boolean;
   deleteProtection?: boolean;
+  gatewayEnabled?: boolean;
+  gatewayHttpsUrl?: string;
+  gatewayLibsqlUrl?: string;
   url?: string;
   connectionUrl?: string;
   publicConnectionUrl?: string;

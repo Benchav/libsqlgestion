@@ -16,6 +16,7 @@ process.env.LIBSQL_ENABLE_NAMESPACES = 'false';
 process.env.LIBSQL_NAMESPACE_IMPORTS = 'false';
 process.env.LIBSQL_IMPORT_RUNTIME = 'false';
 process.env.DOCKER_SOCKET_PATH = path.join(tempDir, 'no-docker.sock');
+process.env.GATEWAY_INTERNAL_TOKEN = 'test-gateway-token';
 
 const { AppDataSource } = require('../dist/infrastructure/db/data-source');
 const { ConnectionPool } = require('../dist/infrastructure/db/ConnectionPool');
@@ -149,6 +150,30 @@ test.describe('Database protection controls', () => {
     if (app) await app.close();
     await AppDataSource.destroy();
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('exposes a token-protected gateway policy for direct clients', async () => {
+    const row = await AppDataSource.getRepository(Database).findOneByOrFail({ id: databaseId });
+    const host = `${row.subdomain}.data.test`;
+    const policy = await app.inject({
+      method: 'GET',
+      url: `/api/v1/internal/gateway/policy?host=${encodeURIComponent(host)}`,
+      headers: { 'x-gateway-token': 'test-gateway-token' },
+    });
+    assert.equal(policy.statusCode, 200, policy.payload);
+    const body = JSON.parse(policy.payload);
+    assert.equal(body.databaseId, databaseId);
+    assert.equal(body.provider, 'local-file');
+    assert.equal(body.blockReads, false);
+    assert.equal(body.blockWrites, false);
+    assert.match(body.upstreamBaseUrl, new RegExp(`/api/v1/databases/${databaseId}$`));
+
+    const unauthorized = await app.inject({
+      method: 'GET',
+      url: `/api/v1/internal/gateway/policy?host=${encodeURIComponent(host)}`,
+      headers: { 'x-gateway-token': 'wrong' },
+    });
+    assert.equal(unauthorized.statusCode, 401, unauthorized.payload);
   });
 
   test('classifies reads, writes and mutating pragmas conservatively', () => {

@@ -6,6 +6,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "build": "tsc -p .",
     "start": "node dist/main.js",
+    "gateway": "node dist/gateway/main.js",
     "test": "npm run build && node --test test/*.test.js",
     "smoke": "npm run build && node scripts/smoke.js",
     "test:runtime": "npm run build && node scripts/smoke-test-runtime.mjs",

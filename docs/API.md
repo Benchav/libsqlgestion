@@ -260,7 +260,37 @@ Behaviour:
   rejects the request before any statement runs.
 - These controls are enforced by the panel and its HTTP pipeline. For
   `sqld-namespace` and `docker-libsql`, clients connected directly to the public
-  libSQL URL bypass the backend and are not covered.
+  libSQL URL bypass the backend and are not covered unless they use the optional
+  policy gateway described below.
+
+### Policy gateway for direct libSQL clients
+
+When `DATABASE_GATEWAY_ENABLED=true` and `GATEWAY_INTERNAL_TOKEN` is configured,
+database responses include:
+
+- `gatewayEnabled`
+- `gatewayHttpsUrl` (for example `https://db.example.com/gateway/`)
+- `gatewayLibsqlUrl` (for example `libsql://db.example.com/gateway/`)
+
+A client that uses the Gateway URL sends its Hrana requests through the policy
+gateway. The gateway parses `execute`, `batch`, `sequence` and `store_sql`,
+applies `blockReads`/`blockWrites`, and returns `403` before forwarding blocked
+statements. It also rewrites any `base_url` from the runtime to `null` so the
+client cannot switch to an internal URL and bypass the gateway.
+
+The original direct URL remains available in this phase and still bypasses the
+gateway. See [POLICY_GATEWAY.md](POLICY_GATEWAY.md) for deployment, fail-closed
+behaviour and the maintenance step required to remove the direct route.
+
+The gateway obtains policy from:
+
+```http
+GET /api/v1/internal/gateway/policy?host=<database-host>
+x-gateway-token: <GATEWAY_INTERNAL_TOKEN>
+```
+
+This endpoint is internal, token-protected and returns only the flags, provider
+and internal upstream base URL. It never returns a database token.
 
 Every change is recorded as `database.protection.update` with the previous and
 new state.

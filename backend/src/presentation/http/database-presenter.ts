@@ -15,6 +15,13 @@ type DatabaseLike = {
  * Removes credential material from a project relation before it is serialized
  * into a database or project response. The frontend only needs the owner email.
  */
+function gatewayPathPrefix() {
+  const raw = (process.env.DATABASE_GATEWAY_PATH || '/gateway/').trim();
+  if (!raw) return '/gateway/';
+  const withLeading = raw.startsWith('/') ? raw : `/${raw}`;
+  return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;
+}
+
 export function presentSafeProject(project: any) {
   if (!project || typeof project !== 'object') return project;
   const safeUser = (user: any) => user && typeof user === 'object'
@@ -43,6 +50,19 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
   const effectiveType = resolveEffectiveDatabaseType(database);
   const runtimeStatus = typeof database.status === 'string' ? database.status : 'inactive';
   const embeddedReplicaSupported = runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace';
+  const gatewayEnabledForProvider = ['true', '1', 'yes', 'on'].includes(
+    String(process.env.DATABASE_GATEWAY_ENABLED || '').trim().toLowerCase(),
+  )
+    && Boolean(process.env.GATEWAY_INTERNAL_TOKEN?.trim())
+    && effectiveType === 'libsql'
+    && (runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace');
+  const gatewayPath = gatewayPathPrefix();
+  const gatewayHttpsUrl = gatewayEnabledForProvider && urls.publicHttpsUrl
+    ? `${urls.publicHttpsUrl.replace(/\/+$/, '')}${gatewayPath}`
+    : '';
+  const gatewayLibsqlUrl = gatewayEnabledForProvider && urls.publicLibsqlUrl
+    ? `${urls.publicLibsqlUrl.replace(/\/+$/, '')}${gatewayPath}`
+    : '';
 
   // Never expose the encrypted credential through the API. The plaintext token
   // is only returned by the explicit reveal/rotate/invalidate endpoints.
@@ -68,6 +88,9 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
     internalLibsqlUrl: urls.internalUrl,
     backendConnectionUrl: urls.backendUrl,
     backendReachableUrl: urls.backendUrl,
+    gatewayEnabled: Boolean(gatewayHttpsUrl || gatewayLibsqlUrl),
+    gatewayHttpsUrl,
+    gatewayLibsqlUrl,
     runtimeStatus,
     exposureMode: effectiveType === 'libsql' ? 'public-runtime' : 'local-file',
     runtimeHealth: (database as any).metadata?.runtime?.routeHealth,

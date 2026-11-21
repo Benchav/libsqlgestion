@@ -151,6 +151,13 @@ services:
       SNAPSHOT_STALE_MINUTES: ${SNAPSHOT_STALE_MINUTES:-30}
       SNAPSHOT_VERIFY_ON_RESTORE: ${SNAPSHOT_VERIFY_ON_RESTORE:-true}
       SNAPSHOT_STORAGE_ROOT: ${SNAPSHOT_STORAGE_ROOT:-/app/data/sqlite/snapshots}
+      # Optional policy gateway for direct libSQL clients. Leave disabled until
+      # the gateway service has a strong token and the /gateway route is
+      # published through Traefik.
+      DATABASE_GATEWAY_ENABLED: ${DATABASE_GATEWAY_ENABLED:-false}
+      DATABASE_GATEWAY_PATH: ${DATABASE_GATEWAY_PATH:-/gateway/}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-}
+      GATEWAY_BACKEND_INTERNAL_URL: ${GATEWAY_BACKEND_INTERNAL_URL:-http://backend:5000}
     env_file:
       - path: ./backend/.env
         required: false
@@ -172,6 +179,51 @@ services:
       timeout: 5s
       retries: 8
       start_period: 30s
+
+  # Policy gateway for direct libSQL clients. It is path-based so it can reuse
+  # the existing wildcard DNS/TLS for database hosts: clients use the normal
+  # database host followed by /gateway/ instead of the direct root URL.
+  #
+  # This service is only useful when DATABASE_GATEWAY_ENABLED=true and the
+  # backend and gateway share a non-empty GATEWAY_INTERNAL_TOKEN.
+  gateway:
+    build:
+      context: ./backend
+    command: ["node", "dist/gateway/main.js"]
+    environment:
+      GATEWAY_PORT: '8081'
+      GATEWAY_POLICY_URL: ${GATEWAY_POLICY_URL:-http://backend:5000/api/v1/internal/gateway/policy}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-}
+      GATEWAY_PATH_PREFIX: ${DATABASE_GATEWAY_PATH:-/gateway}
+      GATEWAY_BODY_LIMIT_BYTES: ${GATEWAY_BODY_LIMIT_BYTES:-33554432}
+      GATEWAY_POLICY_TTL_MS: ${GATEWAY_POLICY_TTL_MS:-1000}
+      GATEWAY_POLICY_MAX_STALE_MS: ${GATEWAY_POLICY_MAX_STALE_MS:-5000}
+      GATEWAY_UPSTREAM_TIMEOUT_MS: ${GATEWAY_UPSTREAM_TIMEOUT_MS:-120000}
+      GATEWAY_LOG_REQUESTS: ${GATEWAY_LOG_REQUESTS:-false}
+    expose:
+      - '8081'
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - coolify
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8081/__health 2>/dev/null || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      # Path-based router: same DB host, /gateway/ prefix. If the gateway is
+      # down, the runtime's root route does not match /gateway/v2/pipeline, so
+      # traffic fails closed instead of falling back to direct access.
+      - "traefik.http.routers.libsqlite-gateway.rule=PathPrefix(`/gateway`)"
+      - "traefik.http.routers.libsqlite-gateway.priority=2000"
+      - "traefik.http.routers.libsqlite-gateway.tls=true"
+      - "traefik.http.services.libsqlite-gateway.loadbalancer.server.port=8081"
 
   frontend:
     build:

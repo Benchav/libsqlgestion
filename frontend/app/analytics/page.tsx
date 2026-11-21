@@ -201,6 +201,15 @@ export default function AnalyticsPage() {
     ? databaseUsage.find((database) => database.id === selectedDatabase.id) || null
     : null;
   const trafficPaths = data?.trafficPaths || [];
+  const topTrafficPath = trafficPaths[0] || null;
+  const topTrafficPathName = topTrafficPath?.path || '';
+  const isPipelineTraffic = topTrafficPathName.includes('/pipeline');
+  const isHealthTraffic = topTrafficPathName.endsWith('/health');
+  const captureHint = isPipelineTraffic
+    ? 'libSQL HTTP traffic was captured, but no SQL query metrics were recorded. Check the gateway/client pipeline and the analytics flush.'
+    : isHealthTraffic
+      ? 'Only health checks were captured; no ERP SQL reached the gateway.'
+      : 'Only HTTP traffic was captured; no ERP SQL reached the gateway.';
   const comparisonMax = Math.max(
     1,
     ...databaseUsage.map((database) => database.rowsRead + database.rowsWritten),
@@ -227,7 +236,11 @@ export default function AnalyticsPage() {
               {databaseUsage.map((database) => (
                 <option key={database.id} value={database.id}>
                   {database.displayName || database.name}
-                  {database.hasActivity ? '' : ' · no traffic'}
+                  {database.hasActivity
+                    ? ''
+                    : database.hasHttpActivity
+                      ? ' · no SQL'
+                      : ' · no traffic'}
                 </option>
               ))}
             </select>
@@ -310,6 +323,24 @@ export default function AnalyticsPage() {
                     {selectedDatabase.type || 'database'}
                     {selectedDatabase.runtimeProvider ? ` · ${selectedDatabase.runtimeProvider}` : ''}
                   </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-zinc-500">
+                    <span>
+                      SQL queries:{' '}
+                      <strong className="font-medium text-zinc-300">{formatNumber(summary!.queries)}</strong>
+                    </span>
+                    <span>
+                      HTTP requests:{' '}
+                      <strong className="font-medium text-zinc-300">{formatNumber(summary!.requests)}</strong>
+                    </span>
+                    {topTrafficPath && (
+                      <span className="inline-flex items-center gap-1">
+                        Top path:{' '}
+                        <code className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                          {topTrafficPath.path}
+                        </code>
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   {summary!.queries === 0 && (
@@ -332,7 +363,7 @@ export default function AnalyticsPage() {
               <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
                 <strong>No SQL query traffic captured for this database in the selected period.</strong>{' '}
                 {summary!.requests > 0
-                  ? `This database has ${formatNumber(summary!.requests)} HTTP requests (${formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)}), but no SQL statements were captured. Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.`
+                  ? `This database has ${formatNumber(summary!.requests)} HTTP requests (${formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)})${topTrafficPath ? `, mostly ${topTrafficPath.path}` : ''}, but no SQL statements were captured. ${captureHint} Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.`
                   : 'No HTTP requests or SQL statements were captured. Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.'}
               </div>
             )}
@@ -390,6 +421,14 @@ export default function AnalyticsPage() {
                     <p className="text-xs text-zinc-500">No HTTP requests captured in this period.</p>
                   )}
                 </div>
+
+                {summary!.queries === 0 && summary!.requests > 0 && (
+                  <p className="mt-3 text-[11px] leading-relaxed text-amber-300">{captureHint}</p>
+                )}
+                <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                  SQL queries come from executed statements. HTTP requests include panel/API calls and gateway
+                  health checks; storage is sampled hourly.
+                </p>
               </Panel>
             )}
 

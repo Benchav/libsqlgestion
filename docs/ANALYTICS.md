@@ -86,8 +86,19 @@ comparison chart remain populated. The Analytics page exposes this as:
 - a database selector in the header (`All databases` or a specific database);
 - a full-width **Database usage** table with all real databases;
 - a **Database comparison** chart showing read/write rows for every database;
-- a selected-database header with project, status, runtime provider and a
-  `No traffic captured` warning when applicable.
+- a selected-database header with project, status, runtime provider, SQL/HTTP
+  counters and the top HTTP path;
+- a **Capture diagnostics** panel with SQL queries, HTTP requests, last SQL
+  source, last HTTP path, storage and HTTP traffic by path.
+
+The selector labels an HTTP-only database as `no SQL`; `no traffic` is reserved
+for a database with neither SQL nor HTTP activity. When SQL is zero but HTTP is
+present, the banner includes the most frequent HTTP path and a hint:
+
+- `/health` → only health checks were captured;
+- `/v2/pipeline` → libSQL traffic was captured but no query metrics were
+  recorded;
+- other paths → only panel/API HTTP traffic was captured.
 
 The page also accepts a deep link:
 

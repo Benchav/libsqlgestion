@@ -416,6 +416,11 @@ export default function DashboardPage() {
                       const totalQueries = Math.max(1, database.readQueries + database.writeQueries);
                       const readShare = database.readQueries / totalQueries;
                       const writeShare = database.writeQueries / totalQueries;
+                      const activityLabel = database.hasActivity
+                        ? sourceLabel(database.lastSource)
+                        : database.hasHttpActivity
+                          ? 'HTTP only'
+                          : 'No traffic';
                       return (
                         <button
                           key={database.id}
@@ -429,11 +434,15 @@ export default function DashboardPage() {
                                 {database.displayName || database.name}
                               </p>
                               <p className="truncate text-[11px] text-zinc-500">
-                                {database.projectName || 'No project'} · {sourceLabel(database.lastSource)}
+                                {database.projectName || 'No project'} · {activityLabel}
                               </p>
                             </div>
                             <span className="shrink-0 text-xs text-zinc-400">
-                              {database.hasActivity ? `${formatNumber(database.queries)} q` : 'No traffic'}
+                              {database.hasActivity
+                                ? `${formatNumber(database.queries)} q`
+                                : database.hasHttpActivity
+                                  ? `${formatNumber(database.httpRequests)} HTTP`
+                                  : 'No traffic'}
                             </span>
                           </div>
                           <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-zinc-800">
@@ -449,7 +458,9 @@ export default function DashboardPage() {
                             <span>
                               {database.hasActivity
                                 ? `${formatNumber(database.rowsWritten)} written`
-                                : 'No traffic captured'}
+                                : database.hasHttpActivity
+                                  ? 'No SQL captured'
+                                  : 'No traffic captured'}
                             </span>
                           </div>
                         </button>

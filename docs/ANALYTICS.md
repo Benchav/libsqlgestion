@@ -36,9 +36,36 @@ panel only sees queries that pass through the backend.
   were no write queries in the window.
 - **Active database**: an existing database with at least one statement in the
   window.
-- **Last source**: the most recent query source captured for a database
+- **Last source**: the most recent SQL query source captured for a database
   (`gateway`, `pipeline`, `api`, `studio`, `migration`) or `null` when there is
-  no captured traffic.
+  no captured SQL.
+- **HTTP request**: one row in `traffic_metrics`. It can come from the panel,
+  the API, the gateway health check or a libSQL HTTP request.
+- **SQL query**: one row in `query_metrics`. Only statements that reach the
+  runtime produce query metrics.
+
+## SQL vs HTTP
+
+SQL queries, HTTP traffic and storage are independent signals:
+
+| Signal | Table | What it means |
+| --- | --- | --- |
+| SQL queries | `query_metrics` | Executed statements and row counts |
+| HTTP requests | `traffic_metrics` | Panel/API/gateway requests and bytes |
+| Storage | `storage_samples` | Hourly database size |
+
+A database can therefore have storage and HTTP traffic but `0` SQL queries.
+This is common when:
+
+- the panel loads the database detail/schema;
+- the runtime or gateway performs `/health` checks;
+- an external ERP uses the direct URL without the policy gateway.
+
+`databaseUsage` exposes both `hasActivity` (SQL) and `hasHttpActivity` (HTTP),
+plus `httpRequests`, `lastRequestAt` and `lastRequestPath`. The selected database
+view shows a **Capture diagnostics** panel with SQL queries, HTTP requests,
+last SQL source, last HTTP path and storage, so a zero-query database is not
+confused with an offline database.
 
 ## Database inventory and filtering
 
@@ -160,12 +187,20 @@ appear. Verify the deployed backend includes this version and that the browser
 is not serving a cached page. The Analytics page uses the full inventory, not
 `topDatabases`.
 
-**A real database appears with zero usage.**
+**A real database appears with zero SQL usage.**
 
-The database exists, but no statements were captured for it in the selected
-period. If an external client uses it directly, route it through the policy
-gateway (root mode or `/gateway/`). The `Source` column shows `No traffic` and
-the selected-database view shows a capture warning.
+The database exists, but no SQL statements were captured for it in the selected
+period. Check the **Capture diagnostics** panel:
+
+- **HTTP requests > 0, SQL queries = 0** means the database is reachable, but
+  only non-SQL traffic was captured (health checks, panel requests, etc.). If an
+  external client uses it directly, route it through the policy gateway (root
+  mode or `/gateway/`).
+- **HTTP requests = 0 and SQL queries = 0** means nothing reached the backend or
+  gateway in the period.
+
+The `Source` column shows `HTTP only` when HTTP traffic exists without SQL, and
+`No traffic` only when neither exists.
 
 **A deleted database still appears.**
 

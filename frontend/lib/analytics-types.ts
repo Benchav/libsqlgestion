@@ -44,10 +44,20 @@ export type DatabaseUsage = {
   lastSeenAt: string | null;
   lastSource: string | null;
   hasActivity: boolean;
+  httpRequests: number;
+  lastRequestAt: string | null;
+  lastRequestPath: string | null;
+  hasHttpActivity: boolean;
   storageBytes: number;
 };
 
 export type TopDatabase = DatabaseUsage;
+
+export type TrafficPathUsage = {
+  path: string;
+  requests: number;
+  bytes: number;
+};
 
 export type SelectedDatabase = {
   id: string;
@@ -147,6 +157,7 @@ export type AnalyticsOverview = {
   statusCodes: StatusCodeUsage[];
   operations: OperationUsage[];
   databaseUsage: DatabaseUsage[];
+  trafficPaths: TrafficPathUsage[];
   topDatabases: TopDatabase[];
   topProjects: TopProject[];
   topQueries: TopQuery[];

@@ -331,11 +331,17 @@ test.describe('Analytics', () => {
     assert.equal(empty.p95DurationMs, 0);
     assert.equal(empty.storageBytes, 0);
     assert.equal(empty.runtimeProvider, 'docker-libsql');
+    assert.equal(empty.httpRequests, 0);
+    assert.equal(empty.lastRequestAt, null);
+    assert.equal(empty.lastRequestPath, null);
+    assert.equal(empty.hasHttpActivity, false);
 
     const active = body.databaseUsage.find((item) => item.id === database.id);
     assert.ok(active);
     assert.equal(active.hasActivity, true);
     assert.equal(active.lastSource, 'pipeline');
+    assert.equal(active.hasHttpActivity, true);
+    assert.ok(active.httpRequests >= 2);
     assert.equal(body.databaseUsage.length >= 2, true);
   });
 
@@ -364,6 +370,63 @@ test.describe('Analytics', () => {
     assert.equal(body.topProjects.length, 1);
     assert.equal(body.topProjects[0].id, project.id);
     assert.equal(body.databaseUsage.some((item) => item.id === database.id), true);
+    assert.ok(Array.isArray(body.trafficPaths));
+    assert.ok(body.trafficPaths.length > 0);
+    assert.ok(body.trafficPaths[0].requests >= 2);
+  });
+
+  test('distinguishes HTTP-only databases from SQL query activity', async () => {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const httpOnlyDatabase = await databaseRepo.save(databaseRepo.create({
+      name: 'http-only-db',
+      type: 'libsql',
+      status: 'active',
+      project,
+    }));
+
+    analyticsCollector.recordTraffic({
+      databaseId: httpOnlyDatabase.id,
+      method: 'GET',
+      path: '/health',
+      requestBytes: 25,
+      responseBytes: 100,
+      statusCode: 200,
+      durationMs: 5,
+    });
+    await analyticsCollector.flush();
+
+    const from = new Date(Date.now() - 60_000);
+    const to = new Date(Date.now() + 1000);
+    const params = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      databaseId: httpOnlyDatabase.id,
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = JSON.parse(response.payload);
+
+    const row = body.databaseUsage.find((item) => item.id === httpOnlyDatabase.id);
+    assert.ok(row);
+    assert.equal(row.hasActivity, false);
+    assert.equal(row.queries, 0);
+    assert.equal(row.hasHttpActivity, true);
+    assert.equal(row.httpRequests, 1);
+    assert.equal(row.lastRequestPath, '/health');
+    assert.ok(row.lastRequestAt);
+
+    assert.equal(body.summary.queries, 0);
+    assert.equal(body.summary.requests, 1);
+    assert.ok(body.summary.trafficInBytes >= 25);
+    assert.ok(body.summary.trafficOutBytes >= 100);
+    assert.equal(body.trafficPaths.length, 1);
+    assert.equal(body.trafficPaths[0].path, '/health');
+    assert.equal(body.trafficPaths[0].requests, 1);
+    assert.ok(body.trafficPaths[0].bytes >= 125);
   });
 
   test('rejects an unknown database filter', async () => {

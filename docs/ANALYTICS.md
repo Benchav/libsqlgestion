@@ -98,7 +98,12 @@ present, the banner includes the most frequent HTTP path and a hint:
 - `/health` → only health checks were captured;
 - `/v2/pipeline` → libSQL traffic was captured but no query metrics were
   recorded;
-- other paths → only panel/API HTTP traffic was captured.
+- `/api/v1/...` → only panel/API HTTP traffic was captured.
+
+Known paths are displayed with friendly labels such as **Panel · snapshots**,
+**Panel · schema**, **libSQL pipeline** or **Health check**. The **Capture
+diagnostics** panel also groups HTTP traffic into Panel, Gateway, Health and
+Other, so a snapshot request cannot be confused with ERP SQL traffic.
 
 The page also accepts a deep link:
 

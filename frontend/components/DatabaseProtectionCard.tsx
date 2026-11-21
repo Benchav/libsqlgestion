@@ -13,6 +13,7 @@ type ProtectionDatabase = {
   runtimeProvider?: string;
   effectiveType?: string;
   gatewayEnabled?: boolean;
+  gatewayMode?: 'path' | 'root' | 'none';
   gatewayHttpsUrl?: string;
   gatewayLibsqlUrl?: string;
 };
@@ -156,7 +157,12 @@ export function DatabaseProtectionCard({ database, onUpdated }: Props) {
               ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
               : 'border-zinc-700/70 bg-zinc-900/40 text-zinc-400'
           }`}>
-            {database.gatewayEnabled ? (
+            {database.gatewayEnabled && database.gatewayMode === 'root' ? (
+              <>
+                The direct URL is routed through the root gateway. These switches apply to the ERP
+                and the panel. Do not use the runtime IP:port or an alternate direct route.
+              </>
+            ) : database.gatewayEnabled ? (
               <>
                 A Gateway URL is configured for this database. Use the Gateway URL in the ERP to
                 enforce these switches. The direct public libSQL URL still bypasses them until the

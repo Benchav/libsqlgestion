@@ -80,6 +80,8 @@ SNAPSHOT_VERIFY_ON_RESTORE=true
 # gateway service and the /gateway Traefik route are deployed.
 DATABASE_GATEWAY_ENABLED=false
 DATABASE_GATEWAY_PATH=/gateway/
+DATABASE_GATEWAY_ROOT_HOST=
+GATEWAY_ALLOW_ROOT=false
 GATEWAY_INTERNAL_TOKEN=
 GATEWAY_BACKEND_INTERNAL_URL=http://backend:5000
 GATEWAY_BODY_LIMIT_BYTES=33554432
@@ -257,8 +259,8 @@ panel unless you enable the policy gateway.
 4. Route `/gateway` on the database hosts to that service. The provided
    `docker-compose.yml` already contains a `gateway` service and a
    `PathPrefix('/gateway')` Traefik router.
-5. Open the database detail page and copy the **Gateway URL**.
-6. In the ERP, use:
+5. **Option A — Gateway path:** open the database detail page and copy the
+   **Gateway URL**, then use it in the ERP:
 
    ```env
    TURSO_DATABASE_URL=libsql://<database-host>/gateway/
@@ -267,9 +269,23 @@ panel unless you enable the policy gateway.
 
    Update `TURSO_SYNC_URL` too if it is configured.
 
-The original direct URL remains a bypass in this phase. See
-[POLICY_GATEWAY.md](docs/POLICY_GATEWAY.md) for the complete rollout and the
-maintenance step required to internalize the runtime later.
+6. **Option B — Root mode, keeping the existing URL:** set
+   `GATEWAY_ALLOW_ROOT=true` and
+   `DATABASE_GATEWAY_ROOT_HOST=<database-host>` on the backend, then deploy
+   `docker-compose.gateway-root.yml` together with the main compose file. The
+   override adds a gateway router at priority `100000` and a backend deny route
+   at priority `90000`, so a gateway outage returns `404` instead of silently
+   falling back to the runtime while the backend is healthy. The ERP keeps
+   using the same `libsql://<database-host>` URL.
+
+   If your Coolify deployment only accepts one compose file, copy the
+   `libsqlite-gateway-root` and `libsqlite-gateway-deny` labels into the main
+   compose file and replace `${DATABASE_GATEWAY_ROOT_HOST}` with the literal
+   database host. Do not leave literal `${...}` text in a Traefik label.
+
+The original direct runtime route still exists at lower priority as a last
+resort; complete removal requires internalizing the runtime. See
+[POLICY_GATEWAY.md](docs/POLICY_GATEWAY.md) for the complete rollout.
 
 ## 9. Recommended production flow
 

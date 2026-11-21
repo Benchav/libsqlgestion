@@ -269,8 +269,11 @@ When `DATABASE_GATEWAY_ENABLED=true` and `GATEWAY_INTERNAL_TOKEN` is configured,
 database responses include:
 
 - `gatewayEnabled`
-- `gatewayHttpsUrl` (for example `https://db.example.com/gateway/`)
-- `gatewayLibsqlUrl` (for example `libsql://db.example.com/gateway/`)
+- `gatewayMode` (`path`, `root` or `none`)
+- `gatewayHttpsUrl` (for example `https://db.example.com/gateway/`, or
+  `https://db.example.com` in root mode)
+- `gatewayLibsqlUrl` (for example `libsql://db.example.com/gateway/`, or
+  `libsql://db.example.com` in root mode)
 
 A client that uses the Gateway URL sends its Hrana requests through the policy
 gateway. The gateway parses `execute`, `batch`, `sequence` and `store_sql`,
@@ -278,9 +281,11 @@ applies `blockReads`/`blockWrites`, and returns `403` before forwarding blocked
 statements. It also rewrites any `base_url` from the runtime to `null` so the
 client cannot switch to an internal URL and bypass the gateway.
 
-The original direct URL remains available in this phase and still bypasses the
-gateway. See [POLICY_GATEWAY.md](POLICY_GATEWAY.md) for deployment, fail-closed
-behaviour and the maintenance step required to remove the direct route.
+In path mode the original direct URL remains available and still bypasses the
+gateway. In root mode the existing host is routed through the gateway by
+Traefik, with a backend deny route as a fallback. See
+[POLICY_GATEWAY.md](POLICY_GATEWAY.md) for deployment, fail-closed behaviour and
+the maintenance step required to remove the runtime's last-resort route.
 
 The gateway obtains policy from:
 

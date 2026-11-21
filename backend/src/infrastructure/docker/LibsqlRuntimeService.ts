@@ -1191,8 +1191,8 @@ export class LibsqlRuntimeService {
       } else {
         const publicTimeoutMs = Math.max(0, Number(options.publicTimeoutMs || 0));
         publicCheck = publicTimeoutMs > 0
-          ? await this.waitForPublicConnection(publicUrl, token, publicTimeoutMs)
-          : await this.checkConnection(publicUrl, token, false);
+          ? await this.waitForPublicConnection(publicUrl, publicTimeoutMs)
+          : await this.checkPublicRoute(publicUrl);
       }
     }
 
@@ -1285,14 +1285,13 @@ export class LibsqlRuntimeService {
 
   private async waitForPublicConnection(
     publicUrl: string,
-    authToken: string,
     timeoutMs: number,
   ): Promise<{ ok: boolean; error?: string }> {
     const deadline = Date.now() + Math.max(1000, timeoutMs);
     let lastResult: { ok: boolean; error?: string } = { ok: false, error: 'public check not started' };
 
     while (Date.now() < deadline) {
-      lastResult = await this.checkConnection(publicUrl, authToken, false);
+      lastResult = await this.checkPublicRoute(publicUrl);
       if (lastResult.ok) {
         return lastResult;
       }
@@ -1305,6 +1304,42 @@ export class LibsqlRuntimeService {
       'Check DNS, the Traefik router/TLS certificate and TRAEFIK_CERT_RESOLVER.',
     );
     return lastResult;
+  }
+
+  /**
+   * Checks DNS, TLS and the public Traefik route without executing SQL. This
+   * keeps runtime health independent from Block Reads/Block Writes: a
+   * protected database can still have a healthy public route even when
+   * `SELECT 1` is rejected by the policy gateway.
+   */
+  private async checkPublicRoute(url: string): Promise<{ ok: boolean; error?: string }> {
+    if (!url) return { ok: false, error: 'Empty URL' };
+
+    const base = url
+      .replace(/^libsql:\/\//i, 'https://')
+      .replace(/\/+$/, '');
+    let lastError = '';
+
+    for (const path of ['/health', '/version']) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(`${base}${path}`, {
+          method: 'GET',
+          redirect: 'manual',
+          signal: controller.signal,
+        });
+        await response.arrayBuffer().catch(() => undefined);
+        if (response.ok) return { ok: true };
+        lastError = `HTTP ${response.status} from ${path}`;
+      } catch (error: any) {
+        lastError = error?.message || String(error);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    return { ok: false, error: lastError || 'public health endpoint did not respond' };
   }
 
   private async checkConnection(

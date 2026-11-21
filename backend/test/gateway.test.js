@@ -142,6 +142,7 @@ test.describe('Policy gateway', () => {
       policyMaxStaleMs: 1000,
       upstreamTimeoutMs: 5000,
       pathPrefix: '/gateway',
+      allowRoot: true,
     }, {
       resolvePolicy: async (host) => {
         policyCalls.push(host);
@@ -183,6 +184,62 @@ test.describe('Policy gateway', () => {
     });
     assert.equal(response.status, 403, response.text);
     assert.equal(response.json.code, 'DATABASE_WRITES_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+  });
+
+  test('enforces the same policy on the root path when root mode is enabled', async () => {
+    policy.blockWrites = true;
+    const blocked = await request(gatewayPort, '/v2/pipeline', {
+      body: { requests: [{ type: 'execute', stmt: { sql: "INSERT INTO t VALUES ('root')" } }] },
+    });
+    assert.equal(blocked.status, 403, blocked.text);
+    assert.equal(blocked.json.code, 'DATABASE_WRITES_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+
+    policy.blockWrites = false;
+    const allowed = await request(gatewayPort, '/v2/pipeline', {
+      body: { requests: [{ type: 'execute', stmt: { sql: 'SELECT 1' } }] },
+    });
+    assert.equal(allowed.status, 200, allowed.text);
+    assert.equal(allowed.json.base_url, null);
+    assert.equal(upstreamCalls.length, 1);
+  });
+
+  test('blocks writes through the cursor endpoint', async () => {
+    policy.blockWrites = true;
+    const response = await request(gatewayPort, '/gateway/v2/cursor', {
+      body: { batch: { steps: [{ stmt: { sql: "INSERT INTO t VALUES ('cursor')" } }] } },
+    });
+    assert.equal(response.status, 403, response.text);
+    assert.equal(response.json.code, 'DATABASE_WRITES_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+  });
+
+  test('allows read cursors when only writes are blocked', async () => {
+    policy.blockWrites = true;
+    const response = await request(gatewayPort, '/gateway/v2/cursor', {
+      body: { batch: { steps: [{ stmt: { sql: 'SELECT 1' } }] } },
+    });
+    assert.equal(response.status, 200, response.text);
+    assert.equal(upstreamCalls.length, 1);
+    assert.equal(upstreamCalls[0].url, '/v2/cursor');
+  });
+
+  test('blocks read cursors when reads are blocked', async () => {
+    policy.blockReads = true;
+    const response = await request(gatewayPort, '/gateway/v2/cursor', {
+      body: { batch: { steps: [{ stmt: { sql: 'SELECT 1' } }] } },
+    });
+    assert.equal(response.status, 403, response.text);
+    assert.equal(response.json.code, 'DATABASE_READS_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+  });
+
+  test('rejects non-pipeline methods instead of proxying them', async () => {
+    const response = await request(gatewayPort, '/gateway/v2/pipeline', {
+      method: 'GET',
+    });
+    assert.equal(response.status, 405, response.text);
     assert.equal(upstreamCalls.length, 0);
   });
 
@@ -292,9 +349,22 @@ test.describe('Policy gateway', () => {
       url: `libsql://127.0.0.1:${gatewayPort}/gateway/?tls=0`,
       authToken: 'test-token',
     });
+    const rootClient = createClient({
+      // This is the exact scheme used by the ERP: libsql:// with no path.
+      url: `libsql://127.0.0.1:${gatewayPort}/?tls=0`,
+      authToken: 'test-token',
+    });
     try {
       const result = await httpClient.execute('SELECT 1');
       assert.equal(Number(result.rows[0].x), 1);
+
+      const rootResult = await rootClient.execute('SELECT 1');
+      assert.equal(Number(rootResult.rows[0].x), 1);
+      assert.equal(
+        upstreamCalls.some((call) => call.url === '/v2/pipeline'),
+        true,
+        'the root libsql:// client must reach /v2/pipeline without a path prefix',
+      );
 
       const transaction = await httpClient.transaction('write');
       await transaction.execute("INSERT INTO t VALUES ('tx')");
@@ -343,6 +413,7 @@ test.describe('Policy gateway', () => {
     } finally {
       httpClient.close();
       libsqlClient.close();
+      rootClient.close();
     }
   });
 

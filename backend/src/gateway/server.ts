@@ -23,6 +23,7 @@ export type GatewayConfig = {
   policyMaxStaleMs: number;
   upstreamTimeoutMs: number;
   pathPrefix: string;
+  allowRoot: boolean;
 };
 
 type PolicyCacheEntry = {
@@ -56,6 +57,9 @@ export function getGatewayConfig(): GatewayConfig {
     policyMaxStaleMs: positiveInt(process.env.GATEWAY_POLICY_MAX_STALE_MS, 5_000),
     upstreamTimeoutMs: positiveInt(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, 120_000),
     pathPrefix: normalizePrefix(process.env.GATEWAY_PATH_PREFIX || DEFAULT_PATH_PREFIX),
+    allowRoot: ['true', '1', 'yes', 'on'].includes(
+      String(process.env.GATEWAY_ALLOW_ROOT || '').trim().toLowerCase(),
+    ),
   };
 }
 
@@ -228,6 +232,18 @@ class GatewayRequestError extends Error {
   }
 }
 
+function protectionErrorResponse(error: any) {
+  if (error instanceof DatabaseProtectionError || error instanceof GatewayRequestError) {
+    return {
+      status: error.statusCode,
+      code: error.code,
+      message: error.message,
+      blocked: error instanceof DatabaseProtectionError,
+    };
+  }
+  return null;
+}
+
 function enforcePipeline(
   policy: GatewayPolicy,
   requests: any[],
@@ -276,6 +292,28 @@ function enforcePipeline(
 
     if (item?.type === 'sequence') {
       const sql = resolveSql(item, storedSql);
+      if (!sql) {
+        if (policy.blockReads || policy.blockWrites) throw stateLost();
+        continue;
+      }
+      enforcePolicy(policy, sql);
+      continue;
+    }
+
+    // `describe` only prepares metadata and never executes the statement.
+    if (item?.type === 'describe') continue;
+
+    // Fail closed for any future SQL-bearing request type. Unknown requests
+    // without SQL are forwarded unchanged (for example get_autocommit/close).
+    const fallbackSql = resolveSql(item?.stmt, storedSql)
+      || (typeof item?.sql === 'string' && item.sql.trim() ? item.sql : null);
+    if (fallbackSql) {
+      enforcePolicy(policy, fallbackSql);
+      continue;
+    }
+    const fallbackSteps = Array.isArray(item?.batch?.steps) ? item.batch.steps : [];
+    for (const step of fallbackSteps) {
+      const sql = resolveSql(step?.stmt, storedSql);
       if (!sql) {
         if (policy.blockReads || policy.blockWrites) throw stateLost();
         continue;
@@ -383,6 +421,51 @@ export function createGatewayServer(
       || pathname === '/v1/pipeline'
       || pathname === '/pipeline'
       || pathname === '/';
+  }
+
+  function isCursorPath(pathname: string) {
+    return pathname === '/v2/cursor' || pathname === '/v1/cursor';
+  }
+
+  function isMetadataPath(pathname: string) {
+    return pathname === '/'
+      || pathname === '/version'
+      || pathname === '/health'
+      || pathname === '/v2'
+      || pathname === '/v1';
+  }
+
+  function enforceCursor(
+    policy: GatewayPolicy,
+    body: any,
+    storedSql: Map<number, string>,
+  ) {
+    const steps = Array.isArray(body?.batch?.steps) ? body.batch.steps : [];
+    if (!steps.length) {
+      if (policy.blockReads || policy.blockWrites) {
+        throw new GatewayRequestError(
+          400,
+          'GATEWAY_INVALID_CURSOR',
+          'The cursor request does not contain a batch of statements.',
+        );
+      }
+      return;
+    }
+
+    for (const step of steps) {
+      const sql = resolveSql(step?.stmt, storedSql);
+      if (!sql) {
+        if (policy.blockReads || policy.blockWrites) {
+          throw new GatewayRequestError(
+            409,
+            'GATEWAY_STREAM_STATE_LOST',
+            'The gateway lost this stream state (for example after a restart). Retry the transaction from the beginning.',
+          );
+        }
+        continue;
+      }
+      enforcePolicy(policy, sql);
+    }
   }
 
   async function proxyRequest(
@@ -507,7 +590,9 @@ export function createGatewayServer(
         return;
       }
 
-      if (!requestUrl.pathname.startsWith(`${pathPrefix}/`) && requestUrl.pathname !== pathPrefix) {
+      const hasExplicitPrefix = requestUrl.pathname === pathPrefix
+        || requestUrl.pathname.startsWith(`${pathPrefix}/`);
+      if (!hasExplicitPrefix && !config.allowRoot) {
         status = 404;
         sendJson(res, 404, { error: 'not found', code: 'GATEWAY_NOT_FOUND' });
         return;
@@ -548,9 +633,11 @@ export function createGatewayServer(
         return;
       }
 
-      const strippedPath = requestUrl.pathname === pathPrefix
-        ? '/'
-        : requestUrl.pathname.slice(pathPrefix.length) || '/';
+      const strippedPath = hasExplicitPrefix
+        ? (requestUrl.pathname === pathPrefix
+          ? '/'
+          : requestUrl.pathname.slice(pathPrefix.length) || '/')
+        : requestUrl.pathname;
       if (!isAllowedPath(strippedPath)) {
         status = 404;
         sendJson(res, 404, { error: 'not found', code: 'GATEWAY_NOT_FOUND' });
@@ -558,21 +645,22 @@ export function createGatewayServer(
       }
 
       const pathWithQuery = `${strippedPath}${requestUrl.search}`;
-      if ((strippedPath === '/v2/cursor' || strippedPath === '/v1/cursor') && policy.blockReads) {
-        status = 403;
-        blocked = true;
-        sendJson(res, 403, {
-          error: 'Read operations are blocked for this database. Disable Block Reads before retrying.',
-          code: 'DATABASE_READS_BLOCKED',
+      const method = String(req.method || '').toUpperCase();
+      const pipelineRequest = method === 'POST' && isPipelinePath(strippedPath);
+      const cursorRequest = method === 'POST' && isCursorPath(strippedPath);
+      const metadataRequest = (method === 'GET' || method === 'HEAD')
+        && isMetadataPath(strippedPath);
+
+      if (!pipelineRequest && !cursorRequest && !metadataRequest) {
+        status = 405;
+        sendJson(res, 405, {
+          error: 'method not allowed for this gateway endpoint',
+          code: 'GATEWAY_METHOD_NOT_ALLOWED',
         });
         return;
       }
 
-      // Enforce every mutating Hrana request. Do not depend on a client
-      // supplying Content-Type: a missing header must not become a bypass.
-      const pipelineRequest = isPipelinePath(strippedPath) && req.method === 'POST';
-
-      if (!pipelineRequest) {
+      if (metadataRequest) {
         await proxyRequest(req, res, policy, pathWithQuery, null, false);
         status = res.statusCode;
         return;
@@ -600,13 +688,14 @@ export function createGatewayServer(
 
       const baton = typeof parsedBody?.baton === 'string' ? parsedBody.baton : null;
       const existing = getStream(baton);
+      const requests = Array.isArray(parsedBody?.requests) ? parsedBody.requests : [];
+      const cursorSteps = Array.isArray(parsedBody?.batch?.steps) ? parsedBody.batch.steps : [];
       if (baton && !existing && (policy.blockReads || policy.blockWrites)) {
-        const requests = Array.isArray(parsedBody?.requests) ? parsedBody.requests : [];
         const referencesStoredSql = requests.some((item: any) => (
           item?.type === 'execute' && item?.stmt?.sql_id != null
           || item?.type === 'sequence' && item?.sql_id != null
           || item?.type === 'batch' && (item?.batch?.steps || []).some((step: any) => step?.stmt?.sql_id != null)
-        ));
+        )) || cursorSteps.some((step: any) => step?.stmt?.sql_id != null);
         if (referencesStoredSql) {
           status = 409;
           sendJson(res, 409, {
@@ -618,8 +707,14 @@ export function createGatewayServer(
       }
 
       const storedSql = new Map<number, string>(existing?.sql || []);
-      const requests = Array.isArray(parsedBody?.requests) ? parsedBody.requests : [];
       try {
+        if (cursorRequest) {
+          enforceCursor(policy, parsedBody, storedSql);
+          await proxyRequest(req, res, policy, pathWithQuery, rawBody, false);
+          status = res.statusCode;
+          return;
+        }
+
         if (strippedPath === '/' && Array.isArray(parsedBody?.statements)) {
           enforceLegacyStatements(policy, parsedBody);
         } else if (strippedPath === '/' && Array.isArray(parsedBody)) {
@@ -627,19 +722,25 @@ export function createGatewayServer(
             const sql = typeof statement === 'string' ? statement : statement?.q;
             if (typeof sql === 'string' && sql.trim()) enforcePolicy(policy, sql);
           }
+        } else if (strippedPath === '/' && typeof parsedBody?.q === 'string') {
+          enforcePolicy(policy, parsedBody.q);
+        } else if (strippedPath === '/' && typeof parsedBody?.sql === 'string') {
+          enforcePolicy(policy, parsedBody.sql);
+        } else if (strippedPath === '/' && (policy.blockReads || policy.blockWrites)) {
+          throw new GatewayRequestError(
+            400,
+            'GATEWAY_UNSUPPORTED_REQUEST',
+            'The gateway does not recognize this legacy request shape.',
+          );
         } else {
           enforcePipeline(policy, requests, storedSql);
         }
       } catch (error: any) {
-        if (error instanceof DatabaseProtectionError) {
-          status = error.statusCode;
-          blocked = true;
-          sendJson(res, error.statusCode, { error: error.message, code: error.code });
-          return;
-        }
-        if (error instanceof GatewayRequestError) {
-          status = error.statusCode;
-          sendJson(res, error.statusCode, { error: error.message, code: error.code });
+        const mapped = protectionErrorResponse(error);
+        if (mapped) {
+          status = mapped.status;
+          blocked = mapped.blocked;
+          sendJson(res, mapped.status, { error: mapped.message, code: mapped.code });
           return;
         }
         throw error;

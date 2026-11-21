@@ -577,9 +577,13 @@ The response includes:
 - operation mix (`select`, `insert`, `update`, `delete`, `replace`, `pragma`, `other`),
 - query source and HTTP status breakdowns,
 - `databaseUsage`: every existing database, including databases with zero
-  captured traffic. Each row includes project, status, type, runtime provider,
-  read/write queries, rows, errors, p95, storage, last activity, `lastSource`
-  and `hasActivity`,
+  captured SQL traffic. Each row includes project, status, type, runtime
+  provider, read/write queries, rows, errors, p95, storage, last activity,
+  `lastSource`, `hasActivity`, `httpRequests`, `lastRequestAt`,
+  `lastRequestPath` and `hasHttpActivity`,
+- `trafficPaths`: when `databaseId` is supplied, HTTP traffic grouped by path
+  (`path`, `requests`, `bytes`). This distinguishes health checks/panel traffic
+  from SQL query activity,
 - `topDatabases`: backwards-compatible active-only subset of `databaseUsage`,
 - top existing projects with read/write usage,
 - top normalized queries ranked by latency, rows read, rows written and

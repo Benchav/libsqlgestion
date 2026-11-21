@@ -51,7 +51,17 @@ type DatabaseUsageRow = {
   lastSeenAt: string | null;
   lastSource: string | null;
   hasActivity: boolean;
+  httpRequests: number;
+  lastRequestAt: string | null;
+  lastRequestPath: string | null;
+  hasHttpActivity: boolean;
   storageBytes: number;
+};
+
+export type TrafficPathUsage = {
+  path: string;
+  requests: number;
+  bytes: number;
 };
 
 const HOUR_MS = 3_600_000;
@@ -225,6 +235,7 @@ export class AnalyticsService {
       topQueriesByFrequency,
       topErrors,
       selectedDatabase,
+      trafficPaths,
     ] = await Promise.all([
       this.getSummary(window, databaseId),
       this.getSeries(window, plan, databaseId),
@@ -239,6 +250,7 @@ export class AnalyticsService {
       this.getTopQueries(window, 'queries', databaseId),
       this.getTopErrors(window, databaseId),
       this.getSelectedDatabase(databaseId),
+      this.getTrafficPaths(window, databaseId),
     ]);
 
     return {
@@ -253,6 +265,7 @@ export class AnalyticsService {
       statusCodes,
       operations,
       databaseUsage,
+      trafficPaths,
       // Kept for backwards compatibility; the UI uses the full inventory.
       topDatabases: databaseUsage
         .filter((database) => database.queries > 0 && (!databaseId || database.id === databaseId))
@@ -592,6 +605,29 @@ export class AnalyticsService {
     }));
   }
 
+  private async getTrafficPaths(window: AnalyticsWindow, databaseId?: string): Promise<TrafficPathUsage[]> {
+    if (!databaseId) return [];
+
+    const rows = await AppDataSource.query(
+      `SELECT t.path,
+              COUNT(*) AS requests,
+              COALESCE(SUM(t.requestBytes + t.responseBytes), 0) AS bytes
+       FROM traffic_metrics t
+       JOIN databases d ON d.id = t.databaseId
+       WHERE t.createdAt >= ? AND t.createdAt <= ? AND t.databaseId = ?
+       GROUP BY t.path
+       ORDER BY requests DESC
+       LIMIT 10`,
+      [sqlDate(window.from), sqlDate(window.to), databaseId],
+    );
+
+    return rows.map((row: any) => ({
+      path: String(row.path || '/'),
+      requests: numberValue(row.requests),
+      bytes: numberValue(row.bytes),
+    }));
+  }
+
   /**
    * Full inventory of existing databases. Unlike a top-N query, it starts from
    * `databases` and LEFT JOINs metrics, so a real database with zero captured
@@ -641,7 +677,7 @@ export class AnalyticsService {
     const placeholders = ids.map(() => '?').join(',');
     const activePlaceholders = activeIds.map(() => '?').join(',');
 
-    const [p95Rows, storage, lastSourceRows] = await Promise.all([
+    const [p95Rows, storage, lastSourceRows, httpRows] = await Promise.all([
       activeIds.length > 0
         ? AppDataSource.query(
           `WITH ranked AS (
@@ -684,6 +720,22 @@ export class AnalyticsService {
           [from, to, ...activeIds],
         )
         : Promise.resolve([]),
+      AppDataSource.query(
+        `SELECT t.databaseId,
+                COUNT(*) AS requests,
+                MAX(t.createdAt) AS lastRequestAt,
+                (SELECT t2.path
+                 FROM traffic_metrics t2
+                 WHERE t2.databaseId = t.databaseId
+                   AND t2.createdAt >= ? AND t2.createdAt <= ?
+                 ORDER BY t2.createdAt DESC
+                 LIMIT 1) AS lastRequestPath
+         FROM traffic_metrics t
+         WHERE t.createdAt >= ? AND t.createdAt <= ?
+           AND t.databaseId IN (${placeholders})
+         GROUP BY t.databaseId`,
+        [from, to, from, to, ...ids],
+      ),
     ]);
 
     const p95Map = new Map<string, number>(
@@ -694,6 +746,9 @@ export class AnalyticsService {
     );
     const lastSourceMap = new Map<string, string>(
       lastSourceRows.map((row: any) => [String(row.databaseId), String(row.source || '')]),
+    );
+    const httpMap = new Map<string, any>(
+      httpRows.map((row: any) => [String(row.databaseId), row]),
     );
 
     return rows.map((row: any) => {
@@ -738,6 +793,12 @@ export class AnalyticsService {
         lastSeenAt: timestampToIso(row.lastSeenAt),
         lastSource: lastSourceMap.get(id) || null,
         hasActivity: queries > 0,
+        httpRequests: numberValue(httpMap.get(id)?.requests),
+        lastRequestAt: timestampToIso(httpMap.get(id)?.lastRequestAt),
+        lastRequestPath: httpMap.get(id)?.lastRequestPath
+          ? String(httpMap.get(id).lastRequestPath)
+          : null,
+        hasHttpActivity: numberValue(httpMap.get(id)?.requests) > 0,
         storageBytes: storageMap.get(id) || 0,
       };
     });

@@ -197,6 +197,10 @@ export default function AnalyticsPage() {
   const writeShare = (summary?.writeQueries || 0) / totalReadWriteQueries;
   const databaseUsage = data?.databaseUsage || [];
   const selectedDatabase = data?.database || null;
+  const selectedUsage = selectedDatabase
+    ? databaseUsage.find((database) => database.id === selectedDatabase.id) || null
+    : null;
+  const trafficPaths = data?.trafficPaths || [];
   const comparisonMax = Math.max(
     1,
     ...databaseUsage.map((database) => database.rowsRead + database.rowsWritten),
@@ -310,7 +314,7 @@ export default function AnalyticsPage() {
                 <div className="flex items-center gap-3">
                   {summary!.queries === 0 && (
                     <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300">
-                      No traffic captured
+                      {summary!.requests > 0 ? 'No SQL queries' : 'No traffic captured'}
                     </span>
                   )}
                   <button
@@ -326,10 +330,67 @@ export default function AnalyticsPage() {
 
             {selectedDatabase && summary!.queries === 0 && (
               <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
-                <strong>No traffic captured for this database in the selected period.</strong>{' '}
-                If an external client uses it directly, route it through the policy gateway so its read/write
-                usage appears here.
+                <strong>No SQL query traffic captured for this database in the selected period.</strong>{' '}
+                {summary!.requests > 0
+                  ? `This database has ${formatNumber(summary!.requests)} HTTP requests (${formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)}), but no SQL statements were captured. Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.`
+                  : 'No HTTP requests or SQL statements were captured. Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.'}
               </div>
+            )}
+
+            {selectedDatabase && (
+              <Panel
+                title="Capture diagnostics"
+                subtitle="SQL queries and HTTP requests are captured independently."
+              >
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                  <DiagnosticStat label="SQL queries" value={formatNumber(summary!.queries)} />
+                  <DiagnosticStat
+                    label="HTTP requests"
+                    value={formatNumber(summary!.requests)}
+                    detail={formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)}
+                  />
+                  <DiagnosticStat
+                    label="Last SQL source"
+                    value={selectedUsage?.lastSource ? sourceLabel(selectedUsage.lastSource) : 'None'}
+                  />
+                  <DiagnosticStat
+                    label="Last HTTP path"
+                    value={selectedUsage?.lastRequestPath || trafficPaths[0]?.path || '—'}
+                    detail={selectedUsage?.lastRequestAt ? formatRelativeTime(selectedUsage.lastRequestAt) : undefined}
+                  />
+                  <DiagnosticStat label="Storage" value={formatBytes(summary!.storageBytes)} />
+                </div>
+
+                <div className="mt-4">
+                  <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                    HTTP traffic by path
+                  </h4>
+                  {trafficPaths.length > 0 ? (
+                    <div className="overflow-hidden rounded-lg border border-zinc-800/70">
+                      <table className="w-full border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-zinc-800/80 text-zinc-500">
+                            <th className="px-3 py-2">Path</th>
+                            <th className="px-3 py-2 text-right">Requests</th>
+                            <th className="px-3 py-2 text-right">Bytes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trafficPaths.map((item) => (
+                            <tr key={item.path} className="border-b border-zinc-800/40 last:border-0">
+                              <td className="px-3 py-2 font-mono text-[11px] text-zinc-400">{item.path}</td>
+                              <td className="px-3 py-2 text-right text-zinc-400">{formatNumber(item.requests)}</td>
+                              <td className="px-3 py-2 text-right text-zinc-400">{formatBytes(item.bytes)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-500">No HTTP requests captured in this period.</p>
+                  )}
+                </div>
+              </Panel>
             )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -378,9 +439,9 @@ export default function AnalyticsPage() {
               />
               <SummaryCard
                 icon={<Network size={18} />}
-                label="Traffic"
+                label="HTTP traffic"
                 value={formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)}
-                detail={`↓ ${formatBytes(summary!.trafficInBytes)} in · ↑ ${formatBytes(summary!.trafficOutBytes)} out`}
+                detail={`${formatNumber(summary!.requests)} requests · ↓ ${formatBytes(summary!.trafficInBytes)} in · ↑ ${formatBytes(summary!.trafficOutBytes)} out`}
               />
             </div>
 
@@ -663,7 +724,9 @@ export default function AnalyticsPage() {
                             <p className="text-[11px] text-zinc-500">
                               {database.hasActivity
                                 ? `${formatNumber(database.queries)} queries · ${formatDuration(database.p95DurationMs)} p95`
-                                : 'No traffic captured'}
+                                : database.hasHttpActivity
+                                  ? `${formatNumber(database.httpRequests)} HTTP requests · no SQL`
+                                  : 'No traffic captured'}
                             </p>
                           </div>
                         </div>
@@ -699,6 +762,7 @@ export default function AnalyticsPage() {
                 const writeShare = database.writeQueries / totalQueries;
                 const isSelected = selectedDatabaseId === database.id;
                 const source = database.lastSource;
+                const httpOnly = !source && database.hasHttpActivity;
 
                 return (
                   <tr
@@ -770,7 +834,11 @@ export default function AnalyticsPage() {
                         {database.hasActivity ? formatDuration(database.p95DurationMs) : '—'}
                       </div>
                       <div className="text-[11px] text-zinc-500">
-                        {database.hasActivity ? `${formatDuration(database.avgDurationMs)} avg` : 'No traffic'}
+                        {database.hasActivity
+                          ? `${formatDuration(database.avgDurationMs)} avg`
+                          : database.hasHttpActivity
+                            ? 'HTTP only'
+                            : 'No traffic'}
                       </div>
                     </td>
                     <td className="px-6 py-3 text-right text-zinc-400">{formatBytes(database.storageBytes)}</td>
@@ -780,13 +848,26 @@ export default function AnalyticsPage() {
                           ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
                           : source
                             ? 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
-                            : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                            : httpOnly
+                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                              : 'border-zinc-700 bg-zinc-800/60 text-zinc-500'
                       }`}>
-                        {source === 'gateway' ? 'Gateway' : sourceLabel(source)}
+                        {source === 'gateway' ? 'Gateway' : source ? sourceLabel(source) : httpOnly ? 'HTTP only' : 'No traffic'}
                       </span>
                     </td>
                     <td className="px-6 py-3 text-right text-zinc-400">
-                      {database.hasActivity ? formatRelativeTime(database.lastSeenAt) : 'No traffic captured'}
+                      {database.hasActivity ? (
+                        formatRelativeTime(database.lastSeenAt)
+                      ) : database.hasHttpActivity ? (
+                        <span>
+                          {formatRelativeTime(database.lastRequestAt)}
+                          <span className="block font-mono text-[10px] text-zinc-600">
+                            {database.lastRequestPath || 'HTTP'}
+                          </span>
+                        </span>
+                      ) : (
+                        'No traffic captured'
+                      )}
                     </td>
                   </tr>
                 );
@@ -903,14 +984,33 @@ export default function AnalyticsPage() {
 
             <p className="text-xs leading-relaxed text-zinc-500">
               Metrics are collected from this deployment onward. Read rows are rows returned by SELECT/RETURNING;
-              written rows are affected rows reported by the runtime. The gateway source captures direct ERP traffic.
-              Deleted databases are excluded from every aggregate; existing databases with no captured traffic remain
-              visible with zero usage. Ranges follow your browser timezone.
+              written rows are affected rows reported by the runtime. HTTP traffic includes panel/API requests and
+              gateway health checks; SQL query metrics are captured separately. Storage is sampled hourly. The gateway
+              source captures direct ERP traffic. Deleted databases are excluded from every aggregate; existing
+              databases with no captured SQL remain visible with zero query usage. Ranges follow your browser timezone.
             </p>
           </div>
         )}
       </div>
     </AppShell>
+  );
+}
+
+function DiagnosticStat({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/20 p-3">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">{label}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-zinc-200">{value}</p>
+      {detail && <p className="mt-0.5 truncate text-[11px] text-zinc-500">{detail}</p>}
+    </div>
   );
 }
 

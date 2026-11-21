@@ -10,6 +10,7 @@ const CSRF_EXEMPT_PATHS = [
   '/api/v1/auth/refresh',
   '/api/v1/health',
   '/api/v1/ready',
+  '/api/v1/internal/gateway/analytics',
 ];
 
 export function issueCsrfToken() {

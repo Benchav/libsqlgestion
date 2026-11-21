@@ -5,6 +5,7 @@ import {
   assertDatabaseSqlAllowed,
   DatabaseProtectionError,
 } from '../application/databases/database-protection';
+import type { GatewayQueryMetric, GatewayTrafficMetric } from './analytics';
 
 export type GatewayPolicy = {
   databaseId: string;
@@ -38,6 +39,15 @@ type StoredSqlState = {
 
 type GatewayDependencies = {
   resolvePolicy?: (host: string) => Promise<GatewayPolicy | null>;
+  recordQuery?: (metric: GatewayQueryMetric) => void;
+  recordTraffic?: (metric: GatewayTrafficMetric) => void;
+};
+
+type ProxyResult = {
+  statusCode: number;
+  durationMs: number;
+  responseBytes: number;
+  body?: any;
 };
 
 const DEFAULT_PATH_PREFIX = '/gateway';
@@ -331,6 +341,114 @@ function enforceLegacyStatements(policy: GatewayPolicy, body: any) {
   }
 }
 
+type StatementUsage = {
+  sql: string;
+  rowsRead: number;
+  rowsWritten: number;
+  success: boolean;
+  errorCode?: string;
+};
+
+function numericValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function usageFromResult(sql: string, result: any): StatementUsage | null {
+  if (!result) return null;
+  if (result.type === 'error') {
+    return {
+      sql,
+      rowsRead: 0,
+      rowsWritten: 0,
+      success: false,
+      errorCode: String(result?.error?.code || 'GATEWAY_UPSTREAM_ERROR'),
+    };
+  }
+  if (result.type !== 'ok') return null;
+
+  const payload = result?.response?.result;
+  if (!payload) return null;
+
+  return {
+    sql,
+    rowsRead: Array.isArray(payload.rows) ? payload.rows.length : 0,
+    rowsWritten: numericValue(payload.affected_row_count),
+    success: true,
+  };
+}
+
+/**
+ * Converts a Hrana pipeline response into per-statement usage metrics. The
+ * gateway already buffers pipeline responses to strip `base_url`, so this is
+ * the only place where external libSQL traffic can be measured accurately.
+ */
+export function collectUsageMetrics(
+  requests: any[],
+  results: any[],
+  storedSql: Map<number, string>,
+): StatementUsage[] {
+  const metrics: StatementUsage[] = [];
+
+  requests.forEach((item, index) => {
+    if (item?.type === 'execute') {
+      const sql = resolveSql(item.stmt, storedSql);
+      if (!sql) return;
+      const metric = usageFromResult(sql, results[index]);
+      if (metric) metrics.push(metric);
+      return;
+    }
+
+    if (item?.type === 'batch') {
+      const result = results[index];
+      const stepResults = result?.response?.result?.step_results;
+      const stepErrors = result?.response?.result?.step_errors;
+      const steps = Array.isArray(item.batch?.steps) ? item.batch.steps : [];
+
+      steps.forEach((step: any, stepIndex: number) => {
+        const sql = resolveSql(step?.stmt, storedSql);
+        if (!sql) return;
+
+        const stepError = Array.isArray(stepErrors) ? stepErrors[stepIndex] : null;
+        if (stepError) {
+          metrics.push({
+            sql,
+            rowsRead: 0,
+            rowsWritten: 0,
+            success: false,
+            errorCode: String(stepError?.code || 'GATEWAY_UPSTREAM_ERROR'),
+          });
+          return;
+        }
+
+        const stepResult = Array.isArray(stepResults) ? stepResults[stepIndex] : null;
+        const metric = usageFromResult(sql, stepResult
+          ? { type: 'ok', response: { result: stepResult } }
+          : null);
+        if (metric) metrics.push(metric);
+      });
+      return;
+    }
+
+    if (item?.type === 'sequence') {
+      const sql = resolveSql(item, storedSql);
+      if (!sql) return;
+      const result = results[index];
+      metrics.push({
+        sql,
+        rowsRead: 0,
+        rowsWritten: 0,
+        success: result?.type !== 'error',
+        errorCode: result?.type === 'error'
+          ? String(result?.error?.code || 'GATEWAY_UPSTREAM_ERROR')
+          : undefined,
+      });
+    }
+  });
+
+  return metrics;
+}
+
 export function createGatewayServer(
   config: GatewayConfig,
   dependencies: GatewayDependencies = {},
@@ -475,12 +593,13 @@ export function createGatewayServer(
     pathWithQuery: string,
     body: Buffer | null,
     rewritePipelineResponse: boolean,
-  ): Promise<void> {
+  ): Promise<ProxyResult> {
     const target = buildUpstreamUrl(policy, pathWithQuery);
     const transport = target.protocol === 'https:' ? https : http;
     const headers = proxyHeaders(req, body);
+    const startedAt = Date.now();
 
-    await new Promise<void>((resolve) => {
+    return new Promise<ProxyResult>((resolve) => {
       const upstream = transport.request(target, {
         method: req.method,
         headers,
@@ -494,18 +613,34 @@ export function createGatewayServer(
             code: 'GATEWAY_UNSUPPORTED_ENCODING',
           });
           upstreamRes.resume();
-          resolve();
+          resolve({
+            statusCode: 502,
+            durationMs: Date.now() - startedAt,
+            responseBytes: 0,
+          });
           return;
         }
 
         if (!rewritePipelineResponse) {
-          res.writeHead(upstreamRes.statusCode || 502, responseHeaders(upstreamRes.headers));
+          const declaredLength = Number(upstreamRes.headers['content-length'] || 0);
+          const statusCode = upstreamRes.statusCode || 502;
+          res.writeHead(statusCode, responseHeaders(upstreamRes.headers));
           upstreamRes.pipe(res);
-          upstreamRes.on('end', resolve);
+          upstreamRes.on('end', () => {
+            resolve({
+              statusCode,
+              durationMs: Date.now() - startedAt,
+              responseBytes: Number.isFinite(declaredLength) ? declaredLength : 0,
+            });
+          });
           upstreamRes.on('error', (error) => {
             if (!res.headersSent) sendJson(res, 502, { error: 'upstream response error', code: 'GATEWAY_UPSTREAM_ERROR' });
             else res.destroy(error);
-            resolve();
+            resolve({
+              statusCode: 502,
+              durationMs: Date.now() - startedAt,
+              responseBytes: 0,
+            });
           });
           return;
         }
@@ -521,6 +656,7 @@ export function createGatewayServer(
           chunks.push(chunk);
         });
         upstreamRes.on('end', () => {
+          const statusCode = upstreamRes.statusCode || 502;
           const responseBody = Buffer.concat(chunks);
           let rewritten = responseBody;
           let parsed: any = null;
@@ -534,7 +670,7 @@ export function createGatewayServer(
             rewritten = Buffer.from(JSON.stringify(parsed));
           }
           res.writeHead(
-            upstreamRes.statusCode || 502,
+            statusCode,
             responseHeaders(upstreamRes.headers, rewritten.length),
           );
           res.end(rewritten);
@@ -549,12 +685,21 @@ export function createGatewayServer(
               deleteStream(requestedBaton);
             }
           }
-          resolve();
+          resolve({
+            statusCode,
+            durationMs: Date.now() - startedAt,
+            responseBytes: rewritten.length,
+            body: parsed,
+          });
         });
         upstreamRes.on('error', (error) => {
           if (!res.headersSent) sendJson(res, 502, { error: 'upstream response error', code: 'GATEWAY_UPSTREAM_ERROR' });
           else res.destroy(error);
-          resolve();
+          resolve({
+            statusCode: 502,
+            durationMs: Date.now() - startedAt,
+            responseBytes: 0,
+          });
         });
       });
 
@@ -568,11 +713,62 @@ export function createGatewayServer(
         } else {
           res.destroy(error);
         }
-        resolve();
+        resolve({
+          statusCode: 502,
+          durationMs: Date.now() - startedAt,
+          responseBytes: 0,
+        });
       });
 
       if (body) upstream.end(body);
       else req.pipe(upstream);
+    });
+  }
+
+  function recordQueryUsage(
+    policy: GatewayPolicy,
+    requests: any[],
+    storedSql: Map<number, string>,
+    proxyResult: ProxyResult,
+  ) {
+    if (!dependencies.recordQuery) return;
+    const results = proxyResult.body?.results;
+    if (!Array.isArray(results)) return;
+
+    const metrics = collectUsageMetrics(requests, results, storedSql);
+    if (metrics.length === 0) return;
+
+    // Hrana reports one response for the whole pipeline; distribute the
+    // observed latency so aggregate averages stay representative.
+    const perStatementMs = Math.max(1, Math.round(proxyResult.durationMs / metrics.length));
+    for (const metric of metrics) {
+      dependencies.recordQuery({
+        databaseId: policy.databaseId,
+        sql: metric.sql,
+        durationMs: perStatementMs,
+        rowsRead: metric.rowsRead,
+        rowsWritten: metric.rowsWritten,
+        success: metric.success,
+        errorCode: metric.errorCode,
+      });
+    }
+  }
+
+  function recordTrafficUsage(
+    policy: GatewayPolicy,
+    req: IncomingMessage,
+    path: string,
+    requestBytes: number,
+    proxyResult: ProxyResult,
+  ) {
+    dependencies.recordTraffic?.({
+      databaseId: policy.databaseId,
+      method: req.method || 'POST',
+      path,
+      requestBytes,
+      responseBytes: proxyResult.responseBytes,
+      statusCode: proxyResult.statusCode,
+      durationMs: proxyResult.durationMs,
     });
   }
 
@@ -661,8 +857,16 @@ export function createGatewayServer(
       }
 
       if (metadataRequest) {
-        await proxyRequest(req, res, policy, pathWithQuery, null, false);
-        status = res.statusCode;
+        const declaredLength = Number(req.headers['content-length'] || 0);
+        const proxyResult = await proxyRequest(req, res, policy, pathWithQuery, null, false);
+        recordTrafficUsage(
+          policy,
+          req,
+          requestUrl.pathname,
+          Number.isFinite(declaredLength) ? declaredLength : 0,
+          proxyResult,
+        );
+        status = proxyResult.statusCode;
         return;
       }
 
@@ -710,8 +914,9 @@ export function createGatewayServer(
       try {
         if (cursorRequest) {
           enforceCursor(policy, parsedBody, storedSql);
-          await proxyRequest(req, res, policy, pathWithQuery, rawBody, false);
-          status = res.statusCode;
+          const proxyResult = await proxyRequest(req, res, policy, pathWithQuery, rawBody, false);
+          recordTrafficUsage(policy, req, requestUrl.pathname, rawBody.length, proxyResult);
+          status = proxyResult.statusCode;
           return;
         }
 
@@ -748,8 +953,10 @@ export function createGatewayServer(
 
       (req as any).__gatewayBaton = baton;
       (req as any).__gatewayStoredSql = storedSql;
-      await proxyRequest(req, res, policy, pathWithQuery, rawBody, true);
-      status = res.statusCode;
+      const proxyResult = await proxyRequest(req, res, policy, pathWithQuery, rawBody, true);
+      recordQueryUsage(policy, requests, storedSql, proxyResult);
+      recordTrafficUsage(policy, req, requestUrl.pathname, rawBody.length, proxyResult);
+      status = proxyResult.statusCode;
     } catch (error: any) {
       status = error?.statusCode || 500;
       if (!res.headersSent) {

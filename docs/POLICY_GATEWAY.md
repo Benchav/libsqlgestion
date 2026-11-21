@@ -143,6 +143,26 @@ and the runtime containers. If you use a custom `LIBSQL_RUNTIME_NETWORK`, attach
 the gateway service to that same network as well; otherwise it cannot resolve
 `libsqlite-<database-id>` or `sqld`.
 
+### Usage analytics
+
+The gateway reports best-effort query and traffic metrics to the backend so the
+Analytics page includes direct ERP traffic, not only panel/Studio usage:
+
+```dotenv
+GATEWAY_BACKEND_INTERNAL_URL=http://backend:5000
+GATEWAY_ANALYTICS_ENABLED=true
+GATEWAY_ANALYTICS_FLUSH_MS=1000
+GATEWAY_ANALYTICS_MAX_QUEUE=5000
+GATEWAY_ANALYTICS_BATCH_SIZE=500
+GATEWAY_ANALYTICS_TIMEOUT_MS=5000
+```
+
+Metrics are buffered in memory and sent asynchronously. If the backend is
+unavailable, database traffic continues normally and metrics are retried until
+the bounded queue is full. SQL literals are redacted before the metric leaves
+the gateway. The ingest endpoint only accepts existing database IDs, so deleted
+databases cannot reappear in analytics.
+
 The gateway image is the backend image with a different command:
 
 ```text

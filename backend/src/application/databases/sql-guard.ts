@@ -275,6 +275,22 @@ function classifyPragma(tokens: SqlToken[]): SqlClassification {
   return { operation: 'unknown', returnsRows: true, keyword: 'PRAGMA' };
 }
 
+/**
+ * Returns the effective top-level statement keyword. For `WITH` statements it
+ * skips the CTE bodies and returns the main `SELECT`/`INSERT`/`UPDATE`/`DELETE`.
+ * This keeps analytics read/write classification aligned with the protection
+ * classifier.
+ */
+export function detectMainStatementKeyword(statement: string): string {
+  const tokens = tokenizeSql(statement.trim());
+  const words = topLevelWords(tokens);
+  if (words.length === 0) return '';
+  if (words[0] === 'WITH') {
+    return words.slice(1).find((word) => MAIN_STATEMENT_KEYWORDS.has(word)) || 'WITH';
+  }
+  return words[0];
+}
+
 export function classifySqlStatement(statement: string): SqlClassification {
   const trimmed = statement.trim();
   if (!trimmed || trimmed === ';') {

@@ -1,12 +1,14 @@
 import crypto from 'crypto';
+import { detectMainStatementKeyword } from '../databases/sql-guard';
 
 export function detectOperation(sql: string) {
-  const normalized = sql.trim().toLowerCase();
-  if (normalized.startsWith('select') || normalized.startsWith('with')) return 'select';
-  if (normalized.startsWith('insert')) return 'insert';
-  if (normalized.startsWith('update')) return 'update';
-  if (normalized.startsWith('delete')) return 'delete';
-  if (normalized.startsWith('pragma')) return 'pragma';
+  const keyword = detectMainStatementKeyword(sql).toLowerCase();
+  if (keyword === 'select' || keyword === 'values') return 'select';
+  if (keyword === 'insert') return 'insert';
+  if (keyword === 'update') return 'update';
+  if (keyword === 'delete') return 'delete';
+  if (keyword === 'replace') return 'replace';
+  if (keyword === 'pragma') return 'pragma';
   return 'other';
 }
 

@@ -6,106 +6,28 @@ import {
   Activity,
   AlertTriangle,
   ArrowDownUp,
-  Database,
+  BookOpen,
   Gauge,
   HardDrive,
   Network,
+  PenLine,
   RefreshCw,
-  Rows3,
-  Timer,
 } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 import { TimeSeriesChart } from '../../components/analytics/TimeSeriesChart';
 import { apiRequest } from '../../lib/api';
+import {
+  formatBytes,
+  formatDuration,
+  formatNumber,
+  formatPercent,
+  formatRatio,
+  formatRelativeTime,
+} from '../../lib/format';
+import type { AnalyticsOverview, AnalyticsRange, TopQuery } from '../../lib/analytics-types';
+import { OPERATION_COLORS, operationLabel } from '../../lib/analytics-ui';
 
-type AnalyticsRange = 'today' | '7d' | '30d' | 'month';
 type QueryRank = 'latency' | 'rowsRead' | 'rowsWritten' | 'queries';
-
-type TopQuery = {
-  fingerprint: string;
-  sqlPreview: string;
-  queries: number;
-  rowsRead: number;
-  rowsWritten: number;
-  avgDurationMs: number;
-  maxDurationMs: number;
-};
-
-type AnalyticsOverview = {
-  from: string;
-  to: string;
-  bucket: 'hour' | 'day';
-  summary: {
-    rowsRead: number;
-    rowsWritten: number;
-    queries: number;
-    errors: number;
-    errorRate: number;
-    avgDurationMs: number;
-    p95DurationMs: number;
-    maxDurationMs: number;
-    storageBytes: number;
-    trafficInBytes: number;
-    trafficOutBytes: number;
-    requests: number;
-    syncs: null;
-  };
-  series: {
-    labels: string[];
-    queries: number[];
-    errors: number[];
-    rowsRead: number[];
-    rowsWritten: number[];
-    latencyAvg: Array<number | null>;
-    latencyP95: Array<number | null>;
-    latencyMax: Array<number | null>;
-    trafficIn: number[];
-    trafficOut: number[];
-    requests: number[];
-    storage: number[];
-  };
-  sources: Array<{
-    source: string;
-    queries: number;
-    errors: number;
-    avgDurationMs: number;
-  }>;
-  statusCodes: Array<{
-    statusCode: number;
-    requests: number;
-    responseBytes: number;
-  }>;
-  topDatabases: Array<{
-    id: string;
-    name: string;
-    displayName?: string;
-    exists?: boolean;
-    deleted?: boolean;
-    needsRename?: boolean;
-    subdomain?: string | null;
-    rowsRead: number;
-    rowsWritten: number;
-    queries: number;
-    storageBytes: number;
-  }>;
-  topProjects: Array<{
-    id: string;
-    name: string;
-    rowsRead: number;
-    rowsWritten: number;
-    queries: number;
-  }>;
-  topQueries: TopQuery[];
-  topQueriesByRowsRead: TopQuery[];
-  topQueriesByRowsWritten: TopQuery[];
-  topQueriesByFrequency: TopQuery[];
-  topErrors: Array<{
-    errorCode: string;
-    queries: number;
-    sqlPreview: string;
-    lastSeenAt: string | null;
-  }>;
-};
 
 const RANGES: Array<{ value: AnalyticsRange; label: string }> = [
   { value: 'today', label: 'Today' },
@@ -122,6 +44,7 @@ const QUERY_RANKS: Array<{ value: QueryRank; label: string }> = [
 ];
 
 const SOURCE_COLORS: Record<string, string> = {
+  gateway: '#22d3ee',
   studio: '#38bdf8',
   api: '#34d399',
   pipeline: '#a78bfa',
@@ -140,34 +63,6 @@ function getRangeWindow(range: AnalyticsRange) {
     return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: now };
   }
   return { from: new Date(now.getTime() - 30 * 86_400_000), to: now };
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
-function formatBytes(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let size = value;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-function formatDuration(value: number) {
-  if (value < 1000) return `${Math.round(value)} ms`;
-  return `${(value / 1000).toFixed(2)} s`;
-}
-
-function formatPercent(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return '0%';
-  const percent = value * 100;
-  if (percent < 0.1) return '<0.1%';
-  return `${percent.toFixed(percent >= 10 ? 0 : 1)}%`;
 }
 
 function formatBucketLabel(label: string, bucket: 'hour' | 'day') {
@@ -210,6 +105,7 @@ function formatDateTime(value: string) {
 }
 
 function formatSource(source: string) {
+  if (source === 'gateway') return 'Gateway (ERP)';
   if (source === 'api') return 'API';
   if (source === 'pipeline') return 'Pipeline';
   if (source === 'studio') return 'Studio';
@@ -280,6 +176,10 @@ export default function AnalyticsPage() {
   };
   const visibleQueries = topQueryLists[queryRank];
   const totalSourceQueries = (data?.sources || []).reduce((total, source) => total + source.queries, 0);
+  const totalOperationQueries = (data?.operations || []).reduce((total, operation) => total + operation.queries, 0);
+  const totalReadWriteQueries = Math.max(1, (summary?.readQueries || 0) + (summary?.writeQueries || 0));
+  const readShare = (summary?.readQueries || 0) / totalReadWriteQueries;
+  const writeShare = (summary?.writeQueries || 0) / totalReadWriteQueries;
 
   return (
     <AppShell>
@@ -353,23 +253,48 @@ export default function AnalyticsPage() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryCard
-                icon={<Database size={18} />}
+                icon={<Activity size={18} />}
                 label="Queries"
                 value={formatNumber(summary!.queries)}
-                detail={`${formatNumber(summary!.requests)} database API requests`}
+                detail={`${formatNumber(summary!.readQueries)} read · ${formatNumber(summary!.writeQueries)} write · ${summary!.activeDatabases} active`}
+              />
+              <SummaryCard
+                icon={<BookOpen size={18} />}
+                label="Rows read"
+                value={formatNumber(summary!.rowsRead)}
+                detail={`${summary!.rowsReadPerQuery.toFixed(1)} rows per read`}
+              />
+              <SummaryCard
+                icon={<PenLine size={18} />}
+                label="Rows written"
+                value={formatNumber(summary!.rowsWritten)}
+                detail={`${summary!.rowsWrittenPerWrite.toFixed(1)} rows per write`}
+              />
+              <SummaryCard
+                icon={<ArrowDownUp size={18} />}
+                label="Read / write"
+                value={formatRatio(summary!.readWriteRatio)}
+                detail={`${formatNumber(summary!.readQueries)} read vs ${formatNumber(summary!.writeQueries)} write queries`}
+              />
+              <SummaryCard
+                icon={<Gauge size={18} />}
+                label="Latency p95"
+                value={formatDuration(summary!.p95DurationMs)}
+                detail={`${formatDuration(summary!.avgDurationMs)} average`}
               />
               <SummaryCard
                 icon={<AlertTriangle size={18} />}
-                label="Errors"
-                value={formatNumber(summary!.errors)}
-                detail={`${formatPercent(summary!.errorRate)} error rate`}
+                label="Error rate"
+                value={formatPercent(summary!.errorRate)}
+                detail={`${formatNumber(summary!.errors)} failed queries`}
                 tone={summary!.errors > 0 ? 'text-red-400' : undefined}
               />
-              <SummaryCard icon={<Rows3 size={18} />} label="Rows read" value={formatNumber(summary!.rowsRead)} />
-              <SummaryCard icon={<ArrowDownUp size={18} />} label="Rows written" value={formatNumber(summary!.rowsWritten)} />
-              <SummaryCard icon={<Timer size={18} />} label="Average latency" value={formatDuration(summary!.avgDurationMs)} />
-              <SummaryCard icon={<Gauge size={18} />} label="Latency p95" value={formatDuration(summary!.p95DurationMs)} />
-              <SummaryCard icon={<HardDrive size={18} />} label="Storage" value={formatBytes(summary!.storageBytes)} />
+              <SummaryCard
+                icon={<HardDrive size={18} />}
+                label="Storage"
+                value={formatBytes(summary!.storageBytes)}
+                detail={`${summary!.totalDatabases} databases tracked`}
+              />
               <SummaryCard
                 icon={<Network size={18} />}
                 label="Traffic"
@@ -381,13 +306,14 @@ export default function AnalyticsPage() {
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <ChartCard
                 title="Query volume"
-                subtitle="Executed queries per bucket, with failed queries highlighted."
+                subtitle="Read and write operations per bucket, with failed queries highlighted."
                 className="xl:col-span-2"
               >
                 <TimeSeriesChart
                   labels={labels}
                   series={[
-                    { name: 'Queries', color: '#38bdf8', values: series!.queries, fill: true },
+                    { name: 'Read queries', color: '#34d399', values: series!.readQueries, fill: true },
+                    { name: 'Write queries', color: '#a78bfa', values: series!.writeQueries },
                     { name: 'Errors', color: '#f87171', values: series!.errors },
                   ]}
                   formatValue={formatNumber}
@@ -454,6 +380,45 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+              <Panel title="Operation mix" subtitle="Statements grouped by SQL operation.">
+                {data.operations.length === 0 ? (
+                  <EmptyPanelText>No operations in this period.</EmptyPanelText>
+                ) : (
+                  <div className="space-y-4">
+                    {data.operations.map((operation) => {
+                      const share = totalOperationQueries > 0 ? operation.queries / totalOperationQueries : 0;
+                      const color = OPERATION_COLORS[operation.operation] || '#71717a';
+                      return (
+                        <div key={operation.operation}>
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="flex items-center gap-2 text-zinc-300">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+                              {operationLabel(operation.operation)}
+                            </span>
+                            <span className="text-zinc-400">
+                              {formatNumber(operation.queries)} · {Math.round(share * 100)}%
+                            </span>
+                          </div>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${Math.max(2, share * 100)}%`,
+                                backgroundColor: color,
+                              }}
+                            />
+                          </div>
+                          <p className="mt-1 text-[11px] text-zinc-500">
+                            {formatNumber(operation.rowsRead)} read · {formatNumber(operation.rowsWritten)} written
+                            {operation.errors > 0 ? ` · ${formatNumber(operation.errors)} failed` : ''}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Panel>
+
               <Panel title="Query sources" subtitle="Where query traffic comes from.">
                 {data.sources.length === 0 ? (
                   <EmptyPanelText>No queries in this period.</EmptyPanelText>
@@ -489,11 +454,56 @@ export default function AnalyticsPage() {
                 )}
               </Panel>
 
+              <Panel title="Read / write mix" subtitle="Query distribution and row volume.">
+                {summary!.readQueries + summary!.writeQueries === 0 ? (
+                  <EmptyPanelText>No read or write queries in this period.</EmptyPanelText>
+                ) : (
+                  <div className="space-y-5">
+                    <div>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="text-3xl font-semibold text-zinc-100">
+                          {formatRatio(summary!.readWriteRatio)}
+                        </span>
+                        <span className="text-xs text-zinc-500">reads per write</span>
+                      </div>
+                      <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-zinc-800">
+                        <div className="h-full bg-emerald-400" style={{ width: `${readShare * 100}%` }} />
+                        <div className="h-full bg-violet-400" style={{ width: `${writeShare * 100}%` }} />
+                      </div>
+                      <div className="mt-2 flex justify-between text-[11px] text-zinc-500">
+                        <span>{formatNumber(summary!.readQueries)} read queries</span>
+                        <span>{formatNumber(summary!.writeQueries)} write queries</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-zinc-800/70 p-3">
+                        <p className="text-[11px] uppercase tracking-wider text-zinc-500">Rows read</p>
+                        <p className="mt-1 text-lg font-semibold text-emerald-400">
+                          {formatNumber(summary!.rowsRead)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-zinc-800/70 p-3">
+                        <p className="text-[11px] uppercase tracking-wider text-zinc-500">Rows written</p>
+                        <p className="mt-1 text-lg font-semibold text-violet-400">
+                          {formatNumber(summary!.rowsWritten)}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-zinc-500">
+                      Reads count rows returned by SELECT or RETURNING. Writes count affected rows reported by the
+                      database runtime.
+                    </p>
+                  </div>
+                )}
+              </Panel>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <Panel title="HTTP status codes" subtitle={`${formatNumber(summary!.requests)} requests in this period.`}>
                 {data.statusCodes.length === 0 ? (
                   <EmptyPanelText>No HTTP requests recorded.</EmptyPanelText>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {data.statusCodes.map((status) => (
                       <div
                         key={status.statusCode}
@@ -537,41 +547,31 @@ export default function AnalyticsPage() {
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <DataTable
                 title="Top databases"
-                subtitle="Ranked by rows read in the selected period."
-                columns={['Database', 'Rows read', 'Rows written', 'Queries', 'Storage']}
+                subtitle="Existing databases ranked by total rows processed. Deleted databases are excluded."
+                columns={['Database', 'Reads', 'Writes', 'Query mix', 'Errors', 'P95', 'Storage', 'Last activity']}
                 empty={data.topDatabases.length === 0}
                 emptyMessage="No database activity yet."
               >
                 {data.topDatabases.map((database) => {
-                  const label = database.displayName || database.name || 'Deleted database';
-                  const isDeleted = database.deleted === true || database.exists === false;
-                  const shortId = database.id.slice(0, 8);
+                  const label = database.displayName || database.name || 'Unnamed database';
+                  const totalQueries = Math.max(1, database.readQueries + database.writeQueries);
+                  const readShare = database.readQueries / totalQueries;
+                  const writeShare = database.writeQueries / totalQueries;
 
                   return (
                     <tr key={database.id} className="border-b border-zinc-800/40 text-sm last:border-0">
                       <td className="px-6 py-3 font-medium text-zinc-200" title={database.id}>
                         <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-2">
-                            {isDeleted ? (
-                              <span className="text-zinc-400">{label}</span>
-                            ) : (
-                              <Link
-                                href={`/databases/${database.id}`}
-                                className="transition-colors hover:text-white"
-                              >
-                                {label}
-                              </Link>
-                            )}
-                            {isDeleted && (
-                              <span className="rounded-full border border-zinc-700 px-1.5 py-0.5 text-[10px] font-normal text-zinc-500">
-                                Deleted
-                              </span>
-                            )}
-                          </div>
-                          {isDeleted && (
-                            <span className="font-mono text-[10px] font-normal text-zinc-600">{shortId}</span>
-                          )}
-                          {database.needsRename && !isDeleted && (
+                          <Link
+                            href={`/databases/${database.id}`}
+                            className="transition-colors hover:text-white"
+                          >
+                            {label}
+                          </Link>
+                          <span className="text-[11px] font-normal text-zinc-500">
+                            {database.projectName || 'No project'} · {database.status || 'unknown'}
+                          </span>
+                          {database.needsRename && (
                             <Link
                               href={`/databases/${database.id}`}
                               className="text-[11px] font-normal text-amber-400 transition-colors hover:text-amber-300"
@@ -581,10 +581,37 @@ export default function AnalyticsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.rowsRead)}</td>
-                      <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.rowsWritten)}</td>
-                      <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(database.queries)}</td>
+                      <td className="px-6 py-3 text-right">
+                        <div className="text-zinc-300">{formatNumber(database.rowsRead)}</div>
+                        <div className="text-[11px] text-zinc-500">{formatNumber(database.readQueries)} queries</div>
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <div className="text-zinc-300">{formatNumber(database.rowsWritten)}</div>
+                        <div className="text-[11px] text-zinc-500">{formatNumber(database.writeQueries)} queries</div>
+                      </td>
+                      <td className="px-6 py-3">
+                        <div
+                          className="ml-auto flex h-2 w-20 overflow-hidden rounded-full bg-zinc-800"
+                          title={`${formatNumber(database.readQueries)} read · ${formatNumber(database.writeQueries)} write queries`}
+                        >
+                          <div className="h-full bg-emerald-400" style={{ width: `${readShare * 100}%` }} />
+                          <div className="h-full bg-violet-400" style={{ width: `${writeShare * 100}%` }} />
+                        </div>
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <div className={database.errors > 0 ? 'text-red-400' : 'text-zinc-300'}>
+                          {formatNumber(database.errors)}
+                        </div>
+                        <div className="text-[11px] text-zinc-500">{formatPercent(database.errorRate)}</div>
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <div className="text-zinc-300">{formatDuration(database.p95DurationMs)}</div>
+                        <div className="text-[11px] text-zinc-500">{formatDuration(database.avgDurationMs)} avg</div>
+                      </td>
                       <td className="px-6 py-3 text-right text-zinc-400">{formatBytes(database.storageBytes)}</td>
+                      <td className="px-6 py-3 text-right text-zinc-400">
+                        {formatRelativeTime(database.lastSeenAt)}
+                      </td>
                     </tr>
                   );
                 })}
@@ -592,8 +619,8 @@ export default function AnalyticsPage() {
 
               <DataTable
                 title="Top projects"
-                subtitle="Ranked by rows read in the selected period."
-                columns={['Project', 'Rows read', 'Rows written', 'Queries']}
+                subtitle="Existing projects ranked by total rows processed."
+                columns={['Project', 'Reads', 'Writes', 'Queries', 'Errors']}
                 empty={data.topProjects.length === 0}
                 emptyMessage="No project activity yet."
               >
@@ -604,9 +631,21 @@ export default function AnalyticsPage() {
                         {project.name}
                       </Link>
                     </td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(project.rowsRead)}</td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(project.rowsWritten)}</td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="text-zinc-300">{formatNumber(project.rowsRead)}</div>
+                      <div className="text-[11px] text-zinc-500">{formatNumber(project.readQueries)} queries</div>
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="text-zinc-300">{formatNumber(project.rowsWritten)}</div>
+                      <div className="text-[11px] text-zinc-500">{formatNumber(project.writeQueries)} queries</div>
+                    </td>
                     <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(project.queries)}</td>
+                    <td className="px-6 py-3 text-right">
+                      <div className={project.errors > 0 ? 'text-red-400' : 'text-zinc-400'}>
+                        {formatNumber(project.errors)}
+                      </div>
+                      <div className="text-[11px] text-zinc-500">{formatPercent(project.errorRate)}</div>
+                    </td>
                   </tr>
                 ))}
               </DataTable>
@@ -651,6 +690,16 @@ export default function AnalyticsPage() {
                     {visibleQueries.map((query) => (
                       <tr key={query.fingerprint} className="border-b border-zinc-800/40 align-top text-xs last:border-0">
                         <td className="max-w-[520px] px-6 py-3">
+                          <span
+                            className="mb-1.5 inline-flex rounded border px-1.5 py-0.5 font-mono text-[10px]"
+                            style={{
+                              color: OPERATION_COLORS[query.operation || 'other'] || '#a1a1aa',
+                              borderColor: `${OPERATION_COLORS[query.operation || 'other'] || '#71717a'}55`,
+                              backgroundColor: `${OPERATION_COLORS[query.operation || 'other'] || '#71717a'}12`,
+                            }}
+                          >
+                            {operationLabel(query.operation)}
+                          </span>
                           <pre
                             title={query.sqlPreview}
                             className="max-h-16 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-400"
@@ -677,9 +726,10 @@ export default function AnalyticsPage() {
               </div>
             </div>
 
-            <p className="text-xs text-zinc-500">
-              Metrics are collected from this deployment onward. Ranges follow your browser timezone. Syncs are not
-              applicable because LibSQLite is running without embedded replicas.
+            <p className="text-xs leading-relaxed text-zinc-500">
+              Metrics are collected from this deployment onward. Read rows are rows returned by SELECT/RETURNING;
+              written rows are affected rows reported by the runtime. The gateway source captures direct ERP traffic,
+              and deleted databases are excluded from every aggregate. Ranges follow your browser timezone.
             </p>
           </div>
         )}

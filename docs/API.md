@@ -566,19 +566,42 @@ to=<ISO timestamp>
 
 The response includes:
 
-- summary totals: queries, errors, error rate, rows read/written, average and
-  p95 latency, storage, traffic bytes and database API request count,
-- a zero-filled timeseries with queries, errors, rows, average/p95/max latency,
-  traffic and storage,
+- summary totals: queries, errors, error rate, read/write query counts,
+  read/write row counts, read/write ratio, rows per query/write, active/total
+  databases, average/p95/max latency, storage, traffic bytes and request count,
+- a zero-filled timeseries with total/read/write queries, errors, rows,
+  average/p95/max latency, traffic and storage,
+- operation mix (`select`, `insert`, `update`, `delete`, `replace`, `pragma`, `other`),
 - query source and HTTP status breakdowns,
-- top databases and projects,
+- top existing databases with project, status, read/write queries, rows, errors,
+  p95 latency, storage and last activity,
+- top existing projects with read/write usage,
 - top normalized queries ranked by latency, rows read, rows written and
   frequency,
 - top error codes with redacted SQL previews.
 
+Deleted databases are excluded from every aggregate, including summaries,
+timeseries, top databases, top projects, top queries and errors. Their raw rows
+remain in the analytics tables until retention removes them, but they are never
+returned by the API.
+
 When `from` and `to` are supplied, the window and its buckets use those exact
 instants. The dashboard sends local-time boundaries so "Today" and "This month"
 match the browser timezone. Without them, the server falls back to UTC.
+
+### `GET /analytics/dashboard`
+
+Compact payload for the dashboard. Requires `analytics.read` and accepts the
+same query parameters as `GET /analytics`. It returns only the summary,
+timeseries, operation mix and top five databases; it does not compute the
+expensive top-query/error breakdowns.
+
+### `POST /internal/gateway/analytics`
+
+Internal, token-protected endpoint used by the policy gateway to ingest usage
+from direct `libsql://` clients. It is not part of the public API and requires
+`x-gateway-token` matching `GATEWAY_INTERNAL_TOKEN`. Only existing database IDs
+are accepted; unknown or deleted IDs are ignored.
 
 SQL literals are redacted and never stored in analytics previews. Metrics are
 collected from the moment the analytics-enabled backend starts. The raw

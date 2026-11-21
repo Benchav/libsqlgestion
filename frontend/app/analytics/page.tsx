@@ -25,7 +25,16 @@ import {
   formatRelativeTime,
 } from '../../lib/format';
 import type { AnalyticsOverview, AnalyticsRange, TopQuery } from '../../lib/analytics-types';
-import { OPERATION_COLORS, operationLabel, sourceLabel } from '../../lib/analytics-ui';
+import {
+  OPERATION_COLORS,
+  operationLabel,
+  sourceLabel,
+  summarizeTrafficPaths,
+  TRAFFIC_KIND_COLORS,
+  trafficKindLabel,
+  trafficPathKind,
+  trafficPathLabel,
+} from '../../lib/analytics-ui';
 
 type QueryRank = 'latency' | 'rowsRead' | 'rowsWritten' | 'queries';
 
@@ -202,14 +211,16 @@ export default function AnalyticsPage() {
     : null;
   const trafficPaths = data?.trafficPaths || [];
   const topTrafficPath = trafficPaths[0] || null;
-  const topTrafficPathName = topTrafficPath?.path || '';
-  const isPipelineTraffic = topTrafficPathName.includes('/pipeline');
-  const isHealthTraffic = topTrafficPathName.endsWith('/health');
-  const captureHint = isPipelineTraffic
+  const topTrafficKind = topTrafficPath ? trafficPathKind(topTrafficPath.path) : null;
+  const topTrafficLabel = topTrafficPath ? trafficPathLabel(topTrafficPath.path) : '';
+  const trafficOrigins = summarizeTrafficPaths(trafficPaths);
+  const captureHint = topTrafficKind === 'gateway'
     ? 'libSQL HTTP traffic was captured, but no SQL query metrics were recorded. Check the gateway/client pipeline and the analytics flush.'
-    : isHealthTraffic
+    : topTrafficKind === 'health'
       ? 'Only health checks were captured; no ERP SQL reached the gateway.'
-      : 'Only HTTP traffic was captured; no ERP SQL reached the gateway.';
+      : topTrafficKind === 'panel'
+        ? 'Only panel API requests were captured; no ERP SQL reached the gateway.'
+        : 'Only HTTP traffic was captured; no ERP SQL reached the gateway.';
   const comparisonMax = Math.max(
     1,
     ...databaseUsage.map((database) => database.rowsRead + database.rowsWritten),
@@ -332,12 +343,19 @@ export default function AnalyticsPage() {
                       HTTP requests:{' '}
                       <strong className="font-medium text-zinc-300">{formatNumber(summary!.requests)}</strong>
                     </span>
-                    {topTrafficPath && (
-                      <span className="inline-flex items-center gap-1">
+                    {topTrafficPath && topTrafficKind && (
+                      <span className="inline-flex items-center gap-1.5">
                         Top path:{' '}
-                        <code className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
-                          {topTrafficPath.path}
-                        </code>
+                        <span
+                          title={topTrafficPath.path}
+                          className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] text-zinc-300"
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: TRAFFIC_KIND_COLORS[topTrafficKind] }}
+                          />
+                          {topTrafficLabel}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -363,7 +381,7 @@ export default function AnalyticsPage() {
               <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
                 <strong>No SQL query traffic captured for this database in the selected period.</strong>{' '}
                 {summary!.requests > 0
-                  ? `This database has ${formatNumber(summary!.requests)} HTTP requests (${formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)})${topTrafficPath ? `, mostly ${topTrafficPath.path}` : ''}, but no SQL statements were captured. ${captureHint} Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.`
+                  ? `This database has ${formatNumber(summary!.requests)} HTTP requests (${formatBytes(summary!.trafficInBytes + summary!.trafficOutBytes)})${topTrafficLabel ? `, mostly ${topTrafficLabel}` : ''}, but no SQL statements were captured. ${captureHint} Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.`
                   : 'No HTTP requests or SQL statements were captured. Storage is sampled independently. If an external client uses it directly, route it through the policy gateway.'}
               </div>
             )}
@@ -386,10 +404,43 @@ export default function AnalyticsPage() {
                   />
                   <DiagnosticStat
                     label="Last HTTP path"
-                    value={selectedUsage?.lastRequestPath || trafficPaths[0]?.path || '—'}
+                    value={
+                      selectedUsage?.lastRequestPath
+                        ? trafficPathLabel(selectedUsage.lastRequestPath)
+                        : topTrafficLabel || '—'
+                    }
                     detail={selectedUsage?.lastRequestAt ? formatRelativeTime(selectedUsage.lastRequestAt) : undefined}
+                    title={selectedUsage?.lastRequestPath || topTrafficPath?.path}
                   />
                   <DiagnosticStat label="Storage" value={formatBytes(summary!.storageBytes)} />
+                </div>
+
+                <div className="mt-4">
+                  <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                    Traffic origin
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <DiagnosticStat
+                      label="Panel"
+                      value={formatNumber(trafficOrigins.panel.requests)}
+                      detail={formatBytes(trafficOrigins.panel.bytes)}
+                    />
+                    <DiagnosticStat
+                      label="Gateway"
+                      value={formatNumber(trafficOrigins.gateway.requests)}
+                      detail={formatBytes(trafficOrigins.gateway.bytes)}
+                    />
+                    <DiagnosticStat
+                      label="Health"
+                      value={formatNumber(trafficOrigins.health.requests)}
+                      detail={formatBytes(trafficOrigins.health.bytes)}
+                    />
+                    <DiagnosticStat
+                      label="Other"
+                      value={formatNumber(trafficOrigins.other.requests)}
+                      detail={formatBytes(trafficOrigins.other.bytes)}
+                    />
+                  </div>
                 </div>
 
                 <div className="mt-4">
@@ -401,19 +452,34 @@ export default function AnalyticsPage() {
                       <table className="w-full border-collapse text-left text-xs">
                         <thead>
                           <tr className="border-b border-zinc-800/80 text-zinc-500">
+                            <th className="px-3 py-2">Origin</th>
                             <th className="px-3 py-2">Path</th>
                             <th className="px-3 py-2 text-right">Requests</th>
                             <th className="px-3 py-2 text-right">Bytes</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {trafficPaths.map((item) => (
-                            <tr key={item.path} className="border-b border-zinc-800/40 last:border-0">
-                              <td className="px-3 py-2 font-mono text-[11px] text-zinc-400">{item.path}</td>
-                              <td className="px-3 py-2 text-right text-zinc-400">{formatNumber(item.requests)}</td>
-                              <td className="px-3 py-2 text-right text-zinc-400">{formatBytes(item.bytes)}</td>
-                            </tr>
-                          ))}
+                          {trafficPaths.map((item) => {
+                            const kind = trafficPathKind(item.path);
+                            return (
+                              <tr key={item.path} className="border-b border-zinc-800/40 last:border-0">
+                                <td className="px-3 py-2">
+                                  <span className="inline-flex items-center gap-1.5 text-[10px] text-zinc-400">
+                                    <span
+                                      className="h-1.5 w-1.5 rounded-full"
+                                      style={{ backgroundColor: TRAFFIC_KIND_COLORS[kind] }}
+                                    />
+                                    {trafficKindLabel(kind)}
+                                  </span>
+                                </td>
+                                <td className="break-all px-3 py-2 font-mono text-[11px] text-zinc-400">
+                                  {item.path}
+                                </td>
+                                <td className="px-3 py-2 text-right text-zinc-400">{formatNumber(item.requests)}</td>
+                                <td className="px-3 py-2 text-right text-zinc-400">{formatBytes(item.bytes)}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1039,13 +1105,15 @@ function DiagnosticStat({
   label,
   value,
   detail,
+  title,
 }: {
   label: string;
   value: string;
   detail?: string;
+  title?: string;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/20 p-3">
+    <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/20 p-3" title={title}>
       <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">{label}</p>
       <p className="mt-1 truncate text-sm font-semibold text-zinc-200">{value}</p>
       {detail && <p className="mt-0.5 truncate text-[11px] text-zinc-500">{detail}</p>}

@@ -28,7 +28,7 @@ import {
   formatRatio,
 } from '../../lib/format';
 import type { DashboardAnalytics } from '../../lib/analytics-types';
-import { OPERATION_COLORS, operationLabel, sourceLabel } from '../../lib/analytics-ui';
+import { OPERATION_COLORS, operationLabel, sourceLabel, trafficPathLabel } from '../../lib/analytics-ui';
 
 function getMetricTypeLabel(database: any) {
   const effectiveType = database?.effectiveType || database?.type || 'sqlite';
@@ -419,7 +419,7 @@ export default function DashboardPage() {
                       const activityLabel = database.hasActivity
                         ? sourceLabel(database.lastSource)
                         : database.hasHttpActivity
-                          ? 'HTTP only'
+                          ? `HTTP only · ${database.lastRequestPath ? trafficPathLabel(database.lastRequestPath) : 'no SQL'}`
                           : 'No traffic';
                       return (
                         <button

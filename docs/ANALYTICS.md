@@ -36,6 +36,45 @@ panel only sees queries that pass through the backend.
   were no write queries in the window.
 - **Active database**: an existing database with at least one statement in the
   window.
+- **Last source**: the most recent query source captured for a database
+  (`gateway`, `pipeline`, `api`, `studio`, `migration`) or `null` when there is
+  no captured traffic.
+
+## Database inventory and filtering
+
+The analytics response includes `databaseUsage`, built from `databases` with a
+`LEFT JOIN` to `query_metrics`. This is deliberately different from a top-N
+query:
+
+- every existing database appears, even if it has zero captured traffic;
+- deleted databases never appear because their row no longer exists;
+- each row includes `hasActivity`, `lastSource` and `lastSeenAt`;
+- zero-usage rows remain visible with zeros and a `No traffic captured` state.
+
+When `databaseId` is supplied to `GET /analytics` or
+`GET /analytics/dashboard`, every aggregate and timeseries is filtered to that
+database. `databaseUsage` still contains the full inventory so the selector and
+comparison chart remain populated. The Analytics page exposes this as:
+
+- a database selector in the header (`All databases` or a specific database);
+- a full-width **Database usage** table with all real databases;
+- a **Database comparison** chart showing read/write rows for every database;
+- a selected-database header with project, status, runtime provider and a
+  `No traffic captured` warning when applicable.
+
+The page also accepts a deep link:
+
+```text
+/analytics?databaseId=<database-uuid>
+```
+
+The dashboard's database usage rows use this link to open the selected
+database directly.
+
+If a real database shows zero usage, the database exists but no query reached
+the backend or gateway in the selected period. For an ERP connected directly by
+`libsql://`, the root-mode or `/gateway/` cutover must be active for its traffic
+to be captured.
 
 ## Deleted databases
 
@@ -46,7 +85,7 @@ excluded from:
 
 - summary totals and timeseries
 - operation mix
-- top databases and top projects
+- `databaseUsage`, top databases and top projects
 - top queries
 - top errors
 - storage totals
@@ -78,8 +117,10 @@ values or row data.
 
 ## API
 
-- `GET /analytics` — full analytics payload for the Analytics page.
-- `GET /analytics/dashboard` — compact payload for the dashboard.
+- `GET /analytics?range=...&databaseId=<uuid>` — full analytics payload for the
+  Analytics page. `databaseId` is optional.
+- `GET /analytics/dashboard?range=...&databaseId=<uuid>` — compact payload for
+  the dashboard.
 - Both require the `analytics.read` permission.
 - `POST /internal/gateway/analytics` — internal gateway ingest; not for browser
   or public use.
@@ -111,6 +152,20 @@ ANALYTICS_TRAFFIC_ENABLED=true
 4. Check the gateway logs for `analytics flush failed`.
 5. Confirm the ERP is not using an embedded replica; local reads never reach the
    gateway.
+
+**Only one database appears in Database usage.**
+
+`databaseUsage` starts from the `databases` table, so every existing row must
+appear. Verify the deployed backend includes this version and that the browser
+is not serving a cached page. The Analytics page uses the full inventory, not
+`topDatabases`.
+
+**A real database appears with zero usage.**
+
+The database exists, but no statements were captured for it in the selected
+period. If an external client uses it directly, route it through the policy
+gateway (root mode or `/gateway/`). The `Source` column shows `No traffic` and
+the selected-database view shows a capture warning.
 
 **A deleted database still appears.**
 

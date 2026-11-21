@@ -19,7 +19,7 @@ export type OperationUsage = {
   errors: number;
 };
 
-export type TopDatabase = {
+export type DatabaseUsage = {
   id: string;
   name: string;
   displayName?: string;
@@ -29,6 +29,7 @@ export type TopDatabase = {
   projectName?: string | null;
   type?: string;
   status?: string;
+  runtimeProvider?: string;
   rowsRead: number;
   rowsWritten: number;
   queries: number;
@@ -41,7 +42,23 @@ export type TopDatabase = {
   p95DurationMs: number;
   maxDurationMs: number;
   lastSeenAt: string | null;
+  lastSource: string | null;
+  hasActivity: boolean;
   storageBytes: number;
+};
+
+export type TopDatabase = DatabaseUsage;
+
+export type SelectedDatabase = {
+  id: string;
+  name: string;
+  displayName: string;
+  needsRename: boolean;
+  projectId: string | null;
+  projectName: string | null;
+  status: string;
+  type: string;
+  runtimeProvider: string;
 };
 
 export type TopProject = {
@@ -122,11 +139,14 @@ export type AnalyticsOverview = {
   from: string;
   to: string;
   bucket: 'hour' | 'day';
+  databaseId: string | null;
+  database: SelectedDatabase | null;
   summary: AnalyticsSummary;
   series: AnalyticsSeries;
   sources: AnalyticsSource[];
   statusCodes: StatusCodeUsage[];
   operations: OperationUsage[];
+  databaseUsage: DatabaseUsage[];
   topDatabases: TopDatabase[];
   topProjects: TopProject[];
   topQueries: TopQuery[];
@@ -140,8 +160,11 @@ export type DashboardAnalytics = {
   from: string;
   to: string;
   bucket: 'hour' | 'day';
+  databaseId: string | null;
+  database: SelectedDatabase | null;
   summary: AnalyticsSummary;
   series: AnalyticsSeries;
   operations: OperationUsage[];
+  databaseUsage: DatabaseUsage[];
   topDatabases: TopDatabase[];
 };

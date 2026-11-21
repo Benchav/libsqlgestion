@@ -25,7 +25,7 @@ import {
   formatRelativeTime,
 } from '../../lib/format';
 import type { AnalyticsOverview, AnalyticsRange, TopQuery } from '../../lib/analytics-types';
-import { OPERATION_COLORS, operationLabel } from '../../lib/analytics-ui';
+import { OPERATION_COLORS, operationLabel, sourceLabel } from '../../lib/analytics-ui';
 
 type QueryRank = 'latency' | 'rowsRead' | 'rowsWritten' | 'queries';
 
@@ -104,15 +104,6 @@ function formatDateTime(value: string) {
   });
 }
 
-function formatSource(source: string) {
-  if (source === 'gateway') return 'Gateway (ERP)';
-  if (source === 'api') return 'API';
-  if (source === 'pipeline') return 'Pipeline';
-  if (source === 'studio') return 'Studio';
-  if (source === 'migration') return 'Migration';
-  return source.charAt(0).toUpperCase() + source.slice(1);
-}
-
 function statusTone(statusCode: number) {
   if (statusCode >= 500) return 'border-red-500/20 bg-red-500/10 text-red-400';
   if (statusCode >= 400) return 'border-amber-500/20 bg-amber-500/10 text-amber-400';
@@ -124,12 +115,16 @@ function statusTone(statusCode: number) {
 export default function AnalyticsPage() {
   const [range, setRange] = useState<AnalyticsRange>('7d');
   const [queryRank, setQueryRank] = useState<QueryRank>('latency');
+  const [selectedDatabaseId, setSelectedDatabaseId] = useState('');
   const [data, setData] = useState<AnalyticsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const requestId = useRef(0);
 
-  async function loadAnalytics(nextRange: AnalyticsRange = range) {
+  async function loadAnalytics(
+    nextRange: AnalyticsRange = range,
+    nextDatabaseId: string = selectedDatabaseId,
+  ) {
     const currentRequest = requestId.current + 1;
     requestId.current = currentRequest;
     setLoading(true);
@@ -141,12 +136,16 @@ export default function AnalyticsPage() {
       from: window.from.toISOString(),
       to: window.to.toISOString(),
     });
+    if (nextDatabaseId) params.set('databaseId', nextDatabaseId);
 
     try {
       const result = await apiRequest<AnalyticsOverview>(`/analytics?${params.toString()}`);
       if (requestId.current === currentRequest) setData(result);
     } catch (err: any) {
       if (requestId.current === currentRequest) {
+        if (String(err?.message || '').includes('database not found')) {
+          selectDatabase('');
+        }
         setError(err.message || 'Failed to load analytics');
       }
     } finally {
@@ -154,9 +153,23 @@ export default function AnalyticsPage() {
     }
   }
 
+  function selectDatabase(databaseId: string) {
+    setSelectedDatabaseId(databaseId);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (databaseId) url.searchParams.set('databaseId', databaseId);
+    else url.searchParams.delete('databaseId');
+    window.history.replaceState({}, '', url.toString());
+  }
+
   useEffect(() => {
-    void loadAnalytics(range);
-  }, [range]);
+    void loadAnalytics(range, selectedDatabaseId);
+  }, [range, selectedDatabaseId]);
+
+  useEffect(() => {
+    const databaseId = new URLSearchParams(window.location.search).get('databaseId') || '';
+    if (databaseId) setSelectedDatabaseId(databaseId);
+  }, []);
 
   const summary = data?.summary;
   const series = data?.series;
@@ -166,6 +179,8 @@ export default function AnalyticsPage() {
     || summary.trafficInBytes > 0
     || summary.trafficOutBytes > 0
     || summary.storageBytes > 0
+    || data?.database
+    || (data?.databaseUsage?.length || 0) > 0
   ));
 
   const topQueryLists: Record<QueryRank, TopQuery[]> = {
@@ -180,6 +195,12 @@ export default function AnalyticsPage() {
   const totalReadWriteQueries = Math.max(1, (summary?.readQueries || 0) + (summary?.writeQueries || 0));
   const readShare = (summary?.readQueries || 0) / totalReadWriteQueries;
   const writeShare = (summary?.writeQueries || 0) / totalReadWriteQueries;
+  const databaseUsage = data?.databaseUsage || [];
+  const selectedDatabase = data?.database || null;
+  const comparisonMax = Math.max(
+    1,
+    ...databaseUsage.map((database) => database.rowsRead + database.rowsWritten),
+  );
 
   return (
     <AppShell>
@@ -192,6 +213,20 @@ export default function AnalyticsPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={selectedDatabaseId}
+              onChange={(event) => selectDatabase(event.target.value)}
+              className="h-9 max-w-[240px] rounded-lg border border-zinc-800 bg-[#0f0f0f] px-3 text-xs text-zinc-300 outline-none transition-colors focus:border-zinc-600"
+              aria-label="Filter by database"
+            >
+              <option value="">All databases</option>
+              {databaseUsage.map((database) => (
+                <option key={database.id} value={database.id}>
+                  {database.displayName || database.name}
+                  {database.hasActivity ? '' : ' · no traffic'}
+                </option>
+              ))}
+            </select>
             <div className="flex flex-wrap rounded-lg border border-zinc-800 bg-[#0f0f0f] p-1">
               {RANGES.map((item) => (
                 <button
@@ -251,6 +286,52 @@ export default function AnalyticsPage() {
           </div>
         ) : (
           <div className="space-y-6">
+            {selectedDatabase && (
+              <div className="flex flex-col gap-3 rounded-xl border border-zinc-800/80 bg-[#0f0f0f] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-wider text-zinc-500">Database filter</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg font-semibold text-zinc-100">{selectedDatabase.displayName}</h2>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                      selectedDatabase.status === 'active'
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                        : 'border-zinc-700 text-zinc-400'
+                    }`}>
+                      {selectedDatabase.status || 'unknown'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {selectedDatabase.projectName || 'No project'}
+                    {' · '}
+                    {selectedDatabase.type || 'database'}
+                    {selectedDatabase.runtimeProvider ? ` · ${selectedDatabase.runtimeProvider}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {summary!.queries === 0 && (
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300">
+                      No traffic captured
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => selectDatabase('')}
+                    className="rounded-lg border border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:border-zinc-700 hover:text-white"
+                  >
+                    Show all databases
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {selectedDatabase && summary!.queries === 0 && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+                <strong>No traffic captured for this database in the selected period.</strong>{' '}
+                If an external client uses it directly, route it through the policy gateway so its read/write
+                usage appears here.
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryCard
                 icon={<Activity size={18} />}
@@ -293,7 +374,7 @@ export default function AnalyticsPage() {
                 icon={<HardDrive size={18} />}
                 label="Storage"
                 value={formatBytes(summary!.storageBytes)}
-                detail={`${summary!.totalDatabases} databases tracked`}
+                detail={`${summary!.totalDatabases} ${summary!.totalDatabases === 1 ? 'database' : 'databases'} tracked`}
               />
               <SummaryCard
                 icon={<Network size={18} />}
@@ -429,7 +510,7 @@ export default function AnalyticsPage() {
                       return (
                         <div key={source.source}>
                           <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="text-zinc-300">{formatSource(source.source)}</span>
+                            <span className="text-zinc-300">{sourceLabel(source.source)}</span>
                             <span className="text-zinc-400">
                               {formatNumber(source.queries)} · {Math.round(share * 100)}%
                             </span>
@@ -544,52 +625,129 @@ export default function AnalyticsPage() {
               </Panel>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <DataTable
-                title="Top databases"
-                subtitle="Existing databases ranked by total rows processed. Deleted databases are excluded."
-                columns={['Database', 'Reads', 'Writes', 'Query mix', 'Errors', 'P95', 'Storage', 'Last activity']}
-                empty={data.topDatabases.length === 0}
-                emptyMessage="No database activity yet."
-              >
-                {data.topDatabases.map((database) => {
-                  const label = database.displayName || database.name || 'Unnamed database';
-                  const totalQueries = Math.max(1, database.readQueries + database.writeQueries);
-                  const readShare = database.readQueries / totalQueries;
-                  const writeShare = database.writeQueries / totalQueries;
-
-                  return (
-                    <tr key={database.id} className="border-b border-zinc-800/40 text-sm last:border-0">
-                      <td className="px-6 py-3 font-medium text-zinc-200" title={database.id}>
-                        <div className="flex flex-col gap-0.5">
-                          <Link
-                            href={`/databases/${database.id}`}
-                            className="transition-colors hover:text-white"
-                          >
-                            {label}
-                          </Link>
-                          <span className="text-[11px] font-normal text-zinc-500">
-                            {database.projectName || 'No project'} · {database.status || 'unknown'}
-                          </span>
-                          {database.needsRename && (
-                            <Link
-                              href={`/databases/${database.id}`}
-                              className="text-[11px] font-normal text-amber-400 transition-colors hover:text-amber-300"
-                            >
-                              Rename
-                            </Link>
+            <Panel
+              title="Database comparison"
+              subtitle="All existing databases. Bars show rows read and written in the selected period."
+            >
+              {databaseUsage.length === 0 ? (
+                <EmptyPanelText>No existing databases.</EmptyPanelText>
+              ) : (
+                <div className="max-h-[360px] space-y-3 overflow-auto pr-1 custom-scrollbar">
+                  {databaseUsage.map((database) => {
+                    const totalRows = database.rowsRead + database.rowsWritten;
+                    const readWidth = (database.rowsRead / comparisonMax) * 100;
+                    const writeWidth = (database.rowsWritten / comparisonMax) * 100;
+                    const isSelected = selectedDatabaseId === database.id;
+                    return (
+                      <button
+                        key={database.id}
+                        type="button"
+                        onClick={() => selectDatabase(database.id)}
+                        className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                          isSelected
+                            ? 'border-emerald-500/30 bg-emerald-500/5'
+                            : 'border-zinc-800/60 hover:border-zinc-700 hover:bg-zinc-800/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-zinc-200">
+                              {database.displayName || database.name}
+                            </p>
+                            <p className="text-[11px] text-zinc-500">
+                              {database.projectName || 'No project'} · {database.status || 'unknown'}
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className="text-xs text-zinc-300">{formatNumber(totalRows)} rows</p>
+                            <p className="text-[11px] text-zinc-500">
+                              {database.hasActivity
+                                ? `${formatNumber(database.queries)} queries · ${formatDuration(database.p95DurationMs)} p95`
+                                : 'No traffic captured'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-zinc-800">
+                          {database.hasActivity && (
+                            <>
+                              <div className="h-full bg-emerald-400" style={{ width: `${readWidth}%` }} />
+                              <div className="h-full bg-violet-400" style={{ width: `${writeWidth}%` }} />
+                            </>
                           )}
                         </div>
-                      </td>
-                      <td className="px-6 py-3 text-right">
-                        <div className="text-zinc-300">{formatNumber(database.rowsRead)}</div>
-                        <div className="text-[11px] text-zinc-500">{formatNumber(database.readQueries)} queries</div>
-                      </td>
-                      <td className="px-6 py-3 text-right">
-                        <div className="text-zinc-300">{formatNumber(database.rowsWritten)}</div>
-                        <div className="text-[11px] text-zinc-500">{formatNumber(database.writeQueries)} queries</div>
-                      </td>
-                      <td className="px-6 py-3">
+                        <div className="mt-1 flex justify-between text-[11px] text-zinc-500">
+                          <span>{formatNumber(database.rowsRead)} read</span>
+                          <span>{formatNumber(database.rowsWritten)} written</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </Panel>
+
+            <DataTable
+              title="Database usage"
+              subtitle="All existing databases. Deleted databases are excluded. Click a row to filter every chart."
+              columns={['Database', 'Reads', 'Writes', 'Query mix', 'Errors', 'P95', 'Storage', 'Source', 'Last activity']}
+              empty={databaseUsage.length === 0}
+              emptyMessage="No existing databases."
+            >
+              {databaseUsage.map((database) => {
+                const totalQueries = Math.max(1, database.readQueries + database.writeQueries);
+                const readShare = database.readQueries / totalQueries;
+                const writeShare = database.writeQueries / totalQueries;
+                const isSelected = selectedDatabaseId === database.id;
+                const source = database.lastSource;
+
+                return (
+                  <tr
+                    key={database.id}
+                    onClick={() => selectDatabase(database.id)}
+                    className={`cursor-pointer border-b border-zinc-800/40 text-sm transition-colors last:border-0 ${
+                      isSelected ? 'bg-emerald-500/5' : 'hover:bg-zinc-800/20'
+                    }`}
+                  >
+                    <td className="px-6 py-3 font-medium text-zinc-200" title={database.id}>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            href={`/databases/${database.id}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="transition-colors hover:text-white"
+                          >
+                            {database.displayName || database.name}
+                          </Link>
+                          {isSelected && (
+                            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400">
+                              Selected
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] font-normal text-zinc-500">
+                          {database.projectName || 'No project'} · {database.status || 'unknown'}
+                        </span>
+                        {database.needsRename && (
+                          <Link
+                            href={`/databases/${database.id}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="text-[11px] font-normal text-amber-400 transition-colors hover:text-amber-300"
+                          >
+                            Rename
+                          </Link>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="text-zinc-300">{formatNumber(database.rowsRead)}</div>
+                      <div className="text-[11px] text-zinc-500">{formatNumber(database.readQueries)} queries</div>
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="text-zinc-300">{formatNumber(database.rowsWritten)}</div>
+                      <div className="text-[11px] text-zinc-500">{formatNumber(database.writeQueries)} queries</div>
+                    </td>
+                    <td className="px-6 py-3">
+                      {database.hasActivity ? (
                         <div
                           className="ml-auto flex h-2 w-20 overflow-hidden rounded-full bg-zinc-800"
                           title={`${formatNumber(database.readQueries)} read · ${formatNumber(database.writeQueries)} write queries`}
@@ -597,59 +755,76 @@ export default function AnalyticsPage() {
                           <div className="h-full bg-emerald-400" style={{ width: `${readShare * 100}%` }} />
                           <div className="h-full bg-violet-400" style={{ width: `${writeShare * 100}%` }} />
                         </div>
-                      </td>
-                      <td className="px-6 py-3 text-right">
-                        <div className={database.errors > 0 ? 'text-red-400' : 'text-zinc-300'}>
-                          {formatNumber(database.errors)}
-                        </div>
-                        <div className="text-[11px] text-zinc-500">{formatPercent(database.errorRate)}</div>
-                      </td>
-                      <td className="px-6 py-3 text-right">
-                        <div className="text-zinc-300">{formatDuration(database.p95DurationMs)}</div>
-                        <div className="text-[11px] text-zinc-500">{formatDuration(database.avgDurationMs)} avg</div>
-                      </td>
-                      <td className="px-6 py-3 text-right text-zinc-400">{formatBytes(database.storageBytes)}</td>
-                      <td className="px-6 py-3 text-right text-zinc-400">
-                        {formatRelativeTime(database.lastSeenAt)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </DataTable>
-
-              <DataTable
-                title="Top projects"
-                subtitle="Existing projects ranked by total rows processed."
-                columns={['Project', 'Reads', 'Writes', 'Queries', 'Errors']}
-                empty={data.topProjects.length === 0}
-                emptyMessage="No project activity yet."
-              >
-                {data.topProjects.map((project) => (
-                  <tr key={project.id} className="border-b border-zinc-800/40 text-sm last:border-0">
-                    <td className="px-6 py-3 font-medium text-zinc-200">
-                      <Link href={`/projects/${project.id}`} className="transition-colors hover:text-white">
-                        {project.name}
-                      </Link>
+                      ) : (
+                        <span className="block text-right text-[11px] text-zinc-600">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-3 text-right">
-                      <div className="text-zinc-300">{formatNumber(project.rowsRead)}</div>
-                      <div className="text-[11px] text-zinc-500">{formatNumber(project.readQueries)} queries</div>
-                    </td>
-                    <td className="px-6 py-3 text-right">
-                      <div className="text-zinc-300">{formatNumber(project.rowsWritten)}</div>
-                      <div className="text-[11px] text-zinc-500">{formatNumber(project.writeQueries)} queries</div>
-                    </td>
-                    <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(project.queries)}</td>
-                    <td className="px-6 py-3 text-right">
-                      <div className={project.errors > 0 ? 'text-red-400' : 'text-zinc-400'}>
-                        {formatNumber(project.errors)}
+                      <div className={database.errors > 0 ? 'text-red-400' : 'text-zinc-300'}>
+                        {formatNumber(database.errors)}
                       </div>
-                      <div className="text-[11px] text-zinc-500">{formatPercent(project.errorRate)}</div>
+                      <div className="text-[11px] text-zinc-500">{formatPercent(database.errorRate)}</div>
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="text-zinc-300">
+                        {database.hasActivity ? formatDuration(database.p95DurationMs) : '—'}
+                      </div>
+                      <div className="text-[11px] text-zinc-500">
+                        {database.hasActivity ? `${formatDuration(database.avgDurationMs)} avg` : 'No traffic'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3 text-right text-zinc-400">{formatBytes(database.storageBytes)}</td>
+                    <td className="px-6 py-3 text-right">
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                        source === 'gateway'
+                          ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+                          : source
+                            ? 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                      }`}>
+                        {source === 'gateway' ? 'Gateway' : sourceLabel(source)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 text-right text-zinc-400">
+                      {database.hasActivity ? formatRelativeTime(database.lastSeenAt) : 'No traffic captured'}
                     </td>
                   </tr>
-                ))}
-              </DataTable>
-            </div>
+                );
+              })}
+            </DataTable>
+
+            <DataTable
+              title="Top projects"
+              subtitle="Existing projects ranked by total rows processed."
+              columns={['Project', 'Reads', 'Writes', 'Queries', 'Errors']}
+              empty={data.topProjects.length === 0}
+              emptyMessage="No project activity yet."
+            >
+              {data.topProjects.map((project) => (
+                <tr key={project.id} className="border-b border-zinc-800/40 text-sm last:border-0">
+                  <td className="px-6 py-3 font-medium text-zinc-200">
+                    <Link href={`/projects/${project.id}`} className="transition-colors hover:text-white">
+                      {project.name}
+                    </Link>
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    <div className="text-zinc-300">{formatNumber(project.rowsRead)}</div>
+                    <div className="text-[11px] text-zinc-500">{formatNumber(project.readQueries)} queries</div>
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    <div className="text-zinc-300">{formatNumber(project.rowsWritten)}</div>
+                    <div className="text-[11px] text-zinc-500">{formatNumber(project.writeQueries)} queries</div>
+                  </td>
+                  <td className="px-6 py-3 text-right text-zinc-400">{formatNumber(project.queries)}</td>
+                  <td className="px-6 py-3 text-right">
+                    <div className={project.errors > 0 ? 'text-red-400' : 'text-zinc-400'}>
+                      {formatNumber(project.errors)}
+                    </div>
+                    <div className="text-[11px] text-zinc-500">{formatPercent(project.errorRate)}</div>
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
 
             <div className="overflow-hidden rounded-xl border border-zinc-800/80 bg-[#0f0f0f]">
               <div className="flex flex-col gap-3 border-b border-zinc-800/80 bg-zinc-900/30 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -728,8 +903,9 @@ export default function AnalyticsPage() {
 
             <p className="text-xs leading-relaxed text-zinc-500">
               Metrics are collected from this deployment onward. Read rows are rows returned by SELECT/RETURNING;
-              written rows are affected rows reported by the runtime. The gateway source captures direct ERP traffic,
-              and deleted databases are excluded from every aggregate. Ranges follow your browser timezone.
+              written rows are affected rows reported by the runtime. The gateway source captures direct ERP traffic.
+              Deleted databases are excluded from every aggregate; existing databases with no captured traffic remain
+              visible with zero usage. Ranges follow your browser timezone.
             </p>
           </div>
         )}

@@ -28,7 +28,7 @@ import {
   formatRatio,
 } from '../../lib/format';
 import type { DashboardAnalytics } from '../../lib/analytics-types';
-import { OPERATION_COLORS, operationLabel } from '../../lib/analytics-ui';
+import { OPERATION_COLORS, operationLabel, sourceLabel } from '../../lib/analytics-ui';
 
 function getMetricTypeLabel(database: any) {
   const effectiveType = database?.effectiveType || database?.type || 'sqlite';
@@ -392,7 +392,10 @@ export default function DashboardPage() {
               <div className="p-5 border-b border-zinc-800/80 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Activity size={18} className="text-zinc-400" />
-                  <h3 className="font-medium text-zinc-200">Top active databases</h3>
+                  <div>
+                    <h3 className="font-medium text-zinc-200">Database usage</h3>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">All existing databases · last 7 days</p>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -403,13 +406,13 @@ export default function DashboardPage() {
                 </button>
               </div>
               <div className="flex-1 overflow-auto p-2 custom-scrollbar">
-                {analytics.topDatabases.length === 0 ? (
+                {analytics.databaseUsage.length === 0 ? (
                   <div className="flex h-full items-center justify-center">
-                    <p className="text-sm text-zinc-500">No database activity in the last 7 days.</p>
+                    <p className="text-sm text-zinc-500">No existing databases.</p>
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {analytics.topDatabases.map((database) => {
+                    {analytics.databaseUsage.map((database) => {
                       const totalQueries = Math.max(1, database.readQueries + database.writeQueries);
                       const readShare = database.readQueries / totalQueries;
                       const writeShare = database.writeQueries / totalQueries;
@@ -417,7 +420,7 @@ export default function DashboardPage() {
                         <button
                           key={database.id}
                           type="button"
-                          onClick={() => router.push(`/databases/${database.id}`)}
+                          onClick={() => router.push(`/analytics?databaseId=${database.id}`)}
                           className="w-full rounded-lg p-3 text-left transition-colors hover:bg-zinc-800/40"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -425,21 +428,29 @@ export default function DashboardPage() {
                               <p className="truncate text-sm text-zinc-200">
                                 {database.displayName || database.name}
                               </p>
-                              <p className="text-[11px] text-zinc-500">
-                                {database.projectName || 'No project'}
+                              <p className="truncate text-[11px] text-zinc-500">
+                                {database.projectName || 'No project'} · {sourceLabel(database.lastSource)}
                               </p>
                             </div>
                             <span className="shrink-0 text-xs text-zinc-400">
-                              {formatNumber(database.queries)} q
+                              {database.hasActivity ? `${formatNumber(database.queries)} q` : 'No traffic'}
                             </span>
                           </div>
                           <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-zinc-800">
-                            <div className="h-full bg-emerald-400" style={{ width: `${readShare * 100}%` }} />
-                            <div className="h-full bg-violet-400" style={{ width: `${writeShare * 100}%` }} />
+                            {database.hasActivity && (
+                              <>
+                                <div className="h-full bg-emerald-400" style={{ width: `${readShare * 100}%` }} />
+                                <div className="h-full bg-violet-400" style={{ width: `${writeShare * 100}%` }} />
+                              </>
+                            )}
                           </div>
                           <div className="mt-1 flex justify-between text-[11px] text-zinc-500">
                             <span>{formatNumber(database.rowsRead)} read</span>
-                            <span>{formatNumber(database.rowsWritten)} written</span>
+                            <span>
+                              {database.hasActivity
+                                ? `${formatNumber(database.rowsWritten)} written`
+                                : 'No traffic captured'}
+                            </span>
                           </div>
                         </button>
                       );

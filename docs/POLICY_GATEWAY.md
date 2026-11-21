@@ -34,9 +34,12 @@ applies the database flags, and only then forwards to the runtime.
 - `sequence`
 - `store_sql` followed by `execute` using `sql_id`
 - transactions using Hrana batons, including `store_sql` state
-- legacy `POST /` batches with `statements`
+- cursor batches on `/v2/cursor` and `/v1/cursor`
+- legacy `POST /` batches with `statements`, arrays, or a single `q`/`sql`
+- unknown SQL-bearing request types fail closed instead of being forwarded
 - `describe` is allowed because it prepares metadata and does not execute the
   statement
+- non-pipeline HTTP methods are rejected instead of proxied
 - `base_url` returned by the runtime is rewritten to `null`, so the client does
   not switch to an internal URL and bypass the gateway
 
@@ -50,9 +53,12 @@ Blocked requests return `403` with `DATABASE_READS_BLOCKED` or
 This phase does **not** remove the runtime's original public route. A client
 still using `libsql://<database-host>` without `/gateway/` bypasses the gateway.
 
-The ERP must be updated to the Gateway URL shown in the database detail page.
-Removing the direct route requires a maintenance phase that recreates the
-runtime without public Traefik labels and without published host ports.
+The ERP must be updated to the Gateway URL shown in the database detail page,
+unless root mode is enabled. Root mode routes the existing host through the
+gateway and adds a backend deny route, but the runtime's public route still
+exists at a lower priority as a last-resort fallback. Complete removal of that
+route requires a maintenance phase that recreates the runtime without public
+Traefik labels and without published host ports.
 
 ### WebSocket is rejected
 
@@ -98,6 +104,12 @@ priority than the runtime root route. If the gateway is down, `/gateway/...`
 does not fall back to `/...`; direct SQL execution on the gateway path is not
 possible.
 
+Root mode adds a second route for the full database host. The gateway router
+wins over the backend deny route, and the deny route wins over the runtime
+route. If the gateway stops, the host returns `404` instead of falling back to
+the runtime. If the backend is also unavailable, the runtime route can become
+the last resort; internalize the runtime for a complete guarantee.
+
 ## Configuration
 
 Backend environment:
@@ -105,6 +117,8 @@ Backend environment:
 ```dotenv
 DATABASE_GATEWAY_ENABLED=true
 DATABASE_GATEWAY_PATH=/gateway/
+DATABASE_GATEWAY_ROOT_HOST=
+GATEWAY_ALLOW_ROOT=false
 GATEWAY_INTERNAL_TOKEN=<long-random-secret>
 GATEWAY_BACKEND_INTERNAL_URL=http://backend:5000
 ```
@@ -121,12 +135,33 @@ GATEWAY_POLICY_TTL_MS=1000
 GATEWAY_POLICY_MAX_STALE_MS=5000
 GATEWAY_UPSTREAM_TIMEOUT_MS=120000
 GATEWAY_LOG_REQUESTS=false
+GATEWAY_ALLOW_ROOT=false
 ```
 
 Both services must share the Docker network that contains Traefik, the backend
 and the runtime containers. If you use a custom `LIBSQL_RUNTIME_NETWORK`, attach
 the gateway service to that same network as well; otherwise it cannot resolve
 `libsqlite-<database-id>` or `sqld`.
+
+### Usage analytics
+
+The gateway reports best-effort query and traffic metrics to the backend so the
+Analytics page includes direct ERP traffic, not only panel/Studio usage:
+
+```dotenv
+GATEWAY_BACKEND_INTERNAL_URL=http://backend:5000
+GATEWAY_ANALYTICS_ENABLED=true
+GATEWAY_ANALYTICS_FLUSH_MS=1000
+GATEWAY_ANALYTICS_MAX_QUEUE=5000
+GATEWAY_ANALYTICS_BATCH_SIZE=500
+GATEWAY_ANALYTICS_TIMEOUT_MS=5000
+```
+
+Metrics are buffered in memory and sent asynchronously. If the backend is
+unavailable, database traffic continues normally and metrics are retried until
+the bounded queue is full. SQL literals are redacted before the metric leaves
+the gateway. The ingest endpoint only accepts existing database IDs, so deleted
+databases cannot reappear in analytics.
 
 The gateway image is the backend image with a different command:
 
@@ -143,6 +178,69 @@ custom entrypoint or certificate resolver, add the corresponding
 `traefik.http.routers.libsqlite-gateway.tls.certresolver` labels with literal
 values for your environment.
 
+## Root mode: keep the existing libSQL URL
+
+The default gateway uses a `/gateway/` path. Root mode routes the database's
+existing root host through the gateway, so the ERP does not need to change its
+`TURSO_DATABASE_URL`.
+
+Required environment:
+
+```dotenv
+GATEWAY_ALLOW_ROOT=true
+DATABASE_GATEWAY_ROOT_HOST=systemaliciav6-ab99e40d.data.example.com
+DATABASE_GATEWAY_ENABLED=true
+GATEWAY_INTERNAL_TOKEN=<long-random-secret>
+```
+
+`DATABASE_GATEWAY_ROOT_HOST` is the exact hostname only: no `libsql://`, no
+`https://`, and no port.
+
+Deploy the additional compose override:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.gateway-root.yml \
+  up -d
+```
+
+`up -d` recreates the backend and gateway containers to apply the new
+Traefik labels. Expect a brief control-plane outage; do this in a maintenance
+window. The database containers are not recreated.
+
+The override creates:
+
+- a `Host(<root-host>)` router with priority `100000` to the gateway;
+- a `Host(<root-host>)` router with priority `90000` to the backend, which
+  returns a 404 when the gateway is unavailable;
+- the runtime's existing root router remains at priority `1000` as a last
+  resort.
+
+This gives fail-closed behaviour while the gateway or backend is being
+restarted: a failed gateway does not silently fall back to the runtime as long
+as the backend deny route exists. For complete fail-closed operation, continue
+with the runtime-internalization step below.
+
+Verify with the **same** database URL:
+
+```bash
+curl -i https://systemaliciav6-ab99e40d.data.example.com/gateway/__health
+```
+
+or, in root mode:
+
+```bash
+curl -i https://systemaliciav6-ab99e40d.data.example.com/__health
+```
+
+Then test a write through the normal database URL. It must be rejected with
+`403` when Block Writes is active.
+
+Restart the ERP after the cutover even though its URL does not change. A warm
+connection pool can keep using a Traefik connection established before the
+route changed.
+
 ## Activation procedure
 
 1. Set `GATEWAY_INTERNAL_TOKEN` to a long random secret and set
@@ -152,7 +250,9 @@ values for your environment.
    and returns `{"ok":true}`. Do not expose the internal policy endpoint.
 4. Open the database detail page. A **Gateway URL · full enforcement** block
    should appear.
-5. In the ERP, replace:
+5. Choose one mode:
+
+   **Path mode:** in the ERP, replace:
 
    ```text
    TURSO_DATABASE_URL=libsql://<database-host>
@@ -166,12 +266,21 @@ values for your environment.
 
    Keep the same token. If the ERP also sets `TURSO_SYNC_URL`, update it to the
    Gateway URL as well or remove it when not using an embedded replica.
+
+   **Root mode:** keep `TURSO_DATABASE_URL=libsql://<database-host>`, set
+   `GATEWAY_ALLOW_ROOT=true` and `DATABASE_GATEWAY_ROOT_HOST=<database-host>`,
+   and deploy `docker-compose.gateway-root.yml`. The detail page changes to
+   **Gateway URL · direct URL enforced** and shows the same URL the ERP already
+   uses.
+
 6. Restart the ERP and verify normal reads.
 7. Enable Block Writes and verify that a sale fails with a `403` before any
    data is written.
 8. Enable Block Reads and verify that a direct `SELECT` fails.
 9. Monitor gateway logs for `blocked=true`, upstream errors and latency.
-10. Keep the direct URL documented as a bypass. Do not assume it is closed.
+10. In path mode, keep the direct URL documented as a bypass. In root mode,
+    verify the gateway route is actually in front of the runtime and do not
+    expose the runtime IP:port.
 
 ## Rollback
 

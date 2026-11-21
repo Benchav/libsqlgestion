@@ -1,0 +1,41 @@
+# Optional override: enforce Block Reads/Writes on the database's existing
+# root URL, without requiring clients to append /gateway/.
+#
+# Required environment:
+#   DATABASE_GATEWAY_ROOT_HOST=systemaliciav6-ab99e40d.data.example.com
+#   GATEWAY_ALLOW_ROOT=true
+#   DATABASE_GATEWAY_ENABLED=true
+#   GATEWAY_INTERNAL_TOKEN=<same secret as backend>
+#
+# Run:
+#   docker compose -f docker-compose.yml -f docker-compose.gateway-root.yml up -d
+#
+# If your Coolify version passes ${...} literally inside Traefik labels,
+# replace ${DATABASE_GATEWAY_ROOT_HOST} with the literal hostname in this
+# file instead.
+#
+# Traffic selection for the root host:
+#   priority 100000 -> gateway (policy enforcement)
+#   priority 90000  -> backend deny route (404 if the gateway is down)
+#   priority 1000   -> libsql runtime (last-resort fallback)
+#
+# The backend deny route prevents a gateway outage from silently reverting to
+# the runtime while the backend is healthy. For a fully fail-closed setup,
+# internalize the runtime (remove public labels and published ports) after
+# validating this route.
+services:
+  gateway:
+    labels:
+      - "traefik.http.routers.libsqlite-gateway-root.rule=Host(`${DATABASE_GATEWAY_ROOT_HOST:?DATABASE_GATEWAY_ROOT_HOST is required}`)"
+      - "traefik.http.routers.libsqlite-gateway-root.priority=100000"
+      - "traefik.http.routers.libsqlite-gateway-root.tls=true"
+      - "traefik.http.services.libsqlite-gateway-root.loadbalancer.server.port=8081"
+
+  backend:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.routers.libsqlite-gateway-deny.rule=Host(`${DATABASE_GATEWAY_ROOT_HOST:?DATABASE_GATEWAY_ROOT_HOST is required}`)"
+      - "traefik.http.routers.libsqlite-gateway-deny.priority=90000"
+      - "traefik.http.routers.libsqlite-gateway-deny.tls=true"
+      - "traefik.http.services.libsqlite-gateway-deny.loadbalancer.server.port=5000"

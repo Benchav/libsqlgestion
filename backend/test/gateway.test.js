@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { createClient } = require('@libsql/client');
 
-const { createGatewayServer } = require('../dist/gateway/server');
+const { createGatewayServer, collectUsageMetrics } = require('../dist/gateway/server');
+const { GatewayAnalyticsClient } = require('../dist/gateway/analytics');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -55,9 +56,13 @@ test.describe('Policy gateway', () => {
   let policy;
   let policyError;
   let policyCalls;
+  let recordedQueries;
+  let recordedTraffic;
 
   test.before(async () => {
     upstreamCalls = [];
+    recordedQueries = [];
+    recordedTraffic = [];
     upstream = http.createServer((req, res) => {
       const chunks = [];
       req.on('data', (chunk) => chunks.push(chunk));
@@ -142,12 +147,15 @@ test.describe('Policy gateway', () => {
       policyMaxStaleMs: 1000,
       upstreamTimeoutMs: 5000,
       pathPrefix: '/gateway',
+      allowRoot: true,
     }, {
       resolvePolicy: async (host) => {
         policyCalls.push(host);
         if (policyError) throw policyError;
         return host === 'db1.data.test' || host === '127.0.0.1' ? { ...policy } : null;
       },
+      recordQuery: (metric) => recordedQueries.push(metric),
+      recordTraffic: (metric) => recordedTraffic.push(metric),
     });
     gatewayPort = await listen(gateway);
   });
@@ -160,6 +168,8 @@ test.describe('Policy gateway', () => {
   test.beforeEach(() => {
     upstreamCalls.length = 0;
     policyCalls.length = 0;
+    recordedQueries.length = 0;
+    recordedTraffic.length = 0;
     policyError = null;
     policy.blockReads = false;
     policy.blockWrites = false;
@@ -174,6 +184,14 @@ test.describe('Policy gateway', () => {
     assert.equal(upstreamCalls.length, 1);
     assert.equal(upstreamCalls[0].url, '/v2/pipeline');
     assert.equal(upstreamCalls[0].host, `127.0.0.1:${upstreamPort}`);
+    assert.equal(recordedQueries.length, 1);
+    assert.equal(recordedQueries[0].databaseId, 'db-1');
+    assert.equal(recordedQueries[0].rowsRead, 1);
+    assert.equal(recordedQueries[0].success, true);
+    assert.equal(recordedTraffic.length, 1);
+    assert.equal(recordedTraffic[0].databaseId, 'db-1');
+    assert.equal(recordedTraffic[0].statusCode, 200);
+    assert.equal(recordedTraffic[0].path, '/gateway/v2/pipeline');
   });
 
   test('blocks writes before forwarding', async () => {
@@ -183,6 +201,64 @@ test.describe('Policy gateway', () => {
     });
     assert.equal(response.status, 403, response.text);
     assert.equal(response.json.code, 'DATABASE_WRITES_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+    assert.equal(recordedQueries.length, 0);
+    assert.equal(recordedTraffic.length, 0);
+  });
+
+  test('enforces the same policy on the root path when root mode is enabled', async () => {
+    policy.blockWrites = true;
+    const blocked = await request(gatewayPort, '/v2/pipeline', {
+      body: { requests: [{ type: 'execute', stmt: { sql: "INSERT INTO t VALUES ('root')" } }] },
+    });
+    assert.equal(blocked.status, 403, blocked.text);
+    assert.equal(blocked.json.code, 'DATABASE_WRITES_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+
+    policy.blockWrites = false;
+    const allowed = await request(gatewayPort, '/v2/pipeline', {
+      body: { requests: [{ type: 'execute', stmt: { sql: 'SELECT 1' } }] },
+    });
+    assert.equal(allowed.status, 200, allowed.text);
+    assert.equal(allowed.json.base_url, null);
+    assert.equal(upstreamCalls.length, 1);
+  });
+
+  test('blocks writes through the cursor endpoint', async () => {
+    policy.blockWrites = true;
+    const response = await request(gatewayPort, '/gateway/v2/cursor', {
+      body: { batch: { steps: [{ stmt: { sql: "INSERT INTO t VALUES ('cursor')" } }] } },
+    });
+    assert.equal(response.status, 403, response.text);
+    assert.equal(response.json.code, 'DATABASE_WRITES_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+  });
+
+  test('allows read cursors when only writes are blocked', async () => {
+    policy.blockWrites = true;
+    const response = await request(gatewayPort, '/gateway/v2/cursor', {
+      body: { batch: { steps: [{ stmt: { sql: 'SELECT 1' } }] } },
+    });
+    assert.equal(response.status, 200, response.text);
+    assert.equal(upstreamCalls.length, 1);
+    assert.equal(upstreamCalls[0].url, '/v2/cursor');
+  });
+
+  test('blocks read cursors when reads are blocked', async () => {
+    policy.blockReads = true;
+    const response = await request(gatewayPort, '/gateway/v2/cursor', {
+      body: { batch: { steps: [{ stmt: { sql: 'SELECT 1' } }] } },
+    });
+    assert.equal(response.status, 403, response.text);
+    assert.equal(response.json.code, 'DATABASE_READS_BLOCKED');
+    assert.equal(upstreamCalls.length, 0);
+  });
+
+  test('rejects non-pipeline methods instead of proxying them', async () => {
+    const response = await request(gatewayPort, '/gateway/v2/pipeline', {
+      method: 'GET',
+    });
+    assert.equal(response.status, 405, response.text);
     assert.equal(upstreamCalls.length, 0);
   });
 
@@ -292,9 +368,22 @@ test.describe('Policy gateway', () => {
       url: `libsql://127.0.0.1:${gatewayPort}/gateway/?tls=0`,
       authToken: 'test-token',
     });
+    const rootClient = createClient({
+      // This is the exact scheme used by the ERP: libsql:// with no path.
+      url: `libsql://127.0.0.1:${gatewayPort}/?tls=0`,
+      authToken: 'test-token',
+    });
     try {
       const result = await httpClient.execute('SELECT 1');
       assert.equal(Number(result.rows[0].x), 1);
+
+      const rootResult = await rootClient.execute('SELECT 1');
+      assert.equal(Number(rootResult.rows[0].x), 1);
+      assert.equal(
+        upstreamCalls.some((call) => call.url === '/v2/pipeline'),
+        true,
+        'the root libsql:// client must reach /v2/pipeline without a path prefix',
+      );
 
       const transaction = await httpClient.transaction('write');
       await transaction.execute("INSERT INTO t VALUES ('tx')");
@@ -343,6 +432,7 @@ test.describe('Policy gateway', () => {
     } finally {
       httpClient.close();
       libsqlClient.close();
+      rootClient.close();
     }
   });
 
@@ -373,4 +463,89 @@ test.describe('Policy gateway', () => {
     assert.equal(response.status, 501);
     assert.match(response.text, /WebSocket upgrades are not supported/);
   });
+});
+
+test('extracts per-statement usage from Hrana results', () => {
+  const metrics = collectUsageMetrics(
+    [
+      { type: 'execute', stmt: { sql: 'SELECT * FROM t' } },
+      { type: 'execute', stmt: { sql: 'UPDATE t SET x = 1' } },
+      { type: 'execute', stmt: { sql_id: 7 } },
+      { type: 'batch', batch: { steps: [{ stmt: { sql: 'INSERT INTO t VALUES (1)' } }] } },
+      { type: 'sequence', sql: 'DELETE FROM t' },
+    ],
+    [
+      { type: 'ok', response: { result: { rows: [[1], [2]], affected_row_count: 0 } } },
+      { type: 'ok', response: { result: { rows: [], affected_row_count: 3 } } },
+      { type: 'error', error: { code: 'SQLITE_ERROR' } },
+      { type: 'ok', response: { result: { step_results: [{ rows: [], affected_row_count: 1 }], step_errors: [null] } } },
+      { type: 'error', error: { code: 'DATABASE_WRITES_BLOCKED' } },
+    ],
+    new Map([[7, 'SELECT 1']]),
+  );
+
+  assert.equal(metrics.length, 5);
+  assert.equal(metrics[0].rowsRead, 2);
+  assert.equal(metrics[0].rowsWritten, 0);
+  assert.equal(metrics[1].rowsWritten, 3);
+  assert.equal(metrics[2].success, false);
+  assert.equal(metrics[2].errorCode, 'SQLITE_ERROR');
+  assert.equal(metrics[3].rowsWritten, 1);
+  assert.equal(metrics[4].success, false);
+  assert.equal(metrics[4].errorCode, 'DATABASE_WRITES_BLOCKED');
+});
+
+test('buffers and posts gateway usage metrics to the backend', async () => {
+  let received = null;
+  const receiver = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received = {
+        headers: req.headers,
+        body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+      };
+      res.writeHead(202, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  const receiverPort = await listen(receiver);
+
+  try {
+    const client = new GatewayAnalyticsClient({
+      enabled: true,
+      url: `http://127.0.0.1:${receiverPort}/analytics`,
+      token: 'gateway-secret',
+      flushIntervalMs: 1000,
+      maxQueue: 10,
+      batchSize: 10,
+      timeoutMs: 1000,
+    });
+    client.recordQuery({
+      databaseId: 'db-1',
+      sql: 'SELECT 1',
+      durationMs: 2,
+      rowsRead: 1,
+      success: true,
+    });
+    client.recordTraffic({
+      databaseId: 'db-1',
+      method: 'POST',
+      path: '/v2/pipeline',
+      statusCode: 200,
+      durationMs: 2,
+    });
+
+    await client.flush();
+
+    assert.ok(received);
+    assert.equal(received.headers['x-gateway-token'], 'gateway-secret');
+    assert.equal(received.body.queries.length, 1);
+    assert.equal(received.body.queries[0].rowsRead, 1);
+    assert.equal(received.body.queries[0].sql, 'SELECT ?');
+    assert.equal(received.body.traffic.length, 1);
+    assert.equal(received.body.traffic[0].path, '/v2/pipeline');
+  } finally {
+    await new Promise((resolve) => receiver.close(resolve));
+  }
 });

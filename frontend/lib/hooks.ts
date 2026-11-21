@@ -39,6 +39,7 @@ export type DatabaseDetail = {
   blockWrites?: boolean;
   deleteProtection?: boolean;
   gatewayEnabled?: boolean;
+  gatewayMode?: 'path' | 'root' | 'none';
   gatewayHttpsUrl?: string;
   gatewayLibsqlUrl?: string;
   url?: string;

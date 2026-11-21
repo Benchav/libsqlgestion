@@ -8,6 +8,8 @@ This folder contains the project documentation for users, operators and contribu
 - [Backup, Restore & ERP Migration](BACKUP_AND_MIGRATION.md)
 - [Production Guide](PRODUCTION.md)
 - [API Reference](API.md)
+- [Usage Analytics](ANALYTICS.md)
+- [Policy Gateway](POLICY_GATEWAY.md)
 - [Deployment Guide](DEPLOYMENT.md)
 - [Security Guide](SECURITY.md)
 - [Development Guide](DEVELOPMENT.md)

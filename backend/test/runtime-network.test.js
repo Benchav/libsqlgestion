@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -575,4 +576,27 @@ test.describe('LibSQL runtime Docker network selection', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+});
+
+test('public route health uses HTTP metadata instead of executing SQL', async () => {
+  const server = http.createServer((req, res) => {
+    // Some runtimes do not expose /health; /version is the fallback.
+    if (req.url === '/version') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('libsql-server 0.0.0');
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not found');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const service = new LibsqlRuntimeService();
+    const result = await service.checkPublicRoute(`http://127.0.0.1:${port}`);
+    assert.equal(result.ok, true, result.error);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

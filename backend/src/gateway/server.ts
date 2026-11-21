@@ -5,6 +5,7 @@ import {
   assertDatabaseSqlAllowed,
   DatabaseProtectionError,
 } from '../application/databases/database-protection';
+import type { GatewayQueryMetric, GatewayTrafficMetric } from './analytics';
 
 export type GatewayPolicy = {
   databaseId: string;
@@ -23,6 +24,7 @@ export type GatewayConfig = {
   policyMaxStaleMs: number;
   upstreamTimeoutMs: number;
   pathPrefix: string;
+  allowRoot: boolean;
 };
 
 type PolicyCacheEntry = {
@@ -37,6 +39,15 @@ type StoredSqlState = {
 
 type GatewayDependencies = {
   resolvePolicy?: (host: string) => Promise<GatewayPolicy | null>;
+  recordQuery?: (metric: GatewayQueryMetric) => void;
+  recordTraffic?: (metric: GatewayTrafficMetric) => void;
+};
+
+type ProxyResult = {
+  statusCode: number;
+  durationMs: number;
+  responseBytes: number;
+  body?: any;
 };
 
 const DEFAULT_PATH_PREFIX = '/gateway';
@@ -56,6 +67,9 @@ export function getGatewayConfig(): GatewayConfig {
     policyMaxStaleMs: positiveInt(process.env.GATEWAY_POLICY_MAX_STALE_MS, 5_000),
     upstreamTimeoutMs: positiveInt(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, 120_000),
     pathPrefix: normalizePrefix(process.env.GATEWAY_PATH_PREFIX || DEFAULT_PATH_PREFIX),
+    allowRoot: ['true', '1', 'yes', 'on'].includes(
+      String(process.env.GATEWAY_ALLOW_ROOT || '').trim().toLowerCase(),
+    ),
   };
 }
 
@@ -228,6 +242,18 @@ class GatewayRequestError extends Error {
   }
 }
 
+function protectionErrorResponse(error: any) {
+  if (error instanceof DatabaseProtectionError || error instanceof GatewayRequestError) {
+    return {
+      status: error.statusCode,
+      code: error.code,
+      message: error.message,
+      blocked: error instanceof DatabaseProtectionError,
+    };
+  }
+  return null;
+}
+
 function enforcePipeline(
   policy: GatewayPolicy,
   requests: any[],
@@ -281,6 +307,28 @@ function enforcePipeline(
         continue;
       }
       enforcePolicy(policy, sql);
+      continue;
+    }
+
+    // `describe` only prepares metadata and never executes the statement.
+    if (item?.type === 'describe') continue;
+
+    // Fail closed for any future SQL-bearing request type. Unknown requests
+    // without SQL are forwarded unchanged (for example get_autocommit/close).
+    const fallbackSql = resolveSql(item?.stmt, storedSql)
+      || (typeof item?.sql === 'string' && item.sql.trim() ? item.sql : null);
+    if (fallbackSql) {
+      enforcePolicy(policy, fallbackSql);
+      continue;
+    }
+    const fallbackSteps = Array.isArray(item?.batch?.steps) ? item.batch.steps : [];
+    for (const step of fallbackSteps) {
+      const sql = resolveSql(step?.stmt, storedSql);
+      if (!sql) {
+        if (policy.blockReads || policy.blockWrites) throw stateLost();
+        continue;
+      }
+      enforcePolicy(policy, sql);
     }
   }
 }
@@ -291,6 +339,114 @@ function enforceLegacyStatements(policy: GatewayPolicy, body: any) {
     const sql = typeof statement === 'string' ? statement : statement?.q;
     if (typeof sql === 'string' && sql.trim()) enforcePolicy(policy, sql);
   }
+}
+
+type StatementUsage = {
+  sql: string;
+  rowsRead: number;
+  rowsWritten: number;
+  success: boolean;
+  errorCode?: string;
+};
+
+function numericValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function usageFromResult(sql: string, result: any): StatementUsage | null {
+  if (!result) return null;
+  if (result.type === 'error') {
+    return {
+      sql,
+      rowsRead: 0,
+      rowsWritten: 0,
+      success: false,
+      errorCode: String(result?.error?.code || 'GATEWAY_UPSTREAM_ERROR'),
+    };
+  }
+  if (result.type !== 'ok') return null;
+
+  const payload = result?.response?.result;
+  if (!payload) return null;
+
+  return {
+    sql,
+    rowsRead: Array.isArray(payload.rows) ? payload.rows.length : 0,
+    rowsWritten: numericValue(payload.affected_row_count),
+    success: true,
+  };
+}
+
+/**
+ * Converts a Hrana pipeline response into per-statement usage metrics. The
+ * gateway already buffers pipeline responses to strip `base_url`, so this is
+ * the only place where external libSQL traffic can be measured accurately.
+ */
+export function collectUsageMetrics(
+  requests: any[],
+  results: any[],
+  storedSql: Map<number, string>,
+): StatementUsage[] {
+  const metrics: StatementUsage[] = [];
+
+  requests.forEach((item, index) => {
+    if (item?.type === 'execute') {
+      const sql = resolveSql(item.stmt, storedSql);
+      if (!sql) return;
+      const metric = usageFromResult(sql, results[index]);
+      if (metric) metrics.push(metric);
+      return;
+    }
+
+    if (item?.type === 'batch') {
+      const result = results[index];
+      const stepResults = result?.response?.result?.step_results;
+      const stepErrors = result?.response?.result?.step_errors;
+      const steps = Array.isArray(item.batch?.steps) ? item.batch.steps : [];
+
+      steps.forEach((step: any, stepIndex: number) => {
+        const sql = resolveSql(step?.stmt, storedSql);
+        if (!sql) return;
+
+        const stepError = Array.isArray(stepErrors) ? stepErrors[stepIndex] : null;
+        if (stepError) {
+          metrics.push({
+            sql,
+            rowsRead: 0,
+            rowsWritten: 0,
+            success: false,
+            errorCode: String(stepError?.code || 'GATEWAY_UPSTREAM_ERROR'),
+          });
+          return;
+        }
+
+        const stepResult = Array.isArray(stepResults) ? stepResults[stepIndex] : null;
+        const metric = usageFromResult(sql, stepResult
+          ? { type: 'ok', response: { result: stepResult } }
+          : null);
+        if (metric) metrics.push(metric);
+      });
+      return;
+    }
+
+    if (item?.type === 'sequence') {
+      const sql = resolveSql(item, storedSql);
+      if (!sql) return;
+      const result = results[index];
+      metrics.push({
+        sql,
+        rowsRead: 0,
+        rowsWritten: 0,
+        success: result?.type !== 'error',
+        errorCode: result?.type === 'error'
+          ? String(result?.error?.code || 'GATEWAY_UPSTREAM_ERROR')
+          : undefined,
+      });
+    }
+  });
+
+  return metrics;
 }
 
 export function createGatewayServer(
@@ -385,6 +541,51 @@ export function createGatewayServer(
       || pathname === '/';
   }
 
+  function isCursorPath(pathname: string) {
+    return pathname === '/v2/cursor' || pathname === '/v1/cursor';
+  }
+
+  function isMetadataPath(pathname: string) {
+    return pathname === '/'
+      || pathname === '/version'
+      || pathname === '/health'
+      || pathname === '/v2'
+      || pathname === '/v1';
+  }
+
+  function enforceCursor(
+    policy: GatewayPolicy,
+    body: any,
+    storedSql: Map<number, string>,
+  ) {
+    const steps = Array.isArray(body?.batch?.steps) ? body.batch.steps : [];
+    if (!steps.length) {
+      if (policy.blockReads || policy.blockWrites) {
+        throw new GatewayRequestError(
+          400,
+          'GATEWAY_INVALID_CURSOR',
+          'The cursor request does not contain a batch of statements.',
+        );
+      }
+      return;
+    }
+
+    for (const step of steps) {
+      const sql = resolveSql(step?.stmt, storedSql);
+      if (!sql) {
+        if (policy.blockReads || policy.blockWrites) {
+          throw new GatewayRequestError(
+            409,
+            'GATEWAY_STREAM_STATE_LOST',
+            'The gateway lost this stream state (for example after a restart). Retry the transaction from the beginning.',
+          );
+        }
+        continue;
+      }
+      enforcePolicy(policy, sql);
+    }
+  }
+
   async function proxyRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -392,12 +593,13 @@ export function createGatewayServer(
     pathWithQuery: string,
     body: Buffer | null,
     rewritePipelineResponse: boolean,
-  ): Promise<void> {
+  ): Promise<ProxyResult> {
     const target = buildUpstreamUrl(policy, pathWithQuery);
     const transport = target.protocol === 'https:' ? https : http;
     const headers = proxyHeaders(req, body);
+    const startedAt = Date.now();
 
-    await new Promise<void>((resolve) => {
+    return new Promise<ProxyResult>((resolve) => {
       const upstream = transport.request(target, {
         method: req.method,
         headers,
@@ -411,18 +613,34 @@ export function createGatewayServer(
             code: 'GATEWAY_UNSUPPORTED_ENCODING',
           });
           upstreamRes.resume();
-          resolve();
+          resolve({
+            statusCode: 502,
+            durationMs: Date.now() - startedAt,
+            responseBytes: 0,
+          });
           return;
         }
 
         if (!rewritePipelineResponse) {
-          res.writeHead(upstreamRes.statusCode || 502, responseHeaders(upstreamRes.headers));
+          const declaredLength = Number(upstreamRes.headers['content-length'] || 0);
+          const statusCode = upstreamRes.statusCode || 502;
+          res.writeHead(statusCode, responseHeaders(upstreamRes.headers));
           upstreamRes.pipe(res);
-          upstreamRes.on('end', resolve);
+          upstreamRes.on('end', () => {
+            resolve({
+              statusCode,
+              durationMs: Date.now() - startedAt,
+              responseBytes: Number.isFinite(declaredLength) ? declaredLength : 0,
+            });
+          });
           upstreamRes.on('error', (error) => {
             if (!res.headersSent) sendJson(res, 502, { error: 'upstream response error', code: 'GATEWAY_UPSTREAM_ERROR' });
             else res.destroy(error);
-            resolve();
+            resolve({
+              statusCode: 502,
+              durationMs: Date.now() - startedAt,
+              responseBytes: 0,
+            });
           });
           return;
         }
@@ -438,6 +656,7 @@ export function createGatewayServer(
           chunks.push(chunk);
         });
         upstreamRes.on('end', () => {
+          const statusCode = upstreamRes.statusCode || 502;
           const responseBody = Buffer.concat(chunks);
           let rewritten = responseBody;
           let parsed: any = null;
@@ -451,7 +670,7 @@ export function createGatewayServer(
             rewritten = Buffer.from(JSON.stringify(parsed));
           }
           res.writeHead(
-            upstreamRes.statusCode || 502,
+            statusCode,
             responseHeaders(upstreamRes.headers, rewritten.length),
           );
           res.end(rewritten);
@@ -466,12 +685,21 @@ export function createGatewayServer(
               deleteStream(requestedBaton);
             }
           }
-          resolve();
+          resolve({
+            statusCode,
+            durationMs: Date.now() - startedAt,
+            responseBytes: rewritten.length,
+            body: parsed,
+          });
         });
         upstreamRes.on('error', (error) => {
           if (!res.headersSent) sendJson(res, 502, { error: 'upstream response error', code: 'GATEWAY_UPSTREAM_ERROR' });
           else res.destroy(error);
-          resolve();
+          resolve({
+            statusCode: 502,
+            durationMs: Date.now() - startedAt,
+            responseBytes: 0,
+          });
         });
       });
 
@@ -485,11 +713,62 @@ export function createGatewayServer(
         } else {
           res.destroy(error);
         }
-        resolve();
+        resolve({
+          statusCode: 502,
+          durationMs: Date.now() - startedAt,
+          responseBytes: 0,
+        });
       });
 
       if (body) upstream.end(body);
       else req.pipe(upstream);
+    });
+  }
+
+  function recordQueryUsage(
+    policy: GatewayPolicy,
+    requests: any[],
+    storedSql: Map<number, string>,
+    proxyResult: ProxyResult,
+  ) {
+    if (!dependencies.recordQuery) return;
+    const results = proxyResult.body?.results;
+    if (!Array.isArray(results)) return;
+
+    const metrics = collectUsageMetrics(requests, results, storedSql);
+    if (metrics.length === 0) return;
+
+    // Hrana reports one response for the whole pipeline; distribute the
+    // observed latency so aggregate averages stay representative.
+    const perStatementMs = Math.max(1, Math.round(proxyResult.durationMs / metrics.length));
+    for (const metric of metrics) {
+      dependencies.recordQuery({
+        databaseId: policy.databaseId,
+        sql: metric.sql,
+        durationMs: perStatementMs,
+        rowsRead: metric.rowsRead,
+        rowsWritten: metric.rowsWritten,
+        success: metric.success,
+        errorCode: metric.errorCode,
+      });
+    }
+  }
+
+  function recordTrafficUsage(
+    policy: GatewayPolicy,
+    req: IncomingMessage,
+    path: string,
+    requestBytes: number,
+    proxyResult: ProxyResult,
+  ) {
+    dependencies.recordTraffic?.({
+      databaseId: policy.databaseId,
+      method: req.method || 'POST',
+      path,
+      requestBytes,
+      responseBytes: proxyResult.responseBytes,
+      statusCode: proxyResult.statusCode,
+      durationMs: proxyResult.durationMs,
     });
   }
 
@@ -507,7 +786,9 @@ export function createGatewayServer(
         return;
       }
 
-      if (!requestUrl.pathname.startsWith(`${pathPrefix}/`) && requestUrl.pathname !== pathPrefix) {
+      const hasExplicitPrefix = requestUrl.pathname === pathPrefix
+        || requestUrl.pathname.startsWith(`${pathPrefix}/`);
+      if (!hasExplicitPrefix && !config.allowRoot) {
         status = 404;
         sendJson(res, 404, { error: 'not found', code: 'GATEWAY_NOT_FOUND' });
         return;
@@ -548,9 +829,11 @@ export function createGatewayServer(
         return;
       }
 
-      const strippedPath = requestUrl.pathname === pathPrefix
-        ? '/'
-        : requestUrl.pathname.slice(pathPrefix.length) || '/';
+      const strippedPath = hasExplicitPrefix
+        ? (requestUrl.pathname === pathPrefix
+          ? '/'
+          : requestUrl.pathname.slice(pathPrefix.length) || '/')
+        : requestUrl.pathname;
       if (!isAllowedPath(strippedPath)) {
         status = 404;
         sendJson(res, 404, { error: 'not found', code: 'GATEWAY_NOT_FOUND' });
@@ -558,23 +841,32 @@ export function createGatewayServer(
       }
 
       const pathWithQuery = `${strippedPath}${requestUrl.search}`;
-      if ((strippedPath === '/v2/cursor' || strippedPath === '/v1/cursor') && policy.blockReads) {
-        status = 403;
-        blocked = true;
-        sendJson(res, 403, {
-          error: 'Read operations are blocked for this database. Disable Block Reads before retrying.',
-          code: 'DATABASE_READS_BLOCKED',
+      const method = String(req.method || '').toUpperCase();
+      const pipelineRequest = method === 'POST' && isPipelinePath(strippedPath);
+      const cursorRequest = method === 'POST' && isCursorPath(strippedPath);
+      const metadataRequest = (method === 'GET' || method === 'HEAD')
+        && isMetadataPath(strippedPath);
+
+      if (!pipelineRequest && !cursorRequest && !metadataRequest) {
+        status = 405;
+        sendJson(res, 405, {
+          error: 'method not allowed for this gateway endpoint',
+          code: 'GATEWAY_METHOD_NOT_ALLOWED',
         });
         return;
       }
 
-      // Enforce every mutating Hrana request. Do not depend on a client
-      // supplying Content-Type: a missing header must not become a bypass.
-      const pipelineRequest = isPipelinePath(strippedPath) && req.method === 'POST';
-
-      if (!pipelineRequest) {
-        await proxyRequest(req, res, policy, pathWithQuery, null, false);
-        status = res.statusCode;
+      if (metadataRequest) {
+        const declaredLength = Number(req.headers['content-length'] || 0);
+        const proxyResult = await proxyRequest(req, res, policy, pathWithQuery, null, false);
+        recordTrafficUsage(
+          policy,
+          req,
+          requestUrl.pathname,
+          Number.isFinite(declaredLength) ? declaredLength : 0,
+          proxyResult,
+        );
+        status = proxyResult.statusCode;
         return;
       }
 
@@ -600,13 +892,14 @@ export function createGatewayServer(
 
       const baton = typeof parsedBody?.baton === 'string' ? parsedBody.baton : null;
       const existing = getStream(baton);
+      const requests = Array.isArray(parsedBody?.requests) ? parsedBody.requests : [];
+      const cursorSteps = Array.isArray(parsedBody?.batch?.steps) ? parsedBody.batch.steps : [];
       if (baton && !existing && (policy.blockReads || policy.blockWrites)) {
-        const requests = Array.isArray(parsedBody?.requests) ? parsedBody.requests : [];
         const referencesStoredSql = requests.some((item: any) => (
           item?.type === 'execute' && item?.stmt?.sql_id != null
           || item?.type === 'sequence' && item?.sql_id != null
           || item?.type === 'batch' && (item?.batch?.steps || []).some((step: any) => step?.stmt?.sql_id != null)
-        ));
+        )) || cursorSteps.some((step: any) => step?.stmt?.sql_id != null);
         if (referencesStoredSql) {
           status = 409;
           sendJson(res, 409, {
@@ -618,8 +911,15 @@ export function createGatewayServer(
       }
 
       const storedSql = new Map<number, string>(existing?.sql || []);
-      const requests = Array.isArray(parsedBody?.requests) ? parsedBody.requests : [];
       try {
+        if (cursorRequest) {
+          enforceCursor(policy, parsedBody, storedSql);
+          const proxyResult = await proxyRequest(req, res, policy, pathWithQuery, rawBody, false);
+          recordTrafficUsage(policy, req, requestUrl.pathname, rawBody.length, proxyResult);
+          status = proxyResult.statusCode;
+          return;
+        }
+
         if (strippedPath === '/' && Array.isArray(parsedBody?.statements)) {
           enforceLegacyStatements(policy, parsedBody);
         } else if (strippedPath === '/' && Array.isArray(parsedBody)) {
@@ -627,19 +927,25 @@ export function createGatewayServer(
             const sql = typeof statement === 'string' ? statement : statement?.q;
             if (typeof sql === 'string' && sql.trim()) enforcePolicy(policy, sql);
           }
+        } else if (strippedPath === '/' && typeof parsedBody?.q === 'string') {
+          enforcePolicy(policy, parsedBody.q);
+        } else if (strippedPath === '/' && typeof parsedBody?.sql === 'string') {
+          enforcePolicy(policy, parsedBody.sql);
+        } else if (strippedPath === '/' && (policy.blockReads || policy.blockWrites)) {
+          throw new GatewayRequestError(
+            400,
+            'GATEWAY_UNSUPPORTED_REQUEST',
+            'The gateway does not recognize this legacy request shape.',
+          );
         } else {
           enforcePipeline(policy, requests, storedSql);
         }
       } catch (error: any) {
-        if (error instanceof DatabaseProtectionError) {
-          status = error.statusCode;
-          blocked = true;
-          sendJson(res, error.statusCode, { error: error.message, code: error.code });
-          return;
-        }
-        if (error instanceof GatewayRequestError) {
-          status = error.statusCode;
-          sendJson(res, error.statusCode, { error: error.message, code: error.code });
+        const mapped = protectionErrorResponse(error);
+        if (mapped) {
+          status = mapped.status;
+          blocked = mapped.blocked;
+          sendJson(res, mapped.status, { error: mapped.message, code: mapped.code });
           return;
         }
         throw error;
@@ -647,8 +953,10 @@ export function createGatewayServer(
 
       (req as any).__gatewayBaton = baton;
       (req as any).__gatewayStoredSql = storedSql;
-      await proxyRequest(req, res, policy, pathWithQuery, rawBody, true);
-      status = res.statusCode;
+      const proxyResult = await proxyRequest(req, res, policy, pathWithQuery, rawBody, true);
+      recordQueryUsage(policy, requests, storedSql, proxyResult);
+      recordTrafficUsage(policy, req, requestUrl.pathname, rawBody.length, proxyResult);
+      status = proxyResult.statusCode;
     } catch (error: any) {
       status = error?.statusCode || 500;
       if (!res.headersSent) {

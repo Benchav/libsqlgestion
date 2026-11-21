@@ -10,6 +10,7 @@ process.env.SQLITE_STORAGE_ROOT = path.join(tempDir, 'storage');
 process.env.MASTER_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 process.env.ANALYTICS_ENABLED = 'true';
 process.env.ANALYTICS_TRAFFIC_ENABLED = 'true';
+process.env.GATEWAY_INTERNAL_TOKEN = 'test-gateway-token';
 
 const { AppDataSource } = require('../dist/infrastructure/db/data-source');
 const { bootstrapSecurityCatalog } = require('../dist/application/auth/auth.bootstrap');
@@ -20,7 +21,7 @@ const { AuditLog } = require('../dist/domain/entities/AuditLog');
 const { User } = require('../dist/domain/entities/User');
 const { StorageSample } = require('../dist/domain/entities/StorageSample');
 const { analyticsCollector } = require('../dist/application/analytics/AnalyticsCollector');
-const { normalizeSql, fingerprintSql } = require('../dist/application/analytics/sql-normalizer');
+const { normalizeSql, fingerprintSql, detectOperation } = require('../dist/application/analytics/sql-normalizer');
 
 function parseCookies(response) {
   const result = {};
@@ -79,6 +80,15 @@ test.describe('Analytics', () => {
     assert.equal(normalized, 'SELECT * FROM sales WHERE email = ? AND id = ?');
     assert.equal(normalizeSql(normalized), normalized);
     assert.match(fingerprintSql(normalized), /^[a-f0-9]{64}$/);
+  });
+
+  test('classifies CTE writes by their main statement', () => {
+    assert.equal(detectOperation('SELECT 1'), 'select');
+    assert.equal(detectOperation('WITH x AS (SELECT 1) SELECT * FROM x'), 'select');
+    assert.equal(detectOperation('WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x'), 'insert');
+    assert.equal(detectOperation('/* migration */ UPDATE t SET x = 1'), 'update');
+    assert.equal(detectOperation('REPLACE INTO t VALUES (1)'), 'replace');
+    assert.equal(detectOperation('PRAGMA table_info(t)'), 'pragma');
   });
 
   test('collects query, traffic and storage metrics and exposes the overview', async () => {
@@ -159,6 +169,11 @@ test.describe('Analytics', () => {
     assert.equal(body.summary.rowsWritten, 2);
     assert.equal(body.summary.queries, 3);
     assert.equal(body.summary.errors, 1);
+    assert.equal(body.summary.readQueries, 1);
+    assert.equal(body.summary.writeQueries, 2);
+    assert.equal(body.summary.activeDatabases, 1);
+    assert.equal(body.summary.totalDatabases, 1);
+    assert.ok(body.summary.queriesPerHour > 0);
     assert.ok(Math.abs(body.summary.errorRate - 1 / 3) < 0.0001);
     assert.ok(body.summary.trafficInBytes >= 1300);
     assert.ok(body.summary.trafficOutBytes >= 4050);
@@ -170,21 +185,34 @@ test.describe('Analytics', () => {
     assert.equal(body.series.latencyAvg[0], null);
     assert.equal(body.series.latencyP95[0], null);
     assert.equal(body.series.latencyP95[2], 35);
+    assert.equal(body.series.readQueries[2], 1);
+    assert.equal(body.series.writeQueries[2], 2);
     assert.ok(body.series.trafficIn[2] >= 1300);
     assert.ok(body.series.trafficOut[2] >= 4050);
     assert.equal(body.series.storage[0], 0);
     assert.ok(body.series.storage[2] >= 1024);
     assert.equal(body.sources[0].source, 'pipeline');
     assert.equal(body.sources[0].queries, 3);
+    assert.ok(body.operations.some((row) => row.operation === 'select' && row.queries === 1));
+    assert.ok(body.operations.some((row) => row.operation === 'update' && row.queries === 1));
+    assert.ok(body.operations.some((row) => row.operation === 'delete' && row.errors === 1));
     assert.deepEqual(
       body.statusCodes.map((row) => row.statusCode).sort(),
       [200, 500],
     );
     assert.equal(body.topDatabases[0].name, 'analytics-db');
+    assert.equal(body.topDatabases[0].readQueries, 1);
+    assert.equal(body.topDatabases[0].writeQueries, 2);
+    assert.equal(body.topDatabases[0].errors, 1);
+    assert.ok(body.topDatabases[0].p95DurationMs > 0);
+    assert.ok(body.topDatabases[0].lastSeenAt);
     assert.equal(body.topProjects[0].name, 'Analytics Project');
+    assert.equal(body.topProjects[0].readQueries, 1);
+    assert.equal(body.topProjects[0].writeQueries, 2);
     assert.ok(body.topQueries.length >= 1);
     assert.ok(body.topQueries[0].sqlPreview.includes('?'));
     assert.ok(!body.topQueries[0].sqlPreview.includes('person@example.com'));
+    assert.ok(body.topQueries.every((query) => typeof query.operation === 'string'));
     assert.ok(body.topQueriesByRowsRead[0].rowsRead >= 100);
     assert.ok(Array.isArray(body.topQueriesByRowsWritten));
     assert.ok(Array.isArray(body.topQueriesByFrequency));
@@ -192,7 +220,7 @@ test.describe('Analytics', () => {
     assert.ok(body.topErrors[0].lastSeenAt);
   });
 
-  test('shows friendly names and labels deleted databases without raw UUIDs', async () => {
+  test('excludes deleted and unknown databases from usage metrics', async () => {
     const databaseRepo = AppDataSource.getRepository(Database);
     const uuid = '11111111-1111-4111-8111-111111111111';
     const uuidDatabase = await databaseRepo.save(databaseRepo.create({
@@ -255,26 +283,27 @@ test.describe('Analytics', () => {
     assert.ok(friendly);
     assert.equal(friendly.displayName, 'friendly-subdomain');
     assert.equal(friendly.name, 'friendly-subdomain');
-    assert.equal(friendly.exists, true);
-    assert.equal(friendly.deleted, false);
     assert.equal(friendly.needsRename, true);
+    assert.equal(friendly.rowsRead, 700);
 
-    const deleted = byId.get(deletedDatabaseId);
-    assert.ok(deleted);
-    assert.equal(deleted.displayName, 'ERP Histórico');
-    assert.equal(deleted.name, 'ERP Histórico');
-    assert.equal(deleted.exists, false);
-    assert.equal(deleted.deleted, true);
+    assert.equal(byId.has(deletedDatabaseId), false);
+    assert.equal(byId.has(unknownDatabaseId), false);
 
-    const unknown = byId.get(unknownDatabaseId);
-    assert.ok(unknown);
-    assert.equal(unknown.displayName, 'Deleted database');
-    assert.equal(unknown.exists, false);
-    assert.equal(unknown.deleted, true);
+    // 100 rows from the first test + 700 from the real database. The deleted
+    // and unknown rows must not contribute to the summary.
+    assert.equal(body.summary.rowsRead, 800);
+    assert.equal(body.summary.queries, 4);
   });
 
   test('zero-fills day buckets and carries storage forward', async () => {
-    const otherDatabaseId = '00000000-0000-4000-8000-000000000001';
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const otherDatabase = await databaseRepo.save(databaseRepo.create({
+      name: 'bucket-db',
+      type: 'sqlite',
+      status: 'active',
+      project,
+    }));
+    const otherDatabaseId = otherDatabase.id;
     const to = new Date(Date.now() - 60 * 60 * 1000);
     const from = new Date(to.getTime() - 4 * 24 * 60 * 60 * 1000 - 60 * 1000);
     const sqlDate = (value) => value.toISOString().slice(0, 19).replace('T', ' ');
@@ -344,5 +373,105 @@ test.describe('Analytics', () => {
     await analyticsCollector.flush();
     const total = await repo.countBy({ databaseId: database.id });
     assert.equal(total, 1203);
+  });
+
+  test('ingests gateway usage for existing databases only', async () => {
+    const databaseRepo = AppDataSource.getRepository(Database);
+    const gatewayDatabase = await databaseRepo.save(databaseRepo.create({
+      name: 'gateway-db',
+      type: 'sqlite',
+      status: 'active',
+      project,
+    }));
+    const unknownId = '33333333-3333-4333-8333-333333333333';
+    const payload = {
+      queries: [
+        {
+          databaseId: gatewayDatabase.id,
+          sql: 'SELECT * FROM sales',
+          durationMs: 11,
+          rowsRead: 7,
+          success: true,
+        },
+        {
+          databaseId: gatewayDatabase.id,
+          sql: 'INSERT INTO sales (total) VALUES (?)',
+          durationMs: 5,
+          rowsWritten: 1,
+          success: true,
+        },
+        {
+          databaseId: unknownId,
+          sql: 'SELECT 1',
+          durationMs: 1,
+          success: true,
+        },
+      ],
+      traffic: [{
+        databaseId: gatewayDatabase.id,
+        method: 'POST',
+        path: '/v2/pipeline',
+        requestBytes: 100,
+        responseBytes: 200,
+        statusCode: 200,
+        durationMs: 11,
+      }],
+    };
+
+    const unauthorized = await app.inject({
+      method: 'POST',
+      url: '/api/v1/internal/gateway/analytics',
+      payload,
+    });
+    assert.equal(unauthorized.statusCode, 401, unauthorized.payload);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/internal/gateway/analytics',
+      headers: { 'x-gateway-token': 'test-gateway-token' },
+      payload,
+    });
+    assert.equal(response.statusCode, 202, response.payload);
+    assert.equal(JSON.parse(response.payload).accepted, 3);
+
+    await analyticsCollector.flush();
+
+    const from = new Date(Date.now() - 60_000);
+    const to = new Date(Date.now() + 1000);
+    const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+    const analytics = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(analytics.statusCode, 200, analytics.payload);
+    const body = JSON.parse(analytics.payload);
+    const row = body.topDatabases.find((item) => item.id === gatewayDatabase.id);
+    assert.ok(row, 'gateway database must appear in top databases');
+    assert.equal(row.rowsRead, 7);
+    assert.equal(row.rowsWritten, 1);
+    assert.equal(row.readQueries, 1);
+    assert.equal(row.writeQueries, 1);
+    assert.equal(body.sources.some((source) => source.source === 'gateway'), true);
+    assert.equal(body.topDatabases.some((item) => item.id === unknownId), false);
+  });
+
+  test('returns a compact dashboard analytics payload', async () => {
+    const params = new URLSearchParams({ range: '7d' });
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/analytics/dashboard?${params.toString()}`,
+      headers: { cookie: cookieHeader },
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = JSON.parse(response.payload);
+    assert.ok(body.summary);
+    assert.ok(body.series);
+    assert.ok(Array.isArray(body.operations));
+    assert.ok(Array.isArray(body.topDatabases));
+    assert.equal(body.topQueries, undefined);
+    assert.equal(body.topErrors, undefined);
+    assert.ok(body.summary.readQueries >= 1);
+    assert.ok(body.summary.writeQueries >= 1);
   });
 });

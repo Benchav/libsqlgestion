@@ -21,4 +21,20 @@ export default async function analyticsRoutes(app: FastifyInstance) {
       return reply.status(422).send({ error: error?.message || 'failed to load analytics' });
     }
   });
+
+  app.get('/analytics/dashboard', { preHandler: [app.authenticate as any] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await ensurePermission(request, reply, 'analytics.read'))) return;
+
+    const query = parseAndValidate(analyticsQuerySchema, request.query || {}, 'analytics query');
+    try {
+      const overview = await analyticsService.getDashboard({
+        range: query.range,
+        from: query.from,
+        to: query.to,
+      });
+      return reply.send(overview);
+    } catch (error: any) {
+      return reply.status(422).send({ error: error?.message || 'failed to load dashboard analytics' });
+    }
+  });
 }

@@ -57,12 +57,64 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
     && effectiveType === 'libsql'
     && (runtimeProvider === 'docker-libsql' || runtimeProvider === 'sqld-namespace');
   const gatewayPath = gatewayPathPrefix();
-  const gatewayHttpsUrl = gatewayEnabledForProvider && urls.publicHttpsUrl
-    ? `${urls.publicHttpsUrl.replace(/\/+$/, '')}${gatewayPath}`
+  const gatewayRootHost = (() => {
+    const raw = (process.env.DATABASE_GATEWAY_ROOT_HOST || '').trim();
+    if (!raw) return '';
+    try {
+      return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname
+        .toLowerCase()
+        .replace(/\.$/, '');
+    } catch {
+      return raw.toLowerCase().replace(/\.$/, '');
+    }
+  })();
+  const publicHostnames = (() => {
+    const hosts: string[] = [];
+    for (const value of [urls.publicHttpsUrl, urls.publicLibsqlUrl]) {
+      if (!value) continue;
+      try {
+        hosts.push(new URL(value).hostname.toLowerCase().replace(/\.$/, ''));
+      } catch {
+        // Ignore malformed legacy URLs; the path gateway can still be used.
+      }
+    }
+    return hosts;
+  })();
+  const publicUrlIsRoot = (() => {
+    for (const value of [urls.publicHttpsUrl, urls.publicLibsqlUrl]) {
+      if (!value) continue;
+      try {
+        const pathname = new URL(value).pathname;
+        return pathname === '' || pathname === '/';
+      } catch {
+        // Ignore malformed legacy URLs.
+      }
+    }
+    return false;
+  })();
+  const rootGateway = gatewayEnabledForProvider
+    && ['true', '1', 'yes', 'on'].includes(
+      String(process.env.GATEWAY_ALLOW_ROOT || '').trim().toLowerCase(),
+    )
+    && Boolean(gatewayRootHost)
+    && publicHostnames.length > 0
+    && publicHostnames.every((host) => host === gatewayRootHost)
+    && publicUrlIsRoot;
+  const gatewayHttpsUrl = gatewayEnabledForProvider
+    ? (rootGateway
+      ? urls.publicHttpsUrl
+      : (urls.publicHttpsUrl
+        ? `${urls.publicHttpsUrl.replace(/\/+$/, '')}${gatewayPath}`
+        : ''))
     : '';
-  const gatewayLibsqlUrl = gatewayEnabledForProvider && urls.publicLibsqlUrl
-    ? `${urls.publicLibsqlUrl.replace(/\/+$/, '')}${gatewayPath}`
+  const gatewayLibsqlUrl = gatewayEnabledForProvider
+    ? (rootGateway
+      ? urls.publicLibsqlUrl
+      : (urls.publicLibsqlUrl
+        ? `${urls.publicLibsqlUrl.replace(/\/+$/, '')}${gatewayPath}`
+        : ''))
     : '';
+  const gatewayMode = rootGateway ? 'root' : (gatewayHttpsUrl || gatewayLibsqlUrl ? 'path' : 'none');
 
   // Never expose the encrypted credential through the API. The plaintext token
   // is only returned by the explicit reveal/rotate/invalidate endpoints.
@@ -89,6 +141,7 @@ export function presentDatabase<T extends DatabaseLike>(database: T) {
     backendConnectionUrl: urls.backendUrl,
     backendReachableUrl: urls.backendUrl,
     gatewayEnabled: Boolean(gatewayHttpsUrl || gatewayLibsqlUrl),
+    gatewayMode,
     gatewayHttpsUrl,
     gatewayLibsqlUrl,
     runtimeStatus,

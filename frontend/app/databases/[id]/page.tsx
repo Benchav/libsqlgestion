@@ -24,6 +24,7 @@ type DatabaseDetail = {
   blockWrites?: boolean;
   deleteProtection?: boolean;
   gatewayEnabled?: boolean;
+  gatewayMode?: 'path' | 'root' | 'none';
   gatewayHttpsUrl?: string;
   gatewayLibsqlUrl?: string;
   url?: string;
@@ -489,7 +490,13 @@ export default function DatabaseDetailPage() {
 
         {directClientProvider && (database?.blockReads || database?.blockWrites) && (
           <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            {database?.gatewayEnabled ? (
+            {database?.gatewayEnabled && database.gatewayMode === 'root' ? (
+              <>
+                <strong>Enforcement scope:</strong> the direct URL is routed through the root
+                gateway. These switches apply to the ERP and the panel. Do not use the runtime
+                IP:port or an alternate direct route.
+              </>
+            ) : database?.gatewayEnabled ? (
               <>
                 <strong>Enforcement scope:</strong> these switches protect the panel and the
                 <strong> Gateway URL</strong>. The direct public URL still bypasses them. If the
@@ -613,7 +620,9 @@ export default function DatabaseDetailPage() {
                 {database?.gatewayEnabled && (database.gatewayLibsqlUrl || database.gatewayHttpsUrl) && (
                   <div>
                     <label className="block text-xs font-medium text-emerald-400 uppercase tracking-wider mb-2">
-                      Gateway URL · full enforcement
+                      {database.gatewayMode === 'root'
+                        ? 'Gateway URL · direct URL enforced'
+                        : 'Gateway URL · full enforcement'}
                     </label>
                     <div className="flex items-center gap-3 border border-emerald-500/30 bg-emerald-500/5 rounded-lg p-3 font-mono text-xs text-zinc-200 overflow-x-auto custom-scrollbar">
                       <code className="flex-1 break-all whitespace-normal">
@@ -637,9 +646,9 @@ export default function DatabaseDetailPage() {
                       </p>
                     )}
                     <p className="mt-2 text-xs text-amber-300">
-                      Use this URL in the ERP to enforce Block Reads/Writes. If the ERP also has a
-                      TURSO_SYNC_URL, update it too. The direct public URL still bypasses these
-                      switches until the runtime is internalized.
+                      {database.gatewayMode === 'root'
+                        ? 'The ERP can keep using this same URL; root traffic is routed through the gateway. Do not use the runtime IP:port directly.'
+                        : 'Use this URL in the ERP to enforce Block Reads/Writes. If the ERP also has a TURSO_SYNC_URL, update it too. The direct public URL still bypasses these switches until the runtime is internalized.'}
                     </p>
                   </div>
                 )}
